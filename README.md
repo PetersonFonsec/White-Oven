@@ -46,4 +46,4 @@ Execute `pnpm check`, `pnpm test` e `pnpm build`. O workflow CI executa as mesma
 
 ## Testes de navegador e revisão visual
 
-Instale o navegador com `pnpm exec playwright install chromium` e execute `pnpm test:e2e`. Os testes iniciam e encerram o preview local automaticamente. A CI usa Chromium com suas dependências Linux. Capturas e instruções de reprodução estão em [docs/design](docs/design/README.md). A aprovação de fidelidade à referência visual está pendente do asset solicitado nesse documento.
+Instale o navegador com `pnpm exec playwright install chromium` e execute `pnpm test:e2e`. Os testes iniciam e encerram o preview local automaticamente. A CI usa Chromium com suas dependências Linux. Capturas e instruções de reprodução estão em [docs/design](docs/design/README.md). As referências visuais recebidas do Product Owner e sua aplicação estão documentadas ali, junto da proveniência dos assets gerados para o projeto.

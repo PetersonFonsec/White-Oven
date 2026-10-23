@@ -10,3 +10,7 @@ dist/
 
 test-results/
 playwright-report/
+
+# User-supplied references: local only until publication is explicitly authorized.
+docs/design/whiteoven-visual-reference.png
+docs/design/whiteoven-video-reference.jpg

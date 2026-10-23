@@ -256,12 +256,26 @@ svg {
   align-items: center;
 }
 .hero {
+  position: relative;
   overflow: hidden;
 }
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 64%;
+  background: var(--wo-color-primary);
+}
+.food-photo {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+}
 .hero-grid {
+  position: relative;
   display: grid;
   grid-template-columns: 1.1fr 1fr;
-  min-height: 670px;
+  min-height: 750px;
   align-items: center;
   gap: 30px;
   padding-block: 64px 74px;
@@ -316,41 +330,32 @@ svg {
 }
 .hero-composition {
   position: relative;
-  min-height: 510px;
+  min-height: 590px;
 }
 .hero-orbit {
   position: absolute;
-  border: 1px solid var(--wo-color-border);
-  width: 440px;
-  height: 440px;
-  top: 30px;
-  left: 10px;
+  width: 470px;
+  height: 470px;
+  top: 0;
+  left: -24px;
+  border: 1px solid var(--wo-color-surface);
   border-radius: 50%;
+  opacity: 0.5;
 }
 .hero-orbit::after {
   content: "";
   position: absolute;
-  inset: 25px;
+  inset: 24px;
+  border: 1px solid var(--wo-color-surface);
   border-radius: 50%;
-  background: var(--wo-color-orangeSoft);
 }
 .hero-pizza {
-  width: 420px;
+  width: 490px;
   position: absolute;
-  top: 28px;
-  left: -50px;
+  top: 10px;
+  left: -75px;
   transform: rotate(-12deg);
-  isolation: isolate;
-}
-.hero-pizza::before {
-  content: "";
-  position: absolute;
-  inset: 2%;
-  border: 10px solid var(--wo-color-surface);
-  border-radius: 50%;
-  background: var(--wo-color-surface);
-  box-shadow: var(--wo-shadow-phone);
-  z-index: -1;
+  filter: drop-shadow(0 20px 20px rgb(37 37 37 / 18%));
 }
 .pizza-art {
   width: 100%;
@@ -362,8 +367,9 @@ svg {
 .flavor-sticker {
   position: absolute;
   z-index: 2;
-  left: -5px;
-  bottom: 65px;
+  left: -30px;
+  top: 0;
+  bottom: auto;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -390,16 +396,94 @@ svg {
 }
 .phone-preview {
   text-decoration: none;
-  width: 244px;
+  width: 224px;
   border: 6px solid var(--wo-color-text);
   border-radius: 35px;
   background: var(--wo-color-surface);
   position: absolute;
   right: 5px;
-  top: 8px;
+  top: 46px;
+  z-index: 3;
   transform: rotate(4deg);
   box-shadow: var(--wo-shadow-phone);
   padding: 26px 12px 12px;
+}
+.hero-dashboard {
+  position: absolute;
+  bottom: 0;
+  left: -20px;
+  z-index: 2;
+  width: 330px;
+  padding: 20px;
+  background: var(--wo-color-surface);
+  border: 1px solid var(--wo-color-border);
+  border-radius: var(--wo-radius-card);
+  box-shadow: var(--wo-shadow-phone);
+  transform: rotate(-3deg);
+}
+.hero-dashboard-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.hero-dashboard-heading > strong {
+  font-size: 0.82rem;
+  letter-spacing: -0.03em;
+}
+.hero-dashboard-heading > span {
+  font-size: 0.55rem;
+  color: var(--wo-color-muted);
+}
+.hero-dashboard-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.hero-dashboard-metrics > div {
+  background: var(--wo-color-cream);
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+.hero-dashboard-metrics small {
+  display: block;
+  font-size: 0.6rem;
+  color: var(--wo-color-muted);
+}
+.hero-dashboard-metrics strong {
+  display: block;
+  font-size: 1.3rem;
+  letter-spacing: -0.04em;
+  margin-top: 2px;
+}
+.hero-dashboard-order {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-top: 1px solid var(--wo-color-border);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+.hero-dashboard-order > span:first-child {
+  color: var(--wo-color-accentText);
+  font-size: 1.4rem;
+}
+.hero-dashboard-order strong {
+  display: block;
+  font-size: 0.65rem;
+}
+.hero-dashboard-order small {
+  display: block;
+  font-size: 0.55rem;
+  color: var(--wo-color-muted);
+}
+.hero-dashboard-order > span:last-child {
+  background: var(--wo-color-cream);
+  border-radius: var(--wo-radius-pill);
+  padding: 4px 8px;
+  font-size: 0.55rem;
+  margin-left: auto;
+  color: var(--wo-color-accentText);
 }
 .phone-notch {
   position: absolute;
@@ -576,6 +660,7 @@ svg {
   background: var(--wo-color-orangeSoft);
 }
 .builder-visual > .pizza-art {
+  filter: drop-shadow(0 12px 12px rgb(37 37 37 / 14%));
   width: min(100%, 380px);
   margin: 10px auto;
 }
@@ -1243,9 +1328,14 @@ input[type="checkbox"] {
     transform-origin: right center;
   }
   .hero-pizza {
-    left: -25px;
-    width: 340px;
-    top: 60px;
+    left: -35px;
+    width: 380px;
+    top: 40px;
+  }
+  .hero-dashboard {
+    width: 300px;
+    left: -35px;
+    bottom: 6px;
   }
   .hero-orbit {
     width: 340px;
@@ -1256,8 +1346,9 @@ input[type="checkbox"] {
     width: 205px;
   }
   .flavor-sticker {
-    left: -10px;
-    bottom: 55px;
+    left: -20px;
+    top: 0;
+    bottom: auto;
   }
   .hero-actions .button {
     padding-inline: 15px;
@@ -1290,6 +1381,14 @@ input[type="checkbox"] {
   }
   .section {
     padding-block: 64px;
+  }
+  .hero::before {
+    inset: auto 0 0 35%;
+    height: 540px;
+    border-top-left-radius: 100px;
+  }
+  .hero-dashboard {
+    display: none;
   }
   .hero-grid {
     grid-template-columns: 1fr;
@@ -1328,6 +1427,7 @@ input[type="checkbox"] {
   .flavor-sticker {
     left: 0;
     right: 0;
+    top: auto;
     bottom: 0;
     width: max-content;
     max-width: 100%;
@@ -1519,6 +1619,22 @@ input[type="checkbox"] {
   }
 }
 
+/* Ingredient layers respond to flavor choices, inspired by the supplied video. */
+.pizza-art [data-active="true"] {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ingredients-appear 220ms ease-out;
+}
+@keyframes ingredients-appear {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 /* Feedback primitives for the later form integration; no simulated requests. */
 [aria-busy="true"] {
   cursor: progress;

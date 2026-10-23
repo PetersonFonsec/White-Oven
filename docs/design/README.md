@@ -1,29 +1,28 @@
 # Referência visual e revisão da landing
 
-## Dependência do Product Owner — pendente
+## Referências recebidas em 2026-10-23
 
-**Por favor, forneça a referência aprovada em `docs/design/whiteoven-visual-reference.png`.** O arquivo não existe no repositório na revisão de 2026-10-23. Não foi criado um placeholder com esse nome para evitar confundi-lo com o asset real.
+O Product Owner forneceu a imagem `whiteoven.jpeg` e um vídeo MP4 de 20,78 segundos nesta conversa. A imagem está preservada, convertida sem recorte para `docs/design/whiteoven-visual-reference.png` (arquivo local, não versionado). O vídeo foi analisado por quadros em 1,04s, 5,20s, 10,39s, 15,59s e 19,74s. Um quadro foi registrado localmente em `docs/design/whiteoven-video-reference.jpg` (não versionado); o vídeo original permanece no anexo do Product Owner, sem integrar o bundle da landing.
 
-A validação de fidelidade à referência e a aprovação final do item P1 permanecem pendentes até o recebimento desse arquivo. Informe também as restrições de uso e os assets gastronômicos autorizados, se existirem. Nenhuma fotografia externa foi introduzida.
+A referência já está disponível para o trabalho local. A publicação da imagem fornecida e do quadro do vídeo no GitHub aguarda autorização explícita do Product Owner; esses arquivos estão excluídos pelo `.gitignore`. A aprovação visual das novas capturas cabe ao Product Owner; não afirmamos equivalência literal nem copiamos marca, textos ou layout completo. Os arquivos de referência em `docs/design` são material de análise, não assets usados no site. O envio dessas referências não foi tratado como licença para recortar e publicar suas fotografias.
 
-## O que foi refinado nesta revisão
+## Aplicação da direção visual
 
-- Hero com hierarquia em carvão e destaque laranja, com maior separação entre conteúdo e composição visual.
-- Pizza original com acabamento de borda assada, queijo e ervas, sobre prato claro com sombra discreta. Continua sendo ilustração; não é fotografia nem reprodução da referência.
-- Mockup de aplicativo maior e menos inclinado no desktop, categorias visuais e combinação de sabores identificada, sempre com indicação de prévia ilustrativa.
-- Retirada a legenda que sobrepunha a base do telefone. A prévia continua sendo um link funcional para a demonstração.
-- Flex destaca **3% por venda paga**, com **sem mensalidade** como benefício. Pro destaca **R$ 199/mês** e **0% de comissão WhiteOven**.
-
-Essas são melhorias baseadas na direção textual food-tech premium. Não constituem alegação de fidelidade a uma referência que não foi disponibilizada.
+- **Da imagem:** contraste entre creme/branco e painel laranja, pizza grande com aparência fotográfica, cards arredondados, sombras suaves e composição de aplicativo + gestão. O WhiteOven mantém nome, textos, logotipo e organização próprios.
+- **Do vídeo:** resposta visual dos ingredientes à escolha do visitante. O Builder mantém sua estrutura SVG leve e agora combina uma base fotográfica própria com camadas de ingredientes e transição curta; a opção por movimento reduzido desativa a transição.
+- **Fotos originais para o projeto:** hero e prévia mobile usam uma pizza gerada para o WhiteOven. A base sem toppings do Builder foi gerada separadamente. Nenhuma fotografia foi extraída das referências ou carregada de serviço externo. Proveniência em [assets.md](assets.md).
+- **Escopo preservado:** demonstração de sabores inteiros/meio a meio e preço fictício pelo maior valor. Tamanhos, inclusão individual de ingredientes, carrinho e checkout vistos no vídeo não foram implementados.
+- **Composição responsiva:** a miniatura de gestão complementa a visão desktop; o mobile prioriza a pizza e a prévia de aplicativo, mantendo o painel completo em sua seção própria.
+- **Planos e formulário:** os ajustes anteriores permanecem: Flex destaca 3% por venda paga, Pro explicita 0% de comissão WhiteOven e o protótipo não envia dados.
 
 ## Capturas para nova revisão
 
 Geradas do build estático pelo teste Playwright versionado, com sabores iniciais e sem dados pessoais:
 
-| Visão            | Página completa                    | Hero                                         | Planos                                            |
-| ---------------- | ---------------------------------- | -------------------------------------------- | ------------------------------------------------- |
-| Desktop — 1440px | [Desktop](screenshots/desktop.png) | [Hero desktop](screenshots/desktop-hero.png) | [Planos desktop](screenshots/desktop-pricing.png) |
-| Mobile — 375px   | [Mobile](screenshots/mobile.png)   | [Hero mobile](screenshots/mobile-hero.png)   | [Planos mobile](screenshots/mobile-pricing.png)   |
+| Visão            | Página completa                    | Hero                                         | Builder                                            | Planos                                            |
+| ---------------- | ---------------------------------- | -------------------------------------------- | -------------------------------------------------- | ------------------------------------------------- |
+| Desktop — 1440px | [Desktop](screenshots/desktop.png) | [Hero desktop](screenshots/desktop-hero.png) | [Builder desktop](screenshots/desktop-builder.png) | [Planos desktop](screenshots/desktop-pricing.png) |
+| Mobile — 375px   | [Mobile](screenshots/mobile.png)   | [Hero mobile](screenshots/mobile-hero.png)   | [Builder mobile](screenshots/mobile-builder.png)   | [Planos mobile](screenshots/mobile-pricing.png)   |
 
 Nas capturas, o header permanece na posição normal do documento para não cobrir as seções durante a captura de elementos.
 

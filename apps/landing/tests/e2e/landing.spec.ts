@@ -191,6 +191,19 @@ test("page has no external requests, browser errors, fake links or horizontal ov
   });
   await page.goto("/");
   await page.waitForLoadState("networkidle");
+  const heroImage = page.locator(".hero-pizza img");
+  await expect(heroImage).toBeVisible();
+  await expect
+    .poll(() =>
+      heroImage.evaluate(
+        (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+      ),
+    )
+    .toBe(true);
+  await expect(art(page).locator("image")).toHaveAttribute(
+    "href",
+    /\/_astro\/.+\.webp/,
+  );
   for (const width of [320, 375, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 960 });
     expect(
@@ -204,6 +217,10 @@ test("page has no external requests, browser errors, fake links or horizontal ov
   await expect(page.locator(".store-badge[href]")).toHaveCount(0);
   await page.setViewportSize(testInfo.project.use.viewport!);
   await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(art(page).locator('[data-active="true"]').first()).toHaveCSS(
+    "animation-name",
+    "none",
+  );
   expect(
     await page.evaluate(
       () => getComputedStyle(document.documentElement).scrollBehavior,
@@ -227,6 +244,10 @@ test("page has no external requests, browser errors, fake links or horizontal ov
     });
     await page.locator(".hero").screenshot({
       path: `${directory}/${testInfo.project.name}-hero.png`,
+      animations: "disabled",
+    });
+    await page.locator("#demonstracao").screenshot({
+      path: `${directory}/${testInfo.project.name}-builder.png`,
       animations: "disabled",
     });
     await page.locator("#planos").screenshot({

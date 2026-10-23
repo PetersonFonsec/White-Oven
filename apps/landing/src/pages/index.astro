@@ -5,7 +5,8 @@ import Footer from "../components/Footer.astro";
 import Button from "../components/Button.astro";
 import SectionHeading from "../components/SectionHeading.astro";
 import FeatureCard from "../components/FeatureCard.astro";
-import PizzaArtwork from "../components/PizzaArtwork.astro";
+import PizzaPhoto from "../components/PizzaPhoto.astro";
+import HeroDashboard from "../components/HeroDashboard.astro";
 import PizzaBuilder from "../components/PizzaBuilder.astro";
 import AdminPreview from "../components/AdminPreview.astro";
 import PricingCard from "../components/PricingCard.astro";
@@ -126,7 +127,7 @@ const questions = [
           <span class="hero-orbit" aria-hidden="true"></span><div
             class="hero-pizza"
           >
-            <PizzaArtwork id="hero-pizza" />
+            <PizzaPhoto hero />
           </div><div class="flavor-sticker">
             <span aria-hidden="true">◐</span><div>
               <strong>Uma metade de cada sabor.</strong><small
@@ -150,7 +151,7 @@ const questions = [
               ><div class="phone-category">
                 <span>Seu cardápio</span><span>Meio a meio</span>
               </div><div class="phone-pizza">
-                <PizzaArtwork id="phone-pizza" />
+                <PizzaPhoto decorative />
               </div><div class="phone-product">
                 <strong>Sua pizza, seu jeito</strong><span
                   >Calabresa + Margherita · 35 cm</span
@@ -162,6 +163,7 @@ const questions = [
               </p>
             </div>
           </a>
+          <HeroDashboard />
         </div>
       </div>
     </section>

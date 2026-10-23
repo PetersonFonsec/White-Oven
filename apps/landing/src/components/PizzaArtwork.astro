@@ -1,5 +1,13 @@
 ---
 import { flavors } from "../lib/pizza";
+import { getImage } from "astro:assets";
+import pizzaBase from "../assets/whiteoven-pizza-base.png";
+const base = await getImage({
+  src: pizzaBase,
+  width: 720,
+  format: "webp",
+  quality: 85,
+});
 interface Props {
   id: string;
   interactive?: boolean;
@@ -37,17 +45,6 @@ const positions = [
     Pizza vista de cima: calabresa à esquerda e margherita à direita
   </title>
   <defs>
-    <radialGradient id={`${id}-crust`}
-      ><stop offset="78%" stop-color="#F0B95B"></stop><stop
-        offset="91%"
-        stop-color="#DEA044"></stop><stop offset="100%" stop-color="#AC5C27"
-      ></stop></radialGradient
-    >
-    <radialGradient id={`${id}-cheese`}
-      ><stop stop-color="#FFE7A0"></stop><stop
-        offset="100%"
-        stop-color="#F4BA56"></stop></radialGradient
-    >
     <clipPath id={`${id}-left`}
       ><path d="M200 42a158 158 0 0 0 0 316Z"></path></clipPath
     >
@@ -55,29 +52,14 @@ const positions = [
       ><path d="M200 42a158 158 0 0 1 0 316Z"></path></clipPath
     >
   </defs>
-  <circle cx="200" cy="207" r="181" fill="#252525" opacity=".08"></circle>
-  <circle cx="200" cy="200" r="180" fill={`url(#${id}-crust)`}></circle>
-  <circle cx="200" cy="200" r="159" fill="#AD4024"></circle>
-  <circle cx="200" cy="200" r="151" fill={`url(#${id}-cheese)`}></circle>
-  <g aria-hidden="true">
-    {
-      Array.from({ length: 38 }, (_, i) => {
-        const angle = i * 2.39996;
-        const radius = 27 + (i % 7) * 18;
-        return (
-          <ellipse
-            cx={200 + radius * Math.cos(angle)}
-            cy={200 + radius * Math.sin(angle)}
-            rx={5 + (i % 4)}
-            ry={3 + (i % 3)}
-            fill={i % 3 === 0 ? "#C98232" : "#FFF2BD"}
-            opacity={i % 3 === 0 ? ".35" : ".65"}
-            transform={`rotate(${i * 17} 200 200)`}
-          />
-        );
-      })
-    }
-  </g>
+  <image
+    href={base.src}
+    x="0"
+    y="0"
+    width="400"
+    height="400"
+    aria-hidden="true"
+  />
   {
     ["left", "right"].map((side) => (
       <g clip-path={`url(#${id}-${side})`} data-side={side}>
@@ -175,39 +157,6 @@ const positions = [
       </g>
     ))
   }
-  <g aria-hidden="true">
-    {
-      Array.from({ length: 45 }, (_, i) => {
-        const angle = (i * Math.PI * 2) / 45;
-        const radius = 166 + (i % 3);
-        return (
-          <ellipse
-            cx={200 + radius * Math.cos(angle)}
-            cy={200 + radius * Math.sin(angle)}
-            rx={3 + (i % 4)}
-            ry={2 + (i % 2)}
-            fill={i % 4 === 0 ? "#7B3B21" : "#F8D58F"}
-            opacity={i % 4 === 0 ? ".7" : ".5"}
-          />
-        );
-      })
-    }
-    {
-      Array.from({ length: 30 }, (_, i) => {
-        const angle = i * 2.39996;
-        const radius = 35 + (i % 6) * 19;
-        return (
-          <path
-            d={`M${200 + radius * Math.cos(angle)} ${200 + radius * Math.sin(angle)}l3 2`}
-            stroke="#54733B"
-            stroke-width="2"
-            stroke-linecap="round"
-            opacity=".8"
-          />
-        );
-      })
-    }
-  </g>
   <path
     class="pizza-divider"
     d="M200 44v312"

@@ -4,7 +4,7 @@
 
 Componentes Astro separados para header, footer, botões, títulos, benefícios, planos, badges, formulário e Builder. Prévias de aplicativo e painel usam marca e dados fictícios identificados como ilustrativos. Sem React, backend ou analytics. Playwright e tipos do Node são dependências somente de desenvolvimento para testes reproduzíveis. O build permanece estático.
 
-O Pizza Builder usa SVG original com grupos de ingredientes por sabor e clip paths para cada metade. Os quatro sabores têm representações próprias: calabresa/cebola, tomate/manjericão, frango/catupiry e quatro queijos. Cada instância recebe IDs exclusivos. Alterar a seleção atualiza grupos, descrição acessível e preço. A pizza inteira usa o sabor esquerdo; a escolha direita é preservada em memória para retornar ao meio a meio.
+O Pizza Builder usa uma base fotográfica gerada para o projeto e SVG próprio com grupos de ingredientes por sabor e clip paths para cada metade. Os quatro sabores têm representações próprias: calabresa/cebola, tomate/manjericão, frango/catupiry e quatro queijos. Cada instância recebe IDs exclusivos. Alterar a seleção atualiza grupos, descrição acessível e preço. A pizza inteira usa o sabor esquerdo; a escolha direita é preservada em memória para retornar ao meio a meio.
 
 Preços são inteiros em centavos; no meio a meio vale o maior preço, sem média ou soma. `Intl.NumberFormat` apresenta BRL. São valores fictícios, sem checkout, pedidos ou pagamentos.
 
@@ -18,7 +18,7 @@ M0.1-B deverá adicionar o contrato de dados, `method="post"`, endpoint/action, 
 
 Badges sem URL renderizam elementos não interativos “Em breve”. `StoreBadge` aceita uma URL HTTPS de loja para integração futura; nenhuma URL foi configurada. O produto é white label: aplicativos próprios de cada pizzaria, sujeitos à aprovação Apple/Google. Não há promessa de publicação automática.
 
-A referência visual não estava no repositório e continua pendente em `docs/design/whiteoven-visual-reference.png`. A fidelidade visual não foi validada. Em seu lugar, a direção textual orientou uma composição food-tech premium com SVGs originais, sem imagens externas com licença desconhecida. Fotografias não foram incluídas por ausência de assets autorizados. Tokens compartilhados cobrem cores, tipografia, raios, espaço, sombras, breakpoints e interações.
+A referência visual e o vídeo foram fornecidos pelo Product Owner em 2026-10-23. A imagem está localmente em `docs/design/whiteoven-visual-reference.png`, sem publicação no GitHub até autorização explícita; leitura do vídeo, decisões e capturas atualizadas estão em [docs/design](../design/README.md). A direção foi aplicada com imagens gastronômicas originais geradas para o projeto, superfícies creme/laranja e composição de pizza, aplicativo e gestão. Não foram recortadas fotografias ou copiadas marcas do material. Tokens compartilhados cobrem cores, tipografia, raios, espaço, sombras, breakpoints e interações. A aprovação visual final é do Product Owner.
 
 ## Verificações
 
