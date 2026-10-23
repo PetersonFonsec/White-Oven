@@ -1,0 +1,166 @@
+---
+import { flavors } from "../lib/pizza";
+import { getImage } from "astro:assets";
+import pizzaBase from "../assets/whiteoven-pizza-base.png";
+const base = await getImage({
+  src: pizzaBase,
+  width: 720,
+  format: "webp",
+  quality: 85,
+});
+interface Props {
+  id: string;
+  interactive?: boolean;
+  class?: string;
+}
+const { id, interactive = false, class: className } = Astro.props;
+const positions = [
+  [143, 132],
+  [211, 112],
+  [268, 154],
+  [120, 205],
+  [188, 186],
+  [255, 226],
+  [169, 267],
+  [226, 283],
+  [294, 201],
+  [112, 259],
+  [202, 232],
+  [275, 279],
+  [155, 92],
+  [94, 175],
+  [309, 246],
+  [225, 326],
+];
+---
+
+<svg
+  class:list={["pizza-art", className]}
+  viewBox="0 0 400 400"
+  role="img"
+  aria-labelledby={`${id}-title`}
+  data-pizza-art={interactive || undefined}
+>
+  <title id={`${id}-title`}>
+    Pizza vista de cima: calabresa à esquerda e margherita à direita
+  </title>
+  <defs>
+    <clipPath id={`${id}-left`}
+      ><path d="M200 42a158 158 0 0 0 0 316Z"></path></clipPath
+    >
+    <clipPath id={`${id}-right`}
+      ><path d="M200 42a158 158 0 0 1 0 316Z"></path></clipPath
+    >
+  </defs>
+  <image
+    href={base.src}
+    x="0"
+    y="0"
+    width="400"
+    height="400"
+    aria-hidden="true"
+  />
+  {
+    ["left", "right"].map((side) => (
+      <g clip-path={`url(#${id}-${side})`} data-side={side}>
+        {flavors.map((flavor) => (
+          <g
+            data-flavor={flavor.id}
+            data-active={
+              (
+                side === "left"
+                  ? flavor.id === "calabresa"
+                  : flavor.id === "margherita"
+              )
+                ? "true"
+                : "false"
+            }
+          >
+            {positions.map(([x, y], i) =>
+              flavor.id === "calabresa" ? (
+                <g transform={`translate(${x} ${y})`}>
+                  <circle r="17" fill="#A93727" />
+                  <circle r="12" fill="#C74A32" />
+                  <path
+                    d="m-7-4 5-3m5 10 3-3"
+                    stroke="#F3A46D"
+                    stroke-width="3"
+                    stroke-linecap="round"
+                  />
+                  {i % 2 === 0 && (
+                    <path
+                      d="M-22 20a14 14 0 0 1 24 8"
+                      stroke="#F9EFE0"
+                      stroke-width="5"
+                      fill="none"
+                    />
+                  )}
+                </g>
+              ) : flavor.id === "margherita" ? (
+                <g transform={`translate(${x} ${y})`}>
+                  <circle r="18" fill="#D34C2E" />
+                  <circle r="12" fill="#F17A4F" />
+                  <path
+                    d="m0-10 0 20m-9-6 18-8"
+                    stroke="#FFD397"
+                    stroke-width="2"
+                  />
+                  <ellipse
+                    cx="13"
+                    cy="-14"
+                    rx="8"
+                    ry="16"
+                    fill="#416A37"
+                    transform="rotate(35 13 -14)"
+                  />
+                  <path d="m10-5 6-17" stroke="#7DA557" stroke-width="1.5" />
+                </g>
+              ) : flavor.id === "frango" ? (
+                <g transform={`translate(${x} ${y}) rotate(${i * 27})`}>
+                  <path
+                    d="m-14-7 22 5m-23 4 25 3m-20 5 16 1"
+                    stroke="#B57B3C"
+                    stroke-width="5"
+                    stroke-linecap="round"
+                  />
+                  <path
+                    d="M-12-14q26-8 20 8"
+                    stroke="#FFF6DC"
+                    stroke-width="8"
+                    fill="none"
+                    stroke-linecap="round"
+                  />
+                </g>
+              ) : (
+                <g transform={`translate(${x} ${y}) rotate(${i * 23})`}>
+                  <rect
+                    x="-12"
+                    y="-11"
+                    width="19"
+                    height="18"
+                    rx="4"
+                    fill="#FFF7CB"
+                  />
+                  <path
+                    d="m-8 14 25-4"
+                    stroke="#EFA340"
+                    stroke-width="7"
+                    stroke-linecap="round"
+                  />
+                  <path d="m12-14 9 4-6 10-9-6Z" fill="#A5B693" />
+                  <circle cx="15" cy="-8" r="2" fill="#59755C" />
+                </g>
+              ),
+            )}
+          </g>
+        ))}
+      </g>
+    ))
+  }
+  <path
+    class="pizza-divider"
+    d="M200 44v312"
+    stroke="#FFF8F0"
+    stroke-width="3"
+    stroke-dasharray="6 6"></path>
+</svg>

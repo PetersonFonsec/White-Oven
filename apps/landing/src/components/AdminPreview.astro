@@ -1,0 +1,75 @@
+---
+import SectionHeading from "./SectionHeading.astro";
+---
+
+<section class="admin section" aria-labelledby="admin-title">
+  <div class="wrap admin-grid">
+    <div>
+      <SectionHeading
+        eyebrow="Clareza para tocar o negócio"
+        title="Mais controle. Mais tempo para a sua receita."
+        id="admin-title"
+        description="Um painel pensado para reunir pedidos, cardápio e indicadores. Menos telas espalhadas na rotina da pizzaria."
+      /><ul class="check-list">
+        <li>Pedidos organizados em um só lugar</li><li>
+          Cardápio e disponibilidade sob controle
+        </li><li>Indicadores para apoiar suas decisões</li>
+      </ul><p class="small muted">
+        Prévia conceitual. Os recursos do painel estão em desenvolvimento.
+      </p>
+    </div>
+    <figure class="admin-window">
+      <figcaption>
+        <span class="window-dots" aria-hidden="true">● ● ●</span><strong
+          >Pizzaria Forno da Vila</strong
+        ><span class="tag">Dados ilustrativos</span>
+      </figcaption><div class="admin-body">
+        <div class="admin-greeting">
+          <div>
+            <span class="small muted">Visão geral</span><h3>
+              Boa noite, Forno da Vila 👋
+            </h3>
+          </div><span class="small muted">Hoje</span>
+        </div><div class="metric-grid">
+          <div>
+            <span>Faturamento</span><strong>R$ 2.480</strong><small
+              >Exemplo do dia</small
+            >
+          </div><div>
+            <span>Pedidos</span><strong>38</strong><small>Dados fictícios</small
+            >
+          </div>
+        </div><div class="chart-title">
+          <strong>Movimento da noite</strong><span class="small muted"
+            >Pedidos por hora</span
+          >
+        </div><div
+          class="bar-chart"
+          role="img"
+          aria-label="Gráfico ilustrativo: 3 pedidos às 18h, 6 às 19h, 12 às 20h, 9 às 21h e 8 às 22h."
+        >
+          {
+            [25, 50, 100, 75, 66].map((height, i) => (
+              <div>
+                <>
+                  <span style={`height:${height}%`} />
+                  <small>{18 + i}h</small>
+                </>
+              </div>
+            ))
+          }
+        </div><div class="admin-bottom">
+          <div>
+            <h4>Mais pedidos</h4><p>
+              01 <strong>Calabresa</strong><span>16 un.</span>
+            </p><p>02 <strong>Margherita</strong><span>12 un.</span></p>
+          </div><div>
+            <h4>Cardápio</h4><p><strong>12 sabores</strong></p><span
+              class="availability">● Disponíveis</span
+            >
+          </div>
+        </div>
+      </div>
+    </figure>
+  </div>
+</section>

@@ -5,7 +5,15 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/.astro/**", "**/node_modules/**"] },
+  {
+    ignores: [
+      "**/dist/**",
+      "**/.astro/**",
+      "**/node_modules/**",
+      "test-results/**",
+      "playwright-report/**",
+    ],
+  },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   ...astro.configs["flat/recommended"],

@@ -6,12 +6,14 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "typecheck": "astro check"
+    "typecheck": "astro check",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",
+    "@whiteoven/design-tokens": "workspace:*",
     "astro": "^5.14.1",
-    "typescript": "^5.9.3",
-    "@whiteoven/design-tokens": "workspace:*"
+    "sharp": "0.34.5",
+    "typescript": "^5.9.3"
   }
 }

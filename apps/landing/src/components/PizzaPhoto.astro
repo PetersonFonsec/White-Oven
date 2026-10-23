@@ -1,0 +1,27 @@
+---
+import { Image } from "astro:assets";
+import pizza from "../assets/whiteoven-pizza.png";
+interface Props {
+  hero?: boolean;
+  decorative?: boolean;
+}
+const { hero = false, decorative = false } = Astro.props;
+---
+
+<Image
+  src={pizza}
+  alt={decorative
+    ? ""
+    : "Pizza artesanal vista de cima, com calabresa e cebola de um lado e tomate e manjericão do outro"}
+  class="food-photo"
+  widths={[320, 480, 720, 960]}
+  sizes={hero
+    ? "(max-width: 767px) 320px, (max-width: 1023px) 380px, 520px"
+    : "180px"}
+  width={960}
+  height={960}
+  format="webp"
+  quality={85}
+  loading={hero ? "eager" : "lazy"}
+  fetchpriority={hero ? "high" : undefined}
+/>

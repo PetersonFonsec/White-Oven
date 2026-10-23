@@ -1,0 +1,37 @@
+---
+import Button from "./Button.astro";
+interface Props {
+  plan: "flex" | "pro";
+}
+const { plan } = Astro.props;
+const isPro = plan === "pro";
+---
+
+<article class:list={["pricing-card", { "pricing-card--pro": isPro }]}>
+  <div class="pricing-top">
+    <h3>WhiteOven {isPro ? "Pro" : "Flex"}</h3><span class="tag"
+      >{isPro ? "Custo mensal previsível" : "Para começar no seu ritmo"}</span
+    >
+  </div>
+  <p class="price">
+    {isPro ? "R$ 199" : "3%"}<span>{isPro ? "/mês" : " por venda paga"}</span>
+  </p>
+  <p class="commission">
+    {
+      isPro
+        ? "0% de comissão WhiteOven sobre vendas."
+        : "Sem mensalidade. Comissão apenas nas vendas pagas pelo aplicativo."
+    }
+  </p>
+  <ul class="check-list">
+    <li>Aplicativo personalizado</li><li>Painel administrativo</li><li>
+      Funcionalidades essenciais do WhiteOven
+    </li><li>Mesmas funcionalidades no MVP</li>
+  </ul>
+  <Button
+    href="#interesse"
+    plan={plan}
+    variant={isPro ? "primary" : "secondary"}
+    >Tenho interesse no {isPro ? "Pro" : "Flex"}</Button
+  >
+</article>

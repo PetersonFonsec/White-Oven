@@ -2,7 +2,7 @@
 
 ## Project state
 
-WhiteOven is at milestone M0. The only application implemented so far is the static Astro landing page in `apps/landing`. Product capabilities described in `docs/` are plans unless the documentation explicitly says they are implemented. Do not scaffold future applications or implement backend, lead capture, logistics, or other unapproved milestone work.
+WhiteOven is at milestone M0.1-A. The only application implemented so far is the statically built Astro landing page in `apps/landing`, including a browser-only Pizza Builder demonstration and a disabled interest form prototype. Product capabilities described in `docs/` are plans unless the documentation explicitly says they are implemented. Do not scaffold future applications or implement backend, lead capture, logistics, or other unapproved milestone work. Do not advance to M0.1-B without approval.
 
 ## Working conventions
 
@@ -18,5 +18,7 @@ WhiteOven is at milestone M0. The only application implemented so far is the sta
 ## Commands
 
 - `pnpm dev`: start the landing page.
+- `pnpm test`: run browser-independent pizza selection and pricing tests with the Node test runner.
+- `pnpm test:e2e`: build and run versioned Playwright integration tests (install Chromium first).
 - `pnpm check`: format, lint, and type-check the workspace.
 - `pnpm build`: generate the static landing site in `apps/landing/dist`.

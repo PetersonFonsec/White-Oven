@@ -1,319 +1,304 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-
-const benefits = [
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import Button from "../components/Button.astro";
+import SectionHeading from "../components/SectionHeading.astro";
+import FeatureCard from "../components/FeatureCard.astro";
+import PizzaPhoto from "../components/PizzaPhoto.astro";
+import HeroDashboard from "../components/HeroDashboard.astro";
+import PizzaBuilder from "../components/PizzaBuilder.astro";
+import AdminPreview from "../components/AdminPreview.astro";
+import PricingCard from "../components/PricingCard.astro";
+import StoreBadge from "../components/StoreBadge.astro";
+import LeadForm from "../components/LeadForm.astro";
+const features = [
   {
-    number: "01",
-    title: "Seu app, sua marca",
+    title: "Sua marca em cada toque",
     description:
-      "Uma experiência própria para seus clientes, com a identidade da sua pizzaria.",
+      "Um aplicativo com as cores, o logotipo e a personalidade da sua pizzaria. A experiência começa com você.",
+    icon: "▣",
   },
   {
-    number: "02",
-    title: "Pizza do jeito de cada um",
+    title: "Cada metade, uma escolha",
     description:
-      "Um montador visual para combinar sabores e ingredientes, inclusive meio a meio.",
+      "Um Pizza Builder visual para combinar sabores e enxergar os ingredientes em cada metade da pizza.",
+    icon: "◐",
   },
   {
-    number: "03",
-    title: "Operação em um só lugar",
+    title: "Pedidos no mesmo lugar",
     description:
-      "Cardápio, pedidos e relacionamento com clientes planejados para trabalhar juntos.",
+      "Uma visão organizada dos pedidos para ajudar sua equipe a cuidar de cada detalhe.",
+    icon: "▤",
   },
+  {
+    title: "Clientes mais perto",
+    description:
+      "Relacionamento, fidelidade e recompensas pensados para fazer a próxima visita acontecer.",
+    icon: "♡",
+  },
+  {
+    title: "Seu cardápio, no seu ritmo",
+    description:
+      "Gerencie sabores, ingredientes e disponibilidade conforme a realidade da sua cozinha.",
+    icon: "≡",
+  },
+  {
+    title: "Números que fazem sentido",
+    description:
+      "Acompanhe os indicadores do negócio e conheça melhor os produtos que seus clientes escolhem.",
+    icon: "▥",
+  },
+];
+const steps = [
+  {
+    title: "Personalize sua pizzaria",
+    description:
+      "Sua identidade, suas cores e seu cardápio. A experiência digital começa com a sua marca.",
+  },
+  {
+    title: "Disponibilize seu aplicativo",
+    description:
+      "Prepare seu canal para Android e iOS. A publicação depende dos processos e da aprovação da Apple e do Google.",
+  },
+  {
+    title: "Receba e gerencie pedidos",
+    description:
+      "Quando o produto estiver disponível, acompanhe pedidos e cuide do relacionamento com seus clientes pelo painel.",
+  },
+];
+const questions = [
+  [
+    "O que significa white label?",
+    "O WhiteOven será a base tecnológica. A identidade visível para o cliente será a da sua pizzaria: nome, logotipo, cores e cardápio próprios.",
+  ],
+  [
+    "Cada pizzaria terá seu próprio aplicativo?",
+    "Essa é a proposta: aplicativos Android e iOS com a marca de cada pizzaria, desenvolvidos a partir de uma base compartilhada. Não é necessário que o consumidor utilize um aplicativo chamado WhiteOven.",
+  ],
+  [
+    "Qual a diferença entre Flex e Pro?",
+    "No MVP, ambos terão as mesmas funcionalidades. O Flex não terá mensalidade e prevê 3% por venda paga pelo aplicativo. O Pro prevê R$ 199/mês e nenhuma comissão WhiteOven sobre vendas. São condições preliminares de validação, ainda sem contratação disponível.",
+  ],
+  [
+    "Existem taxas de pagamento?",
+    "Sim. As taxas dos provedores de pagamento serão cobradas separadamente das condições do WhiteOven. Os detalhes serão apresentados antes de qualquer contratação.",
+  ],
+  [
+    "Como funciona a publicação nas lojas?",
+    "Cada aplicativo precisará seguir os requisitos e passar pela análise da App Store e do Google Play. Não prometemos aprovação imediata ou automática. Os detalhes do processo serão definidos para o lançamento.",
+  ],
+  [
+    "Já posso contratar o WhiteOven?",
+    "Ainda não. A plataforma está em desenvolvimento. Você pode explorar a demonstração visual; as inscrições para acesso antecipado estarão disponíveis em breve. O formulário desta página não envia nem salva dados.",
+  ],
 ];
 ---
 
 <BaseLayout
-  title="WhiteOven — sua pizzaria no centro da experiência"
-  description="Conheça o WhiteOven: uma plataforma white label em desenvolvimento para pizzarias criarem uma experiência digital com a própria marca."
+  title="WhiteOven — Sua pizzaria. Seu aplicativo. Seus clientes."
+  description="Conheça o WhiteOven: aplicativos com a marca da sua pizzaria, Pizza Builder meio a meio e gestão em um só lugar. Explore a demonstração e os planos preliminares."
 >
-  <header class="wrap header">
-    <a class="brand" href="#inicio" aria-label="WhiteOven, início">
-      <span class="brand-mark" aria-hidden="true">W</span>
-      <span>white<span>oven</span></span>
-    </a>
-    <nav aria-label="Navegação principal">
-      <a href="#plataforma">A plataforma</a>
-      <a href="#novidades">Novidades</a>
-    </nav>
-  </header>
-
+  <Header />
   <main id="inicio" tabindex="-1">
-    <section class="hero wrap">
-      <div class="hero-copy">
-        <p class="eyebrow">Tecnologia com sabor de casa</p>
-        <h1>Sua pizzaria merece um app com a <em>sua cara.</em></h1>
-        <p class="hero-text">
-          O WhiteOven está sendo criado para ajudar pizzarias a oferecer uma
-          experiência digital própria — do primeiro toque à escolha de cada
-          ingrediente.
-        </p>
-        <a class="button" href="#plataforma"
-          >Conheça a ideia <span aria-hidden="true">↗</span></a
-        >
-        <p class="launch-note">Estamos preparando os primeiros passos.</p>
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span class="eyebrow-line" aria-hidden="true"></span>O próximo
+            capítulo da sua pizzaria
+          </p><h1>
+            Sua pizzaria.<br />Seu aplicativo.<br /><span>Seus clientes.</span>
+          </h1><p class="hero-description">
+            Transforme a experiência de pedidos da sua pizzaria com um
+            aplicativo próprio, pizzas personalizadas e um painel para gerenciar
+            seu negócio.
+          </p><div class="hero-actions">
+            <Button href="#interesse">Quero acesso antecipado</Button><Button
+              href="#demonstracao"
+              variant="secondary">Experimentar demonstração</Button
+            >
+          </div><p class="development-note">
+            <span aria-hidden="true"></span>Em desenvolvimento · inscrições em
+            breve
+          </p>
+        </div>
+        <div class="hero-composition">
+          <span class="hero-orbit" aria-hidden="true"></span><div
+            class="hero-pizza"
+          >
+            <PizzaPhoto hero />
+          </div><div class="flavor-sticker">
+            <span aria-hidden="true">◐</span><div>
+              <strong>Uma metade de cada sabor.</strong><small
+                >Ingredientes no lugar certo.</small
+              >
+            </div>
+          </div><a
+            class="phone-preview"
+            href="#demonstracao"
+            aria-label="Experimentar o Pizza Builder: prévia ilustrativa do aplicativo da Pizzaria Forno da Vila"
+          >
+            <div class="phone-notch" aria-hidden="true"></div><div
+              class="phone-content"
+            >
+              <div class="phone-header">
+                <span class="phone-logo" aria-hidden="true">F.</span><span
+                  >FORNO DA VILA<small>Pizza de verdade.</small></span
+                >
+              </div><p class="small muted">Hoje pede uma boa pizza.</p><strong
+                class="phone-heading">Qual é a sua<br />combinação?</strong
+              ><div class="phone-category">
+                <span>Seu cardápio</span><span>Meio a meio</span>
+              </div><div class="phone-pizza">
+                <PizzaPhoto decorative />
+              </div><div class="phone-product">
+                <strong>Sua pizza, seu jeito</strong><span
+                  >Calabresa + Margherita · 35 cm</span
+                >
+              </div><div class="phone-cta">
+                Monte sua pizza <span aria-hidden="true">↗</span>
+              </div><p class="phone-caption">
+                Prévia ilustrativa · app em desenvolvimento
+              </p>
+            </div>
+          </a>
+          <HeroDashboard />
+        </div>
       </div>
-      <figure class="hero-art">
-        <img
-          src="https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=1200&q=85"
-          alt="Pizza com queijo derretido, tomate e manjericão fresco sobre uma mesa"
-          width="1200"
-          height="1200"
-          fetchpriority="high"
-        />
-        <figcaption class="art-label">
-          Sua marca. Seu jeito. Sua pizza.
-        </figcaption>
-      </figure>
     </section>
-
-    <section class="intro" id="plataforma">
-      <div class="wrap intro-inner">
-        <p class="eyebrow">O próximo capítulo da sua pizzaria</p>
-        <h2>
-          Mais do que pedir pizza.<br /><em>Uma experiência para lembrar.</em>
-        </h2>
-        <p>
-          Queremos aproximar pizzarias e seus clientes com ferramentas digitais
-          que valorizem cada marca e deixem a personalização tão gostosa quanto
-          a primeira fatia.
-        </p>
+    <div class="promise-strip">
+      <div class="wrap">
+        <span
+          >Uma base inteligente.<br /><strong>Infinitas identidades.</strong
+          ></span
+        ><span>Aplicativo com sua marca</span><span>Pizza Builder visual</span
+        ><span>Gestão centralizada</span>
+      </div>
+    </div>
+    <section
+      class="features section"
+      id="funcionalidades"
+      aria-labelledby="features-title"
+    >
+      <div class="wrap">
+        <div class="section-heading-row">
+          <SectionHeading
+            eyebrow="Da primeira escolha à próxima visita"
+            title="Sua receita. Nossa tecnologia."
+            id="features-title"
+          /><p class="muted">
+            Recursos planejados para valorizar sua marca e simplificar a rotina.
+            Tudo conectado à experiência da sua pizzaria.
+          </p>
+        </div><div class="feature-grid">
+          {
+            features.map((feature, i) => (
+              <FeatureCard number={`0${i + 1}`} {...feature} />
+            ))
+          }
+        </div>
       </div>
     </section>
-
-    <section class="benefits wrap" aria-label="O que estamos planejando">
-      {
-        benefits.map((benefit) => (
-          <article class="benefit">
-            <span class="benefit-number">{benefit.number}</span>
-            <h3>{benefit.title}</h3>
-            <p>{benefit.description}</p>
-          </article>
-        ))
-      }
+    <PizzaBuilder />
+    <AdminPreview />
+    <section class="how section" id="como-funciona" aria-labelledby="how-title">
+      <div class="wrap">
+        <SectionHeading
+          eyebrow="Da sua cozinha para a tela"
+          title="Sua marca no centro. Do início ao fim."
+          id="how-title"
+          centered
+        /><ol class="steps">
+          {
+            steps.map((step, i) => (
+              <li>
+                <>
+                  <span class="step-number">0{i + 1}</span>
+                  <h3>{step.title}</h3>
+                  <p>{step.description}</p>
+                </>
+              </li>
+            ))
+          }
+        </ol>
+      </div>
     </section>
-
-    <section class="closing" id="novidades">
-      <div class="wrap closing-inner">
-        <span class="closing-icon" aria-hidden="true">✳</span>
-        <p class="eyebrow">WhiteOven está em desenvolvimento</p>
-        <h2>Uma nova forma de pedir<br />está <em>saindo do forno.</em></h2>
-        <p>Em breve, mais novidades sobre a plataforma.</p>
+    <section
+      class="pricing section"
+      id="planos"
+      aria-labelledby="pricing-title"
+    >
+      <div class="wrap">
+        <SectionHeading
+          eyebrow="Duas formas de começar"
+          title="O mesmo produto. A escolha é sua."
+          id="pricing-title"
+          description="Compare os modelos comerciais que estamos validando. No MVP, Flex e Pro terão as mesmas funcionalidades."
+          centered
+        /><div class="pricing-grid">
+          <PricingCard plan="flex" /><PricingCard plan="pro" />
+        </div><div class="pricing-notes">
+          <p>Taxas dos provedores de pagamento cobradas separadamente.</p><p>
+            Condições preliminares de validação. Planos ainda não disponíveis
+            para contratação.
+          </p>
+        </div>
+      </div>
+    </section>
+    <section class="stores section" aria-labelledby="stores-title">
+      <div class="wrap stores-inner">
+        <div>
+          <p class="eyebrow">Sua pizzaria também na tela inicial</p><h2
+            id="stores-title"
+          >
+            O app é seu.<br />A vontade de voltar, do cliente.
+          </h2><p>
+            Aplicativos próprios para cada pizzaria, com sua identidade. Estamos
+            preparando essa experiência para Android e iOS.
+          </p><div class="store-badges">
+            <StoreBadge store="apple" /><StoreBadge store="google" />
+          </div><p class="small muted">
+            Nenhum aplicativo publicado nesta etapa. Publicação sujeita à
+            aprovação das lojas.
+          </p><Button href="#interesse" variant="secondary"
+            >Quero conhecer um aplicativo de demonstração</Button
+          >
+        </div><div class="store-visual" aria-hidden="true">
+          <span class="store-ring"></span><span class="store-tile">F.</span
+          ><span class="store-tile">P<span>IZZA</span></span><span
+            class="store-tile">🍕</span
+          ><span class="store-tile">V<span>ILA</span></span><p>
+            Mesma tecnologia.<br /><strong>Personalidades únicas.</strong>
+          </p>
+        </div>
+      </div>
+    </section>
+    <LeadForm />
+    <section class="faq section" id="faq" aria-labelledby="faq-title">
+      <div class="wrap faq-grid">
+        <SectionHeading
+          eyebrow="Antes da próxima fatia"
+          title="Perguntas frequentes."
+          id="faq-title"
+          description="Transparência também faz parte da receita."
+        /><div class="faq-items">
+          {
+            questions.map(([question, answer]) => (
+              <details>
+                <>
+                  <summary>
+                    {question}
+                    <span aria-hidden="true">+</span>
+                  </summary>
+                  <p>{answer}</p>
+                </>
+              </details>
+            ))
+          }
+        </div>
       </div>
     </section>
   </main>
-
-  <footer class="wrap footer">
-    <a class="brand" href="#inicio"
-      ><span class="brand-mark" aria-hidden="true">W</span><span
-        >white<span>oven</span></span
-      ></a
-    >
-    <p>© {new Date().getFullYear()} WhiteOven. Feito para pizzarias.</p>
-  </footer>
+  <Footer />
 </BaseLayout>
-
-<style>
-  .header {
-    min-height: 96px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--wo-spacing-4);
-  }
-  .brand {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--wo-spacing-2);
-    font-size: 1.4rem;
-    font-weight: 800;
-    text-decoration: none;
-    letter-spacing: -0.06em;
-  }
-  .brand-mark {
-    width: 40px;
-    height: 40px;
-    display: grid;
-    place-items: center;
-    border-radius: var(--wo-radius-small);
-    background: var(--wo-color-primary);
-    color: var(--wo-color-onPrimary);
-  }
-  nav {
-    display: flex;
-    gap: var(--wo-spacing-5);
-  }
-  nav a {
-    display: inline-flex;
-    align-items: center;
-    min-height: 44px;
-    text-decoration: none;
-    font-size: var(--wo-fontSize-small);
-    font-weight: 700;
-  }
-  nav a:hover {
-    color: var(--wo-color-accentText);
-    text-decoration: underline;
-  }
-  .hero {
-    display: grid;
-    grid-template-columns: 1.05fr 1fr;
-    align-items: center;
-    gap: var(--wo-spacing-7);
-    padding-block: var(--wo-spacing-8) var(--wo-spacing-9);
-  }
-  h1 {
-    margin: var(--wo-spacing-5) 0;
-    font-size: clamp(2.6rem, 5vw, 4.2rem);
-    letter-spacing: -0.055em;
-    line-height: var(--wo-lineHeight-heading);
-  }
-  h1 em,
-  h2 em {
-    color: var(--wo-color-accentText);
-    font-style: normal;
-  }
-  .hero-text {
-    color: var(--wo-color-muted);
-    font-size: var(--wo-fontSize-lead);
-    margin-bottom: var(--wo-spacing-6);
-  }
-  .button span {
-    margin-left: var(--wo-spacing-3);
-  }
-  .launch-note {
-    color: var(--wo-color-muted);
-    font-size: var(--wo-fontSize-small);
-  }
-  .hero-art {
-    position: relative;
-    margin: 0;
-    padding: var(--wo-spacing-3);
-    background: var(--wo-color-surface);
-    border-radius: var(--wo-radius-large);
-    box-shadow: var(--wo-shadow-card);
-  }
-  .hero-art img {
-    display: block;
-    width: 100%;
-    height: auto;
-    aspect-ratio: 1;
-    object-fit: cover;
-    border-radius: var(--wo-radius-card);
-    background: var(--wo-color-loading);
-  }
-  .art-label {
-    position: absolute;
-    bottom: var(--wo-spacing-6);
-    left: var(--wo-spacing-6);
-    right: var(--wo-spacing-6);
-    padding: var(--wo-spacing-4);
-    border-radius: var(--wo-radius-small);
-    background: var(--wo-color-surface);
-    font-weight: 700;
-    text-align: center;
-  }
-  .intro {
-    padding-block: var(--wo-spacing-8);
-    background: var(--wo-color-surface);
-    text-align: center;
-  }
-  .intro-inner {
-    max-width: 760px;
-  }
-  h2 {
-    margin: var(--wo-spacing-4) 0;
-    font-size: clamp(2rem, 4vw, 3rem);
-    line-height: 1.15;
-    letter-spacing: -0.04em;
-  }
-  .intro-inner > p:last-child {
-    color: var(--wo-color-muted);
-    max-width: 640px;
-    margin: var(--wo-spacing-5) auto 0;
-  }
-  .benefits {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: var(--wo-spacing-5);
-    padding-block: var(--wo-spacing-8);
-  }
-  .benefit {
-    padding: var(--wo-spacing-6);
-    border-radius: var(--wo-radius-card);
-    background: var(--wo-color-surface);
-    box-shadow: var(--wo-shadow-card);
-  }
-  .benefit-number {
-    display: inline-grid;
-    place-items: center;
-    width: 44px;
-    height: 44px;
-    background: var(--wo-color-primary);
-    border-radius: var(--wo-radius-small);
-    font-weight: 800;
-  }
-  .benefit h3 {
-    font-size: 1.35rem;
-    line-height: 1.3;
-    margin-block: var(--wo-spacing-5) var(--wo-spacing-3);
-  }
-  .benefit p {
-    color: var(--wo-color-muted);
-    margin: 0;
-  }
-  .closing {
-    padding-block: var(--wo-spacing-8);
-    background: var(--wo-color-primary);
-    text-align: center;
-  }
-  .closing .eyebrow,
-  .closing h2 em {
-    color: var(--wo-color-text);
-  }
-  .closing-icon {
-    font-size: 2rem;
-  }
-  .footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--wo-spacing-5);
-    padding-block: var(--wo-spacing-6);
-  }
-  .footer p {
-    color: var(--wo-color-muted);
-    font-size: var(--wo-fontSize-small);
-  }
-  @media (max-width: 800px) {
-    .hero {
-      grid-template-columns: 1fr;
-      padding-top: var(--wo-spacing-6);
-    }
-    .hero-art {
-      max-width: 560px;
-      width: 100%;
-      margin-inline: auto;
-    }
-    .benefits {
-      grid-template-columns: 1fr;
-    }
-  }
-  @media (max-width: 480px) {
-    .header {
-      flex-wrap: wrap;
-      padding-block: var(--wo-spacing-4);
-      gap: var(--wo-spacing-2);
-    }
-    nav {
-      gap: var(--wo-spacing-4);
-    }
-    .footer {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-    .footer p {
-      margin: 0;
-    }
-  }
-</style>

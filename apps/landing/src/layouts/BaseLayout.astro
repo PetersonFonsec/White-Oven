@@ -1,4 +1,5 @@
 ---
+import "../styles/global.css";
 import tokens from "@whiteoven/design-tokens";
 
 const cssTokens = Object.entries(tokens)
@@ -6,15 +7,25 @@ const cssTokens = Object.entries(tokens)
     Object.entries(values)
       .filter(([, value]) => typeof value !== "object")
       .map(([key, value]) => {
-        const unit = ["spacing", "radius", "fontSize"].includes(group)
+        const unit = ["spacing", "radius", "fontSize", "breakpoint"].includes(
+          group,
+        )
           ? "px"
-          : "";
+          : group === "interaction"
+            ? key === "durationMs"
+              ? "ms"
+              : "px"
+            : "";
         return `--wo-${group}-${key}: ${value}${unit};`;
       }),
   )
   .join("\n");
-const shadow = tokens.shadow.card;
-const shadowCss = `--wo-shadow-card: ${shadow.offsetX}px ${shadow.offsetY}px ${shadow.blur}px rgb(37 37 37 / ${shadow.opacity});`;
+const shadowCss = Object.entries(tokens.shadow)
+  .map(
+    ([name, shadow]) =>
+      `--wo-shadow-${name}: ${shadow.offsetX}px ${shadow.offsetY}px ${shadow.blur}px rgb(37 37 37 / ${shadow.opacity});`,
+  )
+  .join("\n");
 
 interface Props {
   title: string;
@@ -32,111 +43,14 @@ const { title, description } = Astro.props;
     <meta name="description" content={description} />
     <meta name="theme-color" content="#FFF8F0" />
     <title>{title}</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:site_name" content="WhiteOven" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <style set:html={`:root { ${cssTokens} ${shadowCss} }`}></style>
-    <style is:global>
-      :root {
-        font-family: var(--wo-fontFamily-web);
-        color: var(--wo-color-text);
-        background: var(--wo-color-cream);
-        font-synthesis: none;
-        text-rendering: optimizeLegibility;
-      }
-      * {
-        box-sizing: border-box;
-      }
-      body {
-        margin: 0;
-        line-height: var(--wo-lineHeight-body);
-      }
-      a {
-        color: inherit;
-      }
-      a,
-      button {
-        touch-action: manipulation;
-      }
-      :focus-visible {
-        outline: 3px solid var(--wo-color-focus);
-        outline-offset: 4px;
-      }
-      .wrap {
-        width: min(1120px, calc(100% - 48px));
-        margin-inline: auto;
-      }
-      .eyebrow {
-        color: var(--wo-color-accentText);
-        font-size: var(--wo-fontSize-small);
-        font-weight: 700;
-        letter-spacing: 0.09em;
-        text-transform: uppercase;
-      }
-      .button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 48px;
-        padding: 12px 24px;
-        border-radius: var(--wo-radius-pill);
-        background: var(--wo-color-primary);
-        color: var(--wo-color-onPrimary);
-        font-weight: 700;
-        text-decoration: none;
-        transition: background 160ms ease;
-      }
-      .button:hover {
-        background: var(--wo-color-primaryHover);
-      }
-      .button:active {
-        background: var(--wo-color-primaryPressed);
-      }
-      button:disabled {
-        background: var(--wo-color-disabled);
-        color: var(--wo-color-onDisabled);
-        cursor: not-allowed;
-      }
-      [aria-busy="true"] {
-        cursor: progress;
-      }
-      .status {
-        padding: var(--wo-spacing-5);
-        border-radius: var(--wo-radius-small);
-        background: var(--wo-color-surface);
-        color: var(--wo-color-empty);
-      }
-      .status--error {
-        background: var(--wo-color-errorSurface);
-        color: var(--wo-color-error);
-      }
-      .skeleton {
-        background: var(--wo-color-loading);
-        border-radius: var(--wo-radius-small);
-      }
-      .skip-link {
-        position: absolute;
-        top: 8px;
-        left: 8px;
-        z-index: 10;
-        padding: 12px 20px;
-        background: var(--wo-color-surface);
-        transform: translateY(-160%);
-      }
-      .skip-link:focus {
-        transform: translateY(0);
-      }
-      @media (max-width: 680px) {
-        .wrap {
-          width: calc(100% - 32px);
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        *,
-        *::before,
-        *::after {
-          transition: none !important;
-          animation: none !important;
-        }
-      }
-    </style>
   </head>
   <body>
     <a class="skip-link" href="#inicio">Pular para o conteúdo</a>
