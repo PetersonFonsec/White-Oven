@@ -10,3 +10,9 @@ dist/
 
 test-results/
 playwright-report/
+
+.data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+lead-exports/

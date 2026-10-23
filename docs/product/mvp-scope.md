@@ -4,7 +4,7 @@ Este documento descreve o escopo de produto planejado. Os módulos do SaaS ainda
 
 ## Primeira entrega comercial
 
-A landing M0.1-A apresenta a visão comercial do WhiteOven, recursos planejados, uma demonstração interativa local do Pizza Builder, prévias ilustrativas do aplicativo/painel e um formulário de interesse demonstrativo com envio desabilitado. Sem captação de leads, persistência ou analytics.
+A landing M0.1-A apresenta a visão comercial do WhiteOven, recursos planejados, uma demonstração interativa local do Pizza Builder, prévias ilustrativas do aplicativo/painel e, desde M0.1-B, formulário real de interesse com SQLite, consentimento auditável, attribution e proteção básica contra abuso. A captação precisa ser ativada/configurada. Analytics externo não implementado; existe adaptador de eventos locais sem PII.
 
 O Builder demonstra pizza inteira ou meio a meio, ingredientes por metade e preços fictícios em reais. Meio a meio cobra o maior preço dos sabores. Não gera pedidos.
 
@@ -26,5 +26,5 @@ App Store e Google Play são indicadas como “Em breve”, sem links de downloa
 
 - Não haverá logística, cálculo de frete, roteirização, gestão de entregadores ou rastreamento.
 - Ocorrências de entrega são registros de atendimento ligados a pedidos; não são ferramentas de logística.
-- M0.1-A não implementa backend, autenticação, persistência, pagamentos, captação de leads ou deploy de produção. M0.1-B requer aprovação separada.
+- M0.1-B implementa somente o endpoint temporário de captação Astro e SQLite. Não implementa API NestJS, PostgreSQL SaaS, autenticação, pagamentos, CRM, mensagens automáticas ou deploy. M1 requer nova aprovação.
 - Não criar aplicações futuras vazias apenas para preencher diretórios.

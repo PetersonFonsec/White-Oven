@@ -1,4 +1,5 @@
 ---
+import { CONTACT_CONSENT_TEXT } from "@whiteoven/contracts";
 import SectionHeading from "./SectionHeading.astro";
 ---
 
@@ -13,13 +14,14 @@ import SectionHeading from "./SectionHeading.astro";
         eyebrow="Vamos construir essa próxima fatia?"
         title="Sua pizzaria pode fazer parte dessa história."
         id="interest-title"
-        description="Estamos preparando o acesso antecipado do WhiteOven. Em breve, você poderá manifestar seu interesse por aqui."
+        description="Deixe seu interesse em acesso antecipado. Nossa equipe poderá conversar com você sobre o WhiteOven."
       />
       <div class="notice" id="form-notice">
-        <strong>Inscrições em breve</strong><p>
-          Este formulário é um protótipo. O envio está desabilitado: seus dados
-          não são enviados nem salvos. Nenhuma inscrição será realizada nesta
-          página.
+        <strong>Acesso antecipado</strong><p
+          id="availability-status"
+          role="status"
+        >
+          Verificando disponibilidade das inscrições…
         </p>
       </div>
       <p class="small muted">
@@ -31,20 +33,25 @@ import SectionHeading from "./SectionHeading.astro";
       class="lead-form"
       id="interest-form"
       aria-describedby="form-notice"
-      autocomplete="off"
+      method="post"
+      action="/api/leads"
+      novalidate
     >
       <noscript
         ><p class="notice">
-          Este protótipo requer JavaScript para editar os campos. As inscrições
-          ainda não estão disponíveis.
+          Ative JavaScript para consultar a disponibilidade e enviar seu
+          interesse com segurança.
         </p></noscript
       >
       <fieldset class="lead-fields" disabled>
-        <legend class="sr-only">Demonstração do formulário de interesse</legend>
+        <legend class="sr-only">Formulário de interesse</legend>
         <div class="form-row">
           <label for="responsible"
             >Nome do responsável<input
               id="responsible"
+              name="responsibleName"
+              required
+              autocomplete="name"
               type="text"
               placeholder="Como podemos chamar você?"
               maxlength="100"
@@ -52,6 +59,9 @@ import SectionHeading from "./SectionHeading.astro";
           ><label for="pizzeria"
             >Nome da pizzaria<input
               id="pizzeria"
+              name="pizzeriaName"
+              required
+              autocomplete="organization"
               type="text"
               placeholder="O nome da sua marca"
               maxlength="150"
@@ -61,6 +71,9 @@ import SectionHeading from "./SectionHeading.astro";
         <label for="whatsapp"
           >WhatsApp comercial<input
             id="whatsapp"
+            name="whatsapp"
+            required
+            autocomplete="tel"
             type="tel"
             inputmode="tel"
             placeholder="(11) 99999-9999"
@@ -69,29 +82,48 @@ import SectionHeading from "./SectionHeading.astro";
         >
         <div class="form-row">
           <label for="volume"
-            >Pedidos por mês<select id="volume"
+            >Pedidos por mês<select
+              id="volume"
+              name="monthlyOrderVolume"
+              required
               ><option value="">Selecione uma faixa</option><option
-                value="under-300">Até 300</option
-              ><option value="300-1000">301 a 1.000</option><option
-                value="1000-3000">1.001 a 3.000</option
-              ><option value="over-3000">Mais de 3.000</option></select
+                value="UP_TO_300">Até 300</option
+              ><option value="FROM_301_TO_1000">301 a 1.000</option><option
+                value="FROM_1001_TO_3000">1.001 a 3.000</option
+              ><option value="OVER_3000">Mais de 3.000</option></select
             ></label
           ><label for="plan"
-            >Plano de interesse<select id="plan"
-              ><option value="undecided">Ainda estou avaliando</option><option
-                value="flex">Flex — 3% por venda</option
-              ><option value="pro">Pro — R$ 199/mês</option></select
+            >Plano de interesse<select id="plan" name="interestedPlan" required
+              ><option value="UNDECIDED">Ainda estou avaliando</option><option
+                value="FLEX">Flex — 3% por venda</option
+              ><option value="PRO">Pro — R$ 199/mês</option></select
             ></label
           >
         </div>
         <label class="consent" for="consent"
-          ><input id="consent" type="checkbox" /><span
-            >Gostaria de receber contato sobre o WhiteOven quando as inscrições
-            estiverem disponíveis. Este protótipo não registra consentimento.</span
+          ><input
+            id="consent"
+            name="contactConsent"
+            required
+            type="checkbox"
+          /><span
+            >{CONTACT_CONSENT_TEXT}
+            <a href="/privacidade" target="_blank" rel="noopener"
+              >Ler política de privacidade (nova aba)</a
+            ></span
           ></label
         >
+        <div hidden aria-hidden="true">
+          <label
+            >Site<input
+              name="website"
+              tabindex="-1"
+              autocomplete="off"
+            /></label
+          >
+        </div>
         <button class="button" type="submit" disabled
-          >Inscrições disponíveis em breve</button
+          >Registrar meu interesse</button
         >
         <p
           class="small muted"
@@ -99,32 +131,30 @@ import SectionHeading from "./SectionHeading.astro";
           role="status"
           aria-live="polite"
         >
-          Nenhum dado será cadastrado.
+          Escolha o plano que faz sentido para sua pizzaria.
         </p>
       </fieldset>
+      <p id="form-result" role="status" aria-live="polite" tabindex="-1"></p>
     </form>
   </div>
 </section>
+
 <script>
-  const form = document.querySelector<HTMLFormElement>("#interest-form");
-  // Enable prototype controls only after the submission guard is attached.
-  // A real POST action, field names and submission states belong to M0.1-B.
-  if (form) {
-    form.addEventListener("submit", (event) => event.preventDefault());
-    form.querySelector<HTMLFieldSetElement>(".lead-fields")!.disabled = false;
-  }
-  const plan = document.querySelector<HTMLSelectElement>("#plan");
-  const status = document.querySelector<HTMLElement>("#plan-status");
-  document
-    .querySelectorAll<HTMLAnchorElement>("a[data-plan]")
-    .forEach((link) => {
-      link.addEventListener("click", () => {
-        const selected = link.dataset.plan;
-        if (plan && (selected === "flex" || selected === "pro")) {
-          plan.value = selected;
-          if (status)
-            status.textContent = `Plano ${selected === "flex" ? "Flex" : "Pro"} selecionado para demonstração. Nenhum dado será cadastrado.`;
-        }
-      });
-    });
+  import "../scripts/lead-form";
 </script>
+
+<style>
+  .lead-form :global([aria-invalid="true"]) {
+    border-color: var(--wo-color-error);
+  }
+  .lead-form :global([data-field-error]) {
+    color: var(--wo-color-error);
+    display: block;
+  }
+  #form-result[data-state="error"] {
+    color: var(--wo-color-error);
+  }
+  #form-result[data-state="success"] {
+    color: var(--wo-color-success);
+  }
+</style>

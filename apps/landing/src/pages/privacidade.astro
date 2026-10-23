@@ -1,0 +1,112 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Logo from "../components/Logo.astro";
+import { getCaptureConfig } from "../server/config";
+const config = getCaptureConfig();
+const { policy } = config;
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<BaseLayout
+  title="Privacidade — WhiteOven"
+  description="Como tratamos os dados da manifestação de interesse no WhiteOven."
+>
+  <main id="inicio" class="wrap section privacy">
+    <a href="/" aria-label="Voltar à página inicial"><Logo /></a>
+    <h1>Privacidade no acesso antecipado</h1>
+    <p>
+      Versão {policy.version}. Esta política trata somente da manifestação de
+      interesse no WhiteOven, uma plataforma em desenvolvimento. O cadastro não
+      é contratação, pagamento nem garantia de acesso.
+    </p>
+    <h2>Quem é responsável</h2>
+    {
+      policy.controllerName && policy.privacyEmail ? (
+        <p>
+          Controlador: {policy.controllerName}. Contato para solicitações sobre
+          seus dados:{" "}
+          <a href={`mailto:${policy.privacyEmail}`}>{policy.privacyEmail}</a>.
+        </p>
+      ) : (
+        <p>
+          A identificação do controlador e o contato de privacidade ainda
+          precisam ser configurados pelo responsável pelo projeto. A captação
+          permanece indisponível enquanto essa configuração estiver incompleta.
+        </p>
+      )
+    }
+    <h2>Dados e finalidade</h2>
+    <p>
+      Com sua autorização explícita, registramos nome do responsável, nome da
+      pizzaria, WhatsApp comercial, faixa de pedidos mensais e plano de
+      interesse. Usamos esses dados para conversar sobre o WhiteOven e avaliar a
+      demanda e as condições comerciais. Não enviamos mensagens automáticas
+      nesta etapa.
+    </p>
+    <p>
+      Também registramos parâmetros de campanha (UTM) presentes no endereço,
+      domínio de origem quando disponível, caminho da landing, identificador e
+      data do cadastro e a versão e o texto do consentimento. Guardamos se houve
+      interação com a demonstração ou com um botão de plano para avaliar
+      conversão. Evite incluir dados pessoais nos parâmetros UTM.
+    </p>
+    <h2>Consentimento e seus direitos</h2>
+    <p>
+      O envio exige uma caixa de autorização inicialmente desmarcada. Você pode
+      solicitar acesso, correção, informação sobre o tratamento, exclusão ou
+      revogação do consentimento pelo contato acima. A revogação interrompe
+      contatos futuros e não invalida tratamentos anteriores realizados com
+      autorização. O responsável poderá confirmar sua identidade usando somente
+      as informações necessárias ao atendimento.
+    </p>
+    <h2>Retenção e proteção</h2>
+    <p>
+      Os cadastros expiram em {policy.retentionDays} dias a partir do envio, ou podem
+      ser excluídos antes mediante solicitação. A operação deve executar a limpeza
+      diária e aplicar o mesmo prazo aos backups. Solicitações de exclusão abrangem
+      exports e cópias secundárias. Backups que não permitem exclusão individual ficam
+      isolados do uso comercial até eliminação em até 30 dias, respeitado também o
+      prazo original do cadastro. Exclusões são reaplicadas antes de qualquer restauração.
+      Somente o responsável e pessoas autorizadas para validar o produto devem acessar
+      os dados. O armazenamento usa banco local no servidor, sem serviço externo de
+      captação.
+    </p>
+    <p>
+      Não vendemos dados e não integramos CRM ou fornecedores de analytics. O
+      navegador emite eventos locais sem nome, pizzaria ou WhatsApp; esses
+      eventos não são transmitidos a terceiros nem armazenados pelo adaptador
+      atual. Não usamos cookies de analytics, identificação persistente ou
+      fingerprint do visitante. O domínio de origem é reduzido ao domínio, sem
+      caminho ou parâmetros. O endereço IP não é armazenado no cadastro. Para
+      proteção contra abuso, o servidor usa temporariamente um código derivado
+      do endereço de conexão, com chave aleatória por processo, em memória por
+      até dez minutos de atividade. Esse código não é enviado a analytics nem
+      registrado em logs ou no banco.
+    </p>
+    <p>
+      A infraestrutura de hospedagem poderá tratar dados técnicos de conexão
+      para servir a página. Sua configuração de logs e acesso deve ser revisada
+      antes da publicação, evitando registrar corpos do formulário ou parâmetros
+      pessoais.
+    </p>
+    <p><a href="/">Voltar ao WhiteOven</a></p>
+  </main>
+</BaseLayout>
+<style>
+  .privacy {
+    max-width: 820px;
+  }
+  h1 {
+    margin-block: 2rem;
+  }
+  h2 {
+    margin-top: 2rem;
+  }
+  p {
+    margin-block: 1rem;
+    line-height: 1.75;
+  }
+  a {
+    text-decoration: underline;
+  }
+</style>

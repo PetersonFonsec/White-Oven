@@ -1,5 +1,7 @@
 # Referência visual e revisão da landing
 
+> Registro histórico da M0.1-A. O formulário e o build foram evoluídos na [M0.1-B](../architecture/m0-1b-lead-capture.md); as capturas preservam a revisão visual anterior.
+
 ## Referências recebidas em 2026-10-23
 
 O Product Owner forneceu a imagem `whiteoven.jpeg` e um vídeo MP4 de 20,78 segundos nesta conversa. A imagem está preservada, convertida sem recorte para [whiteoven-visual-reference.png](whiteoven-visual-reference.png). O vídeo foi analisado por quadros em 1,04s, 5,20s, 10,39s, 15,59s e 19,74s. Um [quadro de referência](whiteoven-video-reference.jpg) foi registrado; o vídeo original permanece no anexo do Product Owner, sem integrar o bundle da landing.
