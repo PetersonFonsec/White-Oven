@@ -1,0 +1,19 @@
+# Visão do produto
+
+## Visão
+
+O WhiteOven é uma plataforma SaaS white label planejada para que pizzarias ofereçam uma experiência digital com a própria marca. O produto pretende combinar aplicativos para clientes, um painel de operação e uma base compartilhada que facilite a personalização por pizzaria.
+
+## Diferencial
+
+O Pizza Builder deverá permitir a montagem visual de pizzas personalizadas, inclusive pizzas de dois sabores. A interface deverá mostrar os ingredientes distribuídos na metade correspondente, para que a escolha fique clara antes do pedido.
+
+## Clientes
+
+O público inicial são pizzarias que querem fortalecer o relacionamento direto com seus clientes por meio de canais digitais próprios.
+
+## Estado em M0
+
+Implementado: estrutura inicial do monorepo e landing page estática de apresentação.
+
+Planejado: aplicativos mobile white label, painel administrativo, backend, Pizza Builder funcional e os demais recursos da plataforma. A landing page ainda não capta leads.

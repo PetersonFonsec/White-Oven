@@ -1,0 +1,17 @@
+{
+  "name": "@whiteoven/landing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.4",
+    "astro": "^5.14.1",
+    "typescript": "^5.9.3",
+    "@whiteoven/design-tokens": "workspace:*"
+  }
+}

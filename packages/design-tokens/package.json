@@ -1,0 +1,8 @@
+{
+  "name": "@whiteoven/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    ".": "./tokens.json"
+  }
+}
