@@ -272,7 +272,11 @@ svg {
   font-weight: 800;
 }
 .hero h1 > span {
-  color: var(--wo-color-accentText);
+  color: var(--wo-color-text);
+  text-decoration: underline;
+  text-decoration-color: var(--wo-color-primary);
+  text-decoration-thickness: 0.09em;
+  text-underline-offset: 0.12em;
 }
 .hero .eyebrow {
   display: flex;
@@ -335,7 +339,18 @@ svg {
   position: absolute;
   top: 28px;
   left: -50px;
-  transform: rotate(-15deg);
+  transform: rotate(-12deg);
+  isolation: isolate;
+}
+.hero-pizza::before {
+  content: "";
+  position: absolute;
+  inset: 2%;
+  border: 10px solid var(--wo-color-surface);
+  border-radius: 50%;
+  background: var(--wo-color-surface);
+  box-shadow: var(--wo-shadow-phone);
+  z-index: -1;
 }
 .pizza-art {
   width: 100%;
@@ -375,14 +390,14 @@ svg {
 }
 .phone-preview {
   text-decoration: none;
-  width: 228px;
-  border: 7px solid var(--wo-color-text);
+  width: 244px;
+  border: 6px solid var(--wo-color-text);
   border-radius: 35px;
   background: var(--wo-color-surface);
   position: absolute;
   right: 5px;
   top: 8px;
-  transform: rotate(7deg);
+  transform: rotate(4deg);
   box-shadow: var(--wo-shadow-phone);
   padding: 26px 12px 12px;
 }
@@ -429,8 +444,21 @@ svg {
   line-height: 1.1;
   margin-top: 6px;
 }
+.phone-category {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 0.55rem;
+  font-weight: 700;
+}
+.phone-category > span {
+  border-radius: var(--wo-radius-pill);
+  padding: 4px 8px;
+  background: var(--wo-color-cream);
+  color: var(--wo-color-accentText);
+}
 .phone-pizza {
-  width: 165px;
+  width: 180px;
   margin: 8px auto;
 }
 .phone-product strong {
@@ -456,13 +484,6 @@ svg {
   font-size: 0.5rem;
   color: var(--wo-color-muted);
   margin-top: 10px;
-}
-.composition-note {
-  position: absolute;
-  right: 20px;
-  bottom: 0;
-  color: var(--wo-color-accentText);
-  font-size: 0.7rem;
 }
 .promise-strip {
   background: var(--wo-color-surface);
@@ -854,6 +875,8 @@ svg {
   margin-inline: auto;
 }
 .pricing-card {
+  display: flex;
+  flex-direction: column;
   padding: 32px;
   border: 1px solid var(--wo-color-border);
   border-radius: var(--wo-radius-card);
@@ -897,6 +920,7 @@ svg {
 }
 .pricing-card .button {
   display: flex;
+  margin-top: auto;
 }
 .pricing-notes {
   text-align: center;
@@ -1037,6 +1061,14 @@ svg {
 .interest-grid > div > p.small {
   margin-top: 16px;
 }
+.lead-fields {
+  display: grid;
+  gap: 18px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  min-width: 0;
+}
 .lead-form {
   padding: 32px;
   background: var(--wo-color-cream);
@@ -1092,7 +1124,7 @@ input[type="checkbox"] {
 .lead-form .button {
   width: 100%;
 }
-.lead-form > p {
+.lead-fields > p {
   font-size: 0.7rem;
   text-align: center;
 }
@@ -1273,7 +1305,7 @@ input[type="checkbox"] {
     width: min(460px, 100%);
     margin-inline: auto;
     transform: none;
-    min-height: 470px;
+    min-height: 550px;
     margin-top: 20px;
   }
   .hero-pizza {
@@ -1295,13 +1327,13 @@ input[type="checkbox"] {
   }
   .flavor-sticker {
     left: 0;
-    bottom: 56px;
+    right: 0;
+    bottom: 0;
+    width: max-content;
+    max-width: 100%;
+    margin-inline: auto;
+    transform: none;
     padding: 10px 12px;
-  }
-  .composition-note {
-    right: 8px;
-    bottom: 8px;
-    font-size: 0.65rem;
   }
   .promise-strip .wrap {
     flex-wrap: wrap;
@@ -1411,7 +1443,7 @@ input[type="checkbox"] {
     font-size: 0.86rem;
   }
   .hero-composition {
-    min-height: 450px;
+    min-height: 550px;
   }
   .phone-preview {
     width: 180px;
@@ -1427,11 +1459,18 @@ input[type="checkbox"] {
   .phone-pizza {
     width: 140px;
   }
+  .phone-category {
+    font-size: 0.5rem;
+    margin-top: 8px;
+  }
+  .phone-category > span {
+    padding: 3px 5px;
+  }
   .phone-caption {
     font-size: 0.47rem;
   }
   .flavor-sticker {
-    bottom: 50px;
+    bottom: 0;
   }
   .flavor-sticker strong {
     font-size: 0.72rem;

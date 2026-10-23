@@ -13,12 +13,14 @@ const isPro = plan === "pro";
       >{isPro ? "Custo mensal previsível" : "Para começar no seu ritmo"}</span
     >
   </div>
-  <p class="price">{isPro ? "R$ 199" : "R$ 0"}<span>/mês</span></p>
+  <p class="price">
+    {isPro ? "R$ 199" : "3%"}<span>{isPro ? "/mês" : " por venda paga"}</span>
+  </p>
   <p class="commission">
     {
       isPro
-        ? "Sem comissão WhiteOven sobre vendas."
-        : "3% por venda paga pelo aplicativo."
+        ? "0% de comissão WhiteOven sobre vendas."
+        : "Sem mensalidade. Comissão apenas nas vendas pagas pelo aplicativo."
     }
   </p>
   <ul class="check-list">

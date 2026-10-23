@@ -19,5 +19,6 @@ WhiteOven is at milestone M0.1-A. The only application implemented so far is the
 
 - `pnpm dev`: start the landing page.
 - `pnpm test`: run browser-independent pizza selection and pricing tests with the Node test runner.
+- `pnpm test:e2e`: build and run versioned Playwright integration tests (install Chromium first).
 - `pnpm check`: format, lint, and type-check the workspace.
 - `pnpm build`: generate the static landing site in `apps/landing/dist`.

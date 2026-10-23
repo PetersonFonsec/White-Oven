@@ -19,6 +19,10 @@ const positions = [
   [112, 259],
   [202, 232],
   [275, 279],
+  [155, 92],
+  [94, 175],
+  [309, 246],
+  [225, 326],
 ];
 ---
 
@@ -55,6 +59,25 @@ const positions = [
   <circle cx="200" cy="200" r="180" fill={`url(#${id}-crust)`}></circle>
   <circle cx="200" cy="200" r="159" fill="#AD4024"></circle>
   <circle cx="200" cy="200" r="151" fill={`url(#${id}-cheese)`}></circle>
+  <g aria-hidden="true">
+    {
+      Array.from({ length: 38 }, (_, i) => {
+        const angle = i * 2.39996;
+        const radius = 27 + (i % 7) * 18;
+        return (
+          <ellipse
+            cx={200 + radius * Math.cos(angle)}
+            cy={200 + radius * Math.sin(angle)}
+            rx={5 + (i % 4)}
+            ry={3 + (i % 3)}
+            fill={i % 3 === 0 ? "#C98232" : "#FFF2BD"}
+            opacity={i % 3 === 0 ? ".35" : ".65"}
+            transform={`rotate(${i * 17} 200 200)`}
+          />
+        );
+      })
+    }
+  </g>
   {
     ["left", "right"].map((side) => (
       <g clip-path={`url(#${id}-${side})`} data-side={side}>
@@ -152,21 +175,39 @@ const positions = [
       </g>
     ))
   }
-  <g fill="#A8692F" opacity=".5"
-    >{
-      Array.from({ length: 20 }, (_, i) => {
-        const angle = (i * Math.PI) / 10;
+  <g aria-hidden="true">
+    {
+      Array.from({ length: 45 }, (_, i) => {
+        const angle = (i * Math.PI * 2) / 45;
+        const radius = 166 + (i % 3);
         return (
           <ellipse
-            cx={200 + 168 * Math.cos(angle)}
-            cy={200 + 168 * Math.sin(angle)}
-            rx="3"
-            ry="2"
+            cx={200 + radius * Math.cos(angle)}
+            cy={200 + radius * Math.sin(angle)}
+            rx={3 + (i % 4)}
+            ry={2 + (i % 2)}
+            fill={i % 4 === 0 ? "#7B3B21" : "#F8D58F"}
+            opacity={i % 4 === 0 ? ".7" : ".5"}
           />
         );
       })
-    }</g
-  >
+    }
+    {
+      Array.from({ length: 30 }, (_, i) => {
+        const angle = i * 2.39996;
+        const radius = 35 + (i % 6) * 19;
+        return (
+          <path
+            d={`M${200 + radius * Math.cos(angle)} ${200 + radius * Math.sin(angle)}l3 2`}
+            stroke="#54733B"
+            stroke-width="2"
+            stroke-linecap="round"
+            opacity=".8"
+          />
+        );
+      })
+    }
+  </g>
   <path
     class="pizza-divider"
     d="M200 44v312"

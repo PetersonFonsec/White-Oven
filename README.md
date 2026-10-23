@@ -16,15 +16,16 @@ pnpm dev
 
 ## Comandos na raiz
 
-| Comando          | Descrição                                                                 |
-| ---------------- | ------------------------------------------------------------------------- |
-| `pnpm dev`       | Inicia a landing page Astro em modo de desenvolvimento.                   |
-| `pnpm build`     | Gera o site estático em `apps/landing/dist`.                              |
-| `pnpm typecheck` | Verifica os componentes e tipos Astro/TypeScript.                         |
-| `pnpm lint`      | Executa ESLint nos arquivos do workspace.                                 |
-| `pnpm format`    | Formata os arquivos compatíveis com Prettier.                             |
-| `pnpm test`      | Testa seleção de sabores e preço demonstrativo com o test runner do Node. |
-| `pnpm check`     | Verifica formatação, lint e tipos.                                        |
+| Comando          | Descrição                                                                      |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `pnpm dev`       | Inicia a landing page Astro em modo de desenvolvimento.                        |
+| `pnpm build`     | Gera o site estático em `apps/landing/dist`.                                   |
+| `pnpm typecheck` | Verifica os componentes e tipos Astro/TypeScript.                              |
+| `pnpm lint`      | Executa ESLint nos arquivos do workspace.                                      |
+| `pnpm format`    | Formata os arquivos compatíveis com Prettier.                                  |
+| `pnpm test`      | Testa seleção de sabores e preço demonstrativo com o test runner do Node.      |
+| `pnpm test:e2e`  | Gera o build e verifica a integração DOM/SVG em desktop/mobile com Playwright. |
+| `pnpm check`     | Verifica formatação, lint e tipos.                                             |
 
 ## Estrutura
 
@@ -42,3 +43,7 @@ O build estático poderá ser servido pelo Caddy em uma milestone futura. M0 nã
 A fundação M0 foi incorporada em `main`. O histórico de validação local está em [M0](docs/architecture/m0-validation.md). A implementação e os limites da landing atual estão em [M0.1-A](docs/architecture/m0-1a-landing.md).
 
 Execute `pnpm check`, `pnpm test` e `pnpm build`. O workflow CI executa as mesmas verificações, após instalação congelada pelo lockfile. O formulário não envia ou salva dados; as escolhas do Builder existem apenas em memória. Nenhuma API, analytics ou integração de pagamentos foi adicionada.
+
+## Testes de navegador e revisão visual
+
+Instale o navegador com `pnpm exec playwright install chromium` e execute `pnpm test:e2e`. Os testes iniciam e encerram o preview local automaticamente. A CI usa Chromium com suas dependências Linux. Capturas e instruções de reprodução estão em [docs/design](docs/design/README.md). A aprovação de fidelidade à referência visual está pendente do asset solicitado nesse documento.
