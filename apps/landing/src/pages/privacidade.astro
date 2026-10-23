@@ -63,9 +63,13 @@ Astro.response.headers.set("Cache-Control", "no-store");
     <p>
       Os cadastros expiram em {policy.retentionDays} dias a partir do envio, ou podem
       ser excluídos antes mediante solicitação. A operação deve executar a limpeza
-      diária e aplicar o mesmo prazo aos backups. Somente o responsável e pessoas
-      autorizadas para validar o produto devem acessar os dados. O armazenamento usa
-      banco local no servidor, sem serviço externo de captação.
+      diária e aplicar o mesmo prazo aos backups. Solicitações de exclusão abrangem
+      exports e cópias secundárias. Backups que não permitem exclusão individual ficam
+      isolados do uso comercial até eliminação em até 30 dias, respeitado também o
+      prazo original do cadastro. Exclusões são reaplicadas antes de qualquer restauração.
+      Somente o responsável e pessoas autorizadas para validar o produto devem acessar
+      os dados. O armazenamento usa banco local no servidor, sem serviço externo de
+      captação.
     </p>
     <p>
       Não vendemos dados e não integramos CRM ou fornecedores de analytics. O
@@ -73,8 +77,11 @@ Astro.response.headers.set("Cache-Control", "no-store");
       eventos não são transmitidos a terceiros nem armazenados pelo adaptador
       atual. Não usamos cookies de analytics, identificação persistente ou
       fingerprint do visitante. O domínio de origem é reduzido ao domínio, sem
-      caminho ou parâmetros. O endereço IP não é armazenado no cadastro nem
-      usado pelo limitador de envios desta aplicação.
+      caminho ou parâmetros. O endereço IP não é armazenado no cadastro. Para
+      proteção contra abuso, o servidor usa temporariamente um código derivado
+      do endereço de conexão, com chave aleatória por processo, em memória por
+      até dez minutos de atividade. Esse código não é enviado a analytics nem
+      registrado em logs ou no banco.
     </p>
     <p>
       A infraestrutura de hospedagem poderá tratar dados técnicos de conexão

@@ -8,7 +8,7 @@ export const MONTHLY_ORDER_VOLUMES = [
 ] as const;
 export type InterestedPlan = (typeof INTERESTED_PLANS)[number];
 export type MonthlyOrderVolume = (typeof MONTHLY_ORDER_VOLUMES)[number];
-export const CONSENT_VERSION = "2026-10-23.1";
+export const CONSENT_VERSION = "2026-10-23.2";
 export const CONTACT_CONSENT_TEXT =
   "Autorizo o contato da equipe WhiteOven pelo WhatsApp informado para conversar sobre meu interesse no produto, conforme a Política de Privacidade.";
 export const RETENTION_DAYS = 180;

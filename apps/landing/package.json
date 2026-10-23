@@ -8,7 +8,7 @@
     "build": "astro build",
     "typecheck": "astro check",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "start": "node --env-file-if-exists=.env dist/server/entry.mjs"
+    "start": "node --env-file-if-exists=.env --experimental-strip-types scripts/serve.mjs"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",

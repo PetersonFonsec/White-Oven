@@ -108,8 +108,17 @@ test("configuration fails closed without identity, activation, valid origin or p
     LEADS_CONTROLLER_NAME: "Test Owner",
     LEADS_PRIVACY_EMAIL: "privacy@example.test",
     SITE_ORIGIN: "https://example.test",
+    LEADS_TRUSTED_PROXIES: "127.0.0.1",
   };
   assert.equal(getCaptureConfig(env).enabled, true);
+  assert.equal(
+    getCaptureConfig({ ...env, LEADS_TRUSTED_PROXIES: "" }).enabled,
+    false,
+  );
+  assert.equal(
+    getCaptureConfig({ ...env, LEADS_TRUSTED_PROXIES: "*" }).enabled,
+    false,
+  );
   assert.equal(
     getCaptureConfig({ ...env, SITE_ORIGIN: "http://example.test" }).enabled,
     false,
@@ -300,5 +309,163 @@ test("operator CLI exports restricted JSON without PII stdout and guards destruc
     assert.equal(run("clear-dev", "--confirm").status, 0);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("one abusive client cannot exhaust the shared budget; windows and table size are bounded", () => {
+  const limiter = new SubmissionLimiter(20, 1000, 2, 2);
+  assert.equal(limiter.allow(10000, "client-a"), true);
+  assert.equal(limiter.allow(10001, "client-a"), true);
+  for (let i = 0; i < 100; i++)
+    assert.equal(limiter.allow(10002, "client-a"), false);
+  assert.equal(limiter.allow(10003, "client-b"), true);
+  assert.equal(limiter.allow(10004, "client-c"), false); // Bounded identity table, no eviction bypass.
+  assert.equal(limiter.allow(11005, "client-c"), true);
+  const global = new SubmissionLimiter(2, 1000, 10);
+  assert.equal(global.allow(10000, "a"), true);
+  assert.equal(global.allow(10001, "b"), true);
+  assert.equal(global.allow(10002, "c"), false);
+  assert.equal(global.allow(11003, "c"), true);
+});
+const streamingRequest = (stream) =>
+  new Request("http://localhost:4321/api/leads", {
+    method: "POST",
+    duplex: "half",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: "http://localhost:4321",
+      "Idempotency-Key": randomUUID(),
+    },
+    body: stream,
+  });
+test(
+  "endless and trickling streams time out, cancellation does not block, capacity is released",
+  { timeout: 2000 },
+  async () => {
+    let cancelled = 0;
+    let writes = 0;
+    const handler = createLeadHandler(
+      config,
+      () => ({
+        save() {
+          writes++;
+          throw new Error("must not persist");
+        },
+      }),
+      new SubmissionLimiter(),
+      Date.now,
+      30,
+    );
+    for (const trickle of [false, true]) {
+      let interval;
+      const stream = new ReadableStream({
+        start(controller) {
+          if (trickle)
+            interval = setInterval(
+              () => controller.enqueue(new Uint8Array([32])),
+              5,
+            );
+        },
+        cancel() {
+          cancelled++;
+          clearInterval(interval);
+          return new Promise(() => {});
+        },
+      });
+      const response = await handler(streamingRequest(stream), "slow-client");
+      assert.equal(response.status, 408);
+      assert.match((await response.json()).message, /demorou/);
+    }
+    assert.equal(cancelled, 2);
+    assert.equal(writes, 0);
+    // Two previous timeouts must have released this client's two read slots.
+    assert.equal(
+      (await handler(request({ ...fixture(), website: "bot" }), "slow-client"))
+        .status,
+      422,
+    );
+  },
+);
+test("read concurrency isolates clients and releases all slots on failure", async () => {
+  const limiter = new SubmissionLimiter();
+  const a = limiter.acquire("a"),
+    b = limiter.acquire("a");
+  assert.ok(a);
+  assert.ok(b);
+  assert.equal(limiter.acquire("a"), null);
+  const c = limiter.acquire("b");
+  assert.ok(c);
+  a();
+  a();
+  assert.ok(limiter.acquire("a"));
+  b();
+  c();
+  const global = new SubmissionLimiter();
+  const releases = [];
+  for (let i = 0; i < 16; i++) releases.push(global.acquire(String(i)));
+  assert.ok(releases.every(Boolean));
+  assert.equal(global.acquire("new"), null);
+  releases[0]();
+  assert.ok(global.acquire("new"));
+});
+test("body size is enforced even without content-length and cancel never resolving", async () => {
+  const handler = createLeadHandler(config, () => {
+    throw new Error("must not persist");
+  });
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(8193));
+    },
+    cancel() {
+      return new Promise(() => {});
+    },
+  });
+  assert.equal((await handler(streamingRequest(stream))).status, 413);
+});
+test("policy snapshot changes conflict for the same key and never deduplicate a new consent", () => {
+  const store = new SqliteLeadStore(":memory:");
+  try {
+    const policy = config().policy;
+    const input = valid();
+    const now = Date.now();
+    const key = randomUUID();
+    const first = store.save(input, key, policy, now);
+    assert.equal(
+      store.save(
+        input,
+        key,
+        {
+          retentionDays: policy.retentionDays,
+          privacyEmail: policy.privacyEmail,
+          controllerName: policy.controllerName,
+          text: policy.text,
+          version: policy.version,
+        },
+        now,
+      ).lead.id,
+      first.lead.id,
+    );
+    for (const changed of [
+      { ...policy, text: policy.text + " Texto alterado." },
+      { ...policy, controllerName: "Outro controlador" },
+      { ...policy, privacyEmail: "other@example.test" },
+      { ...policy, retentionDays: 90 },
+      { ...policy, version: "future" },
+    ]) {
+      assert.throws(
+        () => store.save(input, key, changed, now),
+        /IDEMPOTENCY_CONFLICT/,
+      );
+      const saved = store.save(input, randomUUID(), changed, now);
+      assert.equal(saved.created, true);
+      assert.deepEqual(saved.lead.consentPolicy, changed);
+      assert.equal(
+        Date.parse(saved.lead.expiresAt),
+        now + changed.retentionDays * 86400000,
+      );
+    }
+    assert.deepEqual(store.exportLeads()[0].consentPolicy, policy);
+  } finally {
+    store.close();
   }
 });

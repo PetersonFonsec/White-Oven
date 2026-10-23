@@ -56,8 +56,8 @@ try {
   if (command === "delete")
     console.log(
       store.deleteLead(argument)
-        ? "Registro removido."
-        : "Registro não encontrado.",
+        ? "Banco ativo: registro removido. Exports/backups exigem o procedimento de exclusão documentado."
+        : "Banco ativo: registro não encontrado. Verifique também exports/backups conforme o procedimento de exclusão.",
     );
   if (command === "clear-dev") {
     store.clearDevelopment();

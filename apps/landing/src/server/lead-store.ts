@@ -3,7 +3,6 @@ import { randomUUID, createHash } from "node:crypto";
 import { mkdirSync, chmodSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import {
-  RETENTION_DAYS,
   type LeadSubmission,
   type Lead,
   type ConsentPolicySnapshot,
@@ -66,7 +65,15 @@ export class SqliteLeadStore implements LeadRepository {
     return this.db
       .transaction(() => {
         this.purgeExpired(now);
-        const payloadHash = digest(input);
+        // Fixed property order makes this snapshot identity independent of object insertion order.
+        const policyId = digest([
+          policy.version,
+          policy.text,
+          policy.controllerName,
+          policy.privacyEmail,
+          policy.retentionDays,
+        ]);
+        const payloadHash = digest([input, policyId]);
         const existing = this.db
           .prepare(
             "SELECT payload_hash, lead_id FROM lead_requests WHERE key = ?",
@@ -88,6 +95,7 @@ export class SqliteLeadStore implements LeadRepository {
           input.monthlyOrderVolume,
           input.interestedPlan,
           input.consentVersion,
+          policyId,
         ]);
         const duplicate = this.db
           .prepare(
@@ -104,7 +112,9 @@ export class SqliteLeadStore implements LeadRepository {
             ...values,
             id: randomUUID(),
             createdAt: new Date(now).toISOString(),
-            expiresAt: new Date(now + RETENTION_DAYS * 86400000).toISOString(),
+            expiresAt: new Date(
+              now + policy.retentionDays * 86400000,
+            ).toISOString(),
             consentPolicy: policy,
           };
           this.db

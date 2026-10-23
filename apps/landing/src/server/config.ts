@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { parseTrustedProxies } from "./http-server.ts";
 import {
   CONSENT_VERSION,
   CONTACT_CONSENT_TEXT,
@@ -19,6 +20,7 @@ export function getCaptureConfig(
   const rawOrigin = env.SITE_ORIGIN ?? "http://localhost:4321";
   let origin = "";
   let secureOrigin = false;
+  let proxyReady = false;
   try {
     const url = new URL(rawOrigin);
     const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
@@ -26,6 +28,8 @@ export function getCaptureConfig(
       url.origin === rawOrigin &&
       (url.protocol === "https:" || (local && url.protocol === "http:"));
     origin = url.origin;
+    proxyReady =
+      local || parseTrustedProxies(env.LEADS_TRUSTED_PROXIES).size > 0;
   } catch {
     /* Invalid config disables capture, never leaks a config exception. */
   }
@@ -42,6 +46,7 @@ export function getCaptureConfig(
     enabled:
       env.LEADS_ENABLED === "true" &&
       secureOrigin &&
+      proxyReady &&
       identityReady &&
       storageReady,
     origin,

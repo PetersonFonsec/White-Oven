@@ -21,7 +21,7 @@ Abra `http://localhost:4321`. Sem configuração completa, o formulário permane
 | ------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | `pnpm dev`                                        | Servidor Astro de desenvolvimento.                                                 |
 | `pnpm build`                                      | Landing pré-renderizada em `apps/landing/dist/client` e servidor em `dist/server`. |
-| `pnpm start`                                      | Inicia o build Node standalone, após build.                                        |
+| `pnpm start`                                      | Inicia o build Astro pelo inicializador Node com limites de conexão, após build.   |
 | `pnpm check`                                      | Formatação, ESLint e tipos strict.                                                 |
 | `pnpm test`                                       | Testes de pizza, contrato, endpoint e SQLite real com Node.                        |
 | `pnpm test:e2e`                                   | Build + Playwright desktop/mobile com servidor e banco sintéticos.                 |
@@ -39,6 +39,8 @@ Instale Chromium com `pnpm exec playwright install chromium`. Alternativamente, 
 - `packages/contracts`: contrato e validação isomórfica do lead, sem dependências de servidor.
 - `packages/design-tokens`: identidade visual reutilizável.
 - `docs/product`, `docs/architecture`, `docs/adr`: estado do produto e decisões.
+
+Use `pnpm start`, que aplica limites HTTP, identifica clientes pela conexão e ignora cabeçalhos de encaminhamento não confiáveis. Origem pública exige `LEADS_TRUSTED_PROXIES` com IPs exatos do último proxy e substituição de `X-Forwarded-For`; consulte o runbook. Executar o entrypoint Astro diretamente em produção mantém a captação bloqueada.
 
 O build agora **exige processo Node para captação e política dinâmica**; servir apenas arquivos estáticos não oferece esse fluxo. A decisão e as alternativas estão no [ADR 0002](docs/adr/0002-lead-capture.md). Veja [operação, privacidade e métricas](docs/architecture/m0-1b-lead-capture.md). Caddy poderá atuar como reverse proxy em uma milestone futura; não há deploy nem alterações de infraestrutura Orbia nesta entrega.
 

@@ -19,7 +19,7 @@ WhiteOven is at M0.1-B. The only app is the Astro landing in `apps/landing`: pre
 ## Commands
 
 - `pnpm dev`: start local Astro with app `.env`.
-- `pnpm build` / `pnpm start`: build and serve Node standalone.
+- `pnpm build` / `pnpm start`: build and serve through the guarded Node launcher (`pnpm start`), preserving trusted request identity and HTTP limits.
 - `pnpm test`: Node tests for pizza, lead contract, endpoint and persistence.
 - `pnpm test:e2e`: build and test desktop/mobile with synthetic local capture configuration.
 - `pnpm check`: format, lint, typecheck.
