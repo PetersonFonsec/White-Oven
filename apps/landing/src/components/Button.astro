@@ -1,0 +1,15 @@
+---
+interface Props {
+  href: string;
+  variant?: "primary" | "secondary";
+  plan?: "flex" | "pro";
+  class?: string;
+}
+const { href, variant = "primary", plan, class: className } = Astro.props;
+---
+
+<a
+  class:list={["button", `button--${variant}`, className]}
+  href={href}
+  data-plan={plan}><slot /><span aria-hidden="true">↗</span></a
+>

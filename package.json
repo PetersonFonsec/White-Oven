@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck"
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck",
+    "test": "pnpm --filter @whiteoven/landing test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

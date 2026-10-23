@@ -1,0 +1,59 @@
+---
+import Logo from "./Logo.astro";
+import Button from "./Button.astro";
+const links = [
+  ["#funcionalidades", "Funcionalidades"],
+  ["#como-funciona", "Como funciona"],
+  ["#planos", "Planos"],
+  ["#faq", "Perguntas frequentes"],
+];
+---
+
+<header class="site-header">
+  <div class="wrap header-inner">
+    <Logo />
+    <button
+      class="menu-toggle"
+      type="button"
+      aria-expanded="false"
+      aria-controls="main-nav"
+      hidden><span>Menu</span><span aria-hidden="true">☰</span></button
+    >
+    <nav id="main-nav" aria-label="Navegação principal">
+      {links.map(([href, label]) => <a href={href}>{label}</a>)}
+      <Button href="#interesse">Quero acesso antecipado</Button>
+    </nav>
+  </div>
+</header>
+<script>
+  const toggle = document.querySelector<HTMLButtonElement>(".menu-toggle");
+  const nav = document.querySelector<HTMLElement>("#main-nav");
+  if (toggle && nav) {
+    toggle.hidden = false;
+    nav.dataset.enhanced = "true";
+    const close = () => {
+      toggle.setAttribute("aria-expanded", "false");
+      nav.dataset.open = "false";
+    };
+    toggle.addEventListener("click", () => {
+      const open = toggle.getAttribute("aria-expanded") !== "true";
+      toggle.setAttribute("aria-expanded", String(open));
+      nav.dataset.open = String(open);
+    });
+    nav.addEventListener("click", (event) => {
+      if ((event.target as Element).closest("a")) close();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (
+        event.key === "Escape" &&
+        toggle.getAttribute("aria-expanded") === "true"
+      ) {
+        close();
+        toggle.focus();
+      }
+    });
+    document.addEventListener("click", (event) => {
+      if (!(event.target as Element).closest(".site-header")) close();
+    });
+  }
+</script>
