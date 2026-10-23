@@ -2,9 +2,9 @@
 
 ## Referências recebidas em 2026-10-23
 
-O Product Owner forneceu a imagem `whiteoven.jpeg` e um vídeo MP4 de 20,78 segundos nesta conversa. A imagem está preservada, convertida sem recorte para `docs/design/whiteoven-visual-reference.png` (arquivo local, não versionado). O vídeo foi analisado por quadros em 1,04s, 5,20s, 10,39s, 15,59s e 19,74s. Um quadro foi registrado localmente em `docs/design/whiteoven-video-reference.jpg` (não versionado); o vídeo original permanece no anexo do Product Owner, sem integrar o bundle da landing.
+O Product Owner forneceu a imagem `whiteoven.jpeg` e um vídeo MP4 de 20,78 segundos nesta conversa. A imagem está preservada, convertida sem recorte para [whiteoven-visual-reference.png](whiteoven-visual-reference.png). O vídeo foi analisado por quadros em 1,04s, 5,20s, 10,39s, 15,59s e 19,74s. Um [quadro de referência](whiteoven-video-reference.jpg) foi registrado; o vídeo original permanece no anexo do Product Owner, sem integrar o bundle da landing.
 
-A referência já está disponível para o trabalho local. A publicação da imagem fornecida e do quadro do vídeo no GitHub aguarda autorização explícita do Product Owner; esses arquivos estão excluídos pelo `.gitignore`. A aprovação visual das novas capturas cabe ao Product Owner; não afirmamos equivalência literal nem copiamos marca, textos ou layout completo. Os arquivos de referência em `docs/design` são material de análise, não assets usados no site. O envio dessas referências não foi tratado como licença para recortar e publicar suas fotografias.
+O Product Owner autorizou explicitamente a publicação da imagem de referência e do quadro do vídeo na PR #2 do repositório `PetersonFonsec/White-Oven`. A dependência do asset foi atendida e os dois arquivos estão versionados para orientar a revisão. A aprovação visual das novas capturas cabe ao Product Owner; não afirmamos equivalência literal nem copiamos marca, textos ou layout completo. Os arquivos de referência em `docs/design` são material de análise, não assets usados no site. O envio dessas referências não foi tratado como licença para recortar e publicar suas fotografias.
 
 ## Aplicação da direção visual
 

@@ -5,7 +5,7 @@
 - `whiteoven-visual-reference.png`: conversão sem recorte da imagem `whiteoven.jpeg`, recebida em 2026-10-23. Contém marcas e produtos de terceiros; usada apenas para orientar a direção estética.
 - `whiteoven-video-reference.jpg`: quadro de aproximadamente 19,74s do MP4 de referência de 20,78s recebido na mesma data. O vídeo demonstra montagem de pizza por camadas de ingredientes. Não é um vídeo produzido pelo WhiteOven.
 
-Esses arquivos ficam localmente em `docs/design`, excluídos do Git pelo `.gitignore` até autorização explícita para publicação no GitHub, e não são importados pela aplicação. Não representam autorização para reutilizar fotos, marca, textos ou interface do material na landing.
+Esses dois arquivos estão versionados em `docs/design`, com autorização explícita do Product Owner para publicação na PR #2 de `PetersonFonsec/White-Oven`, e não são importados pela aplicação. Não representam autorização para reutilizar fotos, marca, textos ou interface do material na landing.
 
 ## Assets gerados para a landing
 

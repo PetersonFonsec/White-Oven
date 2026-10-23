@@ -18,7 +18,7 @@ M0.1-B deverá adicionar o contrato de dados, `method="post"`, endpoint/action, 
 
 Badges sem URL renderizam elementos não interativos “Em breve”. `StoreBadge` aceita uma URL HTTPS de loja para integração futura; nenhuma URL foi configurada. O produto é white label: aplicativos próprios de cada pizzaria, sujeitos à aprovação Apple/Google. Não há promessa de publicação automática.
 
-A referência visual e o vídeo foram fornecidos pelo Product Owner em 2026-10-23. A imagem está localmente em `docs/design/whiteoven-visual-reference.png`, sem publicação no GitHub até autorização explícita; leitura do vídeo, decisões e capturas atualizadas estão em [docs/design](../design/README.md). A direção foi aplicada com imagens gastronômicas originais geradas para o projeto, superfícies creme/laranja e composição de pizza, aplicativo e gestão. Não foram recortadas fotografias ou copiadas marcas do material. Tokens compartilhados cobrem cores, tipografia, raios, espaço, sombras, breakpoints e interações. A aprovação visual final é do Product Owner.
+A referência visual e o vídeo foram fornecidos pelo Product Owner em 2026-10-23. A imagem está versionada em `docs/design/whiteoven-visual-reference.png`, com autorização explícita do Product Owner; leitura do vídeo, decisões e capturas atualizadas estão em [docs/design](../design/README.md). A direção foi aplicada com imagens gastronômicas originais geradas para o projeto, superfícies creme/laranja e composição de pizza, aplicativo e gestão. Não foram recortadas fotografias ou copiadas marcas do material. Tokens compartilhados cobrem cores, tipografia, raios, espaço, sombras, breakpoints e interações. A aprovação visual final é do Product Owner.
 
 ## Verificações
 
