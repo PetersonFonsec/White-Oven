@@ -1,5 +1,7 @@
 # M0.1-A — Landing de validação comercial
 
+> Registro histórico da M0.1-A. O formulário e o build foram evoluídos na [M0.1-B](m0-1b-lead-capture.md); as capturas preservam a revisão visual anterior.
+
 ## Implementação
 
 Componentes Astro separados para header, footer, botões, títulos, benefícios, planos, badges, formulário e Builder. Prévias de aplicativo e painel usam marca e dados fictícios identificados como ilustrativos. Sem React, backend ou analytics. Playwright e tipos do Node são dependências somente de desenvolvimento para testes reproduzíveis. O build permanece estático.

@@ -21,9 +21,11 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
+      - name: Domain, endpoint and SQLite tests
+        run: pnpm test
       - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm test:e2e
+      - name: Build and browser tests with synthetic capture configuration
+        run: pnpm test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

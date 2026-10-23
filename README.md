@@ -1,49 +1,45 @@
 # WhiteOven
 
-Plataforma SaaS white label planejada para pizzarias. A milestone **M0.1-A** implementa uma landing comercial Astro com demonstração local do Pizza Builder, planos preliminares e formulário de interesse com envio desabilitado. Aplicativos mobile, painel administrativo e backend continuam planejados.
+SaaS white label planejado para pizzarias. **M0.1-B** implementa a landing Astro, Pizza Builder demonstrativo e captação real de interesse com SQLite local. Angular, React Native/Expo, API principal NestJS, pagamentos e onboarding continuam planejados.
 
-## Requisitos
+## Requisitos e início local
 
-- Node.js 22 LTS (22.12 ou superior) ou 24 LTS; CI fixada em 22.23.2
-- pnpm 11.25.0 (o campo `packageManager` permite ativação via Corepack quando necessário)
-
-## Começar
+Node.js 22 LTS (22.12+) ou 24 LTS e pnpm 11.25.0; CI usa Node 22.23.2. SQLite requer addon nativo: se não houver binário para sua plataforma, a instalação usa compilador C/C++ e Python via node-gyp. Não ignore os scripts de instalação autorizados em `pnpm-workspace.yaml`.
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
+cp apps/landing/.env.example apps/landing/.env
+# Preencha controlador real e e-mail de privacidade; então LEADS_ENABLED=true.
 pnpm dev
 ```
 
+Abra `http://localhost:4321`. Sem configuração completa, o formulário permanece indisponível. O arquivo `.env` é ignorado pelo Git e carregado pelos comandos dev/start/CLI; variáveis já presentes no processo têm prioridade. Use somente dados sintéticos em testes locais.
+
 ## Comandos na raiz
 
-| Comando          | Descrição                                                                      |
-| ---------------- | ------------------------------------------------------------------------------ |
-| `pnpm dev`       | Inicia a landing page Astro em modo de desenvolvimento.                        |
-| `pnpm build`     | Gera o site estático em `apps/landing/dist`.                                   |
-| `pnpm typecheck` | Verifica os componentes e tipos Astro/TypeScript.                              |
-| `pnpm lint`      | Executa ESLint nos arquivos do workspace.                                      |
-| `pnpm format`    | Formata os arquivos compatíveis com Prettier.                                  |
-| `pnpm test`      | Testa seleção de sabores e preço demonstrativo com o test runner do Node.      |
-| `pnpm test:e2e`  | Gera o build e verifica a integração DOM/SVG em desktop/mobile com Playwright. |
-| `pnpm check`     | Verifica formatação, lint e tipos.                                             |
+| Comando                                           | Descrição                                                                          |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `pnpm dev`                                        | Servidor Astro de desenvolvimento.                                                 |
+| `pnpm build`                                      | Landing pré-renderizada em `apps/landing/dist/client` e servidor em `dist/server`. |
+| `pnpm start`                                      | Inicia o build Node standalone, após build.                                        |
+| `pnpm check`                                      | Formatação, ESLint e tipos strict.                                                 |
+| `pnpm test`                                       | Testes de pizza, contrato, endpoint e SQLite real com Node.                        |
+| `pnpm test:e2e`                                   | Build + Playwright desktop/mobile com servidor e banco sintéticos.                 |
+| `pnpm leads inspect`                              | Lista IDs, datas, plano e volume, sem nome ou WhatsApp.                            |
+| `pnpm leads export .data/lead-exports/leads.json` | Exportação JSON restrita, sem sobrescrever arquivo existente.                      |
+| `pnpm leads purge`                                | Exclui dados expirados.                                                            |
+| `pnpm leads delete <uuid>`                        | Exclui um cadastro e suas chaves de retry.                                         |
+| `pnpm leads clear-dev --confirm`                  | Limpa somente banco cujo nome é `leads.dev.sqlite`, fora de produção.              |
 
-## Estrutura
+Instale Chromium com `pnpm exec playwright install chromium`. Alternativamente, com Chrome instalado: `WHITEOVEN_BROWSER_CHANNEL=chrome pnpm test:e2e`. A CI instala Chromium com dependências Linux. O banco E2E `.data/leads.e2e.sqlite` é separado do banco local, usa identidade sintética e pode ser removido com o servidor parado.
 
-- `apps/landing`: landing page Astro, a única aplicação implementada; inclui demos executadas no navegador.
-- `packages/design-tokens`: identidade visual compartilhada; veja [diretrizes visuais](docs/architecture/design-system.md).
-- `packages/contracts`: espaço para contratos compartilhados quando houver consumidores; sem contratos de produto nesta milestone.
-- `docs/product`: visão e escopo planejado.
-- `docs/architecture`: arquitetura atual e planejada.
-- `docs/adr`: decisões arquiteturais.
+## Estrutura e operação
 
-O build estático poderá ser servido pelo Caddy em uma milestone futura. M0 não configura deploy nem altera a infraestrutura da Orbia. Consulte [docs/product/mvp-scope.md](docs/product/mvp-scope.md) para o estado dos recursos e suas exclusões.
+- `apps/landing`: interface, endpoint Astro `/api/leads`, política `/privacidade` e persistência temporária.
+- `packages/contracts`: contrato e validação isomórfica do lead, sem dependências de servidor.
+- `packages/design-tokens`: identidade visual reutilizável.
+- `docs/product`, `docs/architecture`, `docs/adr`: estado do produto e decisões.
 
-## Estado e validação
+O build agora **exige processo Node para captação e política dinâmica**; servir apenas arquivos estáticos não oferece esse fluxo. A decisão e as alternativas estão no [ADR 0002](docs/adr/0002-lead-capture.md). Veja [operação, privacidade e métricas](docs/architecture/m0-1b-lead-capture.md). Caddy poderá atuar como reverse proxy em uma milestone futura; não há deploy nem alterações de infraestrutura Orbia nesta entrega.
 
-A fundação M0 foi incorporada em `main`. O histórico de validação local está em [M0](docs/architecture/m0-validation.md). A implementação e os limites da landing atual estão em [M0.1-A](docs/architecture/m0-1a-landing.md).
-
-Execute `pnpm check`, `pnpm test` e `pnpm build`. O workflow CI executa as mesmas verificações, após instalação congelada pelo lockfile. O formulário não envia ou salva dados; as escolhas do Builder existem apenas em memória. Nenhuma API, analytics ou integração de pagamentos foi adicionada.
-
-## Testes de navegador e revisão visual
-
-Instale o navegador com `pnpm exec playwright install chromium` e execute `pnpm test:e2e`. Os testes iniciam e encerram o preview local automaticamente. A CI usa Chromium com suas dependências Linux. Capturas e instruções de reprodução estão em [docs/design](docs/design/README.md). As referências visuais recebidas do Product Owner e sua aplicação estão documentadas ali, junto da proveniência dos assets gerados para o projeto.
+A CI usa instalação congelada, formatação, lint, typecheck, testes de domínio/endpoint, build e E2E. As decisões de M0 e M0.1-A estão mantidas como registros históricos; não descrevem o formulário atual. A captação não envia mensagens automáticas, e o adaptador de analytics atual emite apenas eventos locais sem PII, sem fornecedor externo.

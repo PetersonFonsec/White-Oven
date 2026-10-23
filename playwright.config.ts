@@ -27,8 +27,17 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command:
-      "pnpm --filter @whiteoven/landing exec astro preview --host 127.0.0.1 --port 4323",
+    command: "pnpm --filter @whiteoven/landing start",
+    env: {
+      HOST: "127.0.0.1",
+      PORT: "4323",
+      NODE_ENV: "production",
+      LEADS_ENABLED: "true",
+      SITE_ORIGIN: "http://127.0.0.1:4323",
+      LEADS_DB_PATH: ".data/leads.e2e.sqlite",
+      LEADS_CONTROLLER_NAME: "Controlador sintético de testes",
+      LEADS_PRIVACY_EMAIL: "privacy@example.test",
+    },
     url: "http://127.0.0.1:4323",
     reuseExistingServer: false,
   },

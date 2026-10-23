@@ -78,49 +78,12 @@ test("plan CTAs preselect the form and commissions are explicit", async ({
     "0% de comissão WhiteOven",
   );
   await page.getByRole("link", { name: "Tenho interesse no Flex" }).click();
-  await expect(page.locator("#plan")).toHaveValue("flex");
+  await expect(page.locator("#plan")).toHaveValue("FLEX");
   await expect(page).toHaveURL(/#interesse$/);
   await page.getByRole("link", { name: "Tenho interesse no Pro" }).click();
-  await expect(page.locator("#plan")).toHaveValue("pro");
+  await expect(page.locator("#plan")).toHaveValue("PRO");
   await expect(page.locator("#plan-status")).toContainText(
-    "Nenhum dado será cadastrado",
-  );
-});
-
-test("prototype blocks submission including Enter and submit events without persisting PII", async ({
-  page,
-}) => {
-  const requests: string[] = [];
-  await page.goto("/");
-  await expect(page.locator("#responsible")).toBeEnabled();
-  page.on("request", (request) =>
-    requests.push(`${request.method()} ${request.url()}`),
-  );
-  const form = page.locator("#interest-form");
-  await expect(form).not.toHaveAttribute("method", "dialog");
-  await expect(form.locator('button[type="submit"]')).toBeDisabled();
-  await page.locator("#responsible").fill("Teste de protótipo");
-  await page.locator("#pizzeria").fill("Pizzaria de teste");
-  await page.locator("#whatsapp").fill("11999999999");
-  await page.locator("#responsible").press("Enter");
-  expect(
-    await form.evaluate((element) =>
-      element.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true }),
-      ),
-    ),
-  ).toBe(false);
-  await expect(page.locator("#responsible")).toHaveValue("Teste de protótipo");
-  expect(requests).toEqual([]);
-  expect(
-    await page.evaluate(() => ({
-      local: localStorage.length,
-      session: sessionStorage.length,
-      cookies: document.cookie,
-    })),
-  ).toEqual({ local: 0, session: 0, cookies: "" });
-  await expect(page.locator("#form-notice")).toContainText(
-    "não são enviados nem salvos",
+    "Plano Pro selecionado",
   );
 });
 
@@ -145,7 +108,7 @@ test("mobile menu handles toggling, Escape focus and anchor navigation", async (
   await expect(nav).toBeHidden();
 });
 
-test("without JavaScript navigation remains usable and prototype controls stay disabled", async ({
+test("without JavaScript navigation remains usable and form controls stay disabled", async ({
   browser,
 }, testInfo) => {
   const context = await browser.newContext({
@@ -164,7 +127,7 @@ test("without JavaScript navigation remains usable and prototype controls stay d
   await expect(page.locator("#plan")).toBeDisabled();
   await expect(page.locator("#interest-form button")).toBeDisabled();
   await expect(page.locator("#interest-form noscript p")).toContainText(
-    "inscrições ainda não estão disponíveis",
+    "Ative JavaScript",
   );
   await expect(left(page)).toHaveAttribute("data-flavor", "calabresa");
   await expect(right(page)).toHaveAttribute("data-flavor", "margherita");
