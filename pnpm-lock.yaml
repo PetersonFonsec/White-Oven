@@ -81,6 +81,16 @@ importers:
 
   packages/design-tokens: {}
 
+  packages/pizza-pricing:
+    dependencies:
+      '@whiteoven/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
 packages:
 
   '@astrojs/astro2tsx@0.1.3':

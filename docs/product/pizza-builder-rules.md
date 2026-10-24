@@ -1,6 +1,6 @@
 # Regras do Pizza Builder
 
-Status: especificação M0.3, sem implementação. Define a montagem, a validação, o preço e a representação visual de pizzas no MVP. É a referência do pacote `packages/pizza-pricing` previsto no [roadmap](../architecture/mvp-roadmap.md), usado por API, aplicativo e painel. A API é sempre a autoridade do preço.
+Status: especificação M0.3. Contratos em `packages/contracts` (M2.1) e pipeline de validação, normalização e preço em `packages/pizza-pricing` (M2.2). Define a montagem, a validação, o preço e a representação visual de pizzas no MVP. É a referência do pacote `packages/pizza-pricing` previsto no [roadmap](../architecture/mvp-roadmap.md), usado por API, aplicativo e painel. A API é sempre a autoridade do preço.
 
 A demonstração atual (`apps/landing/src/lib/pizza.ts`) cobre pizza inteira e meio a meio com a regra do maior preço, sem tamanhos, bordas ou adicionais. Ela continua sendo demonstração e não precisa ser migrada para o pacote.
 
@@ -97,7 +97,14 @@ Casos obrigatórios de normalização (catálogo dos exemplos de preço):
 
 Em N9, azeitona é um adicional de exemplo com preço para o tamanho; “sem cebola” em N4 e N5 é remoção de ingrediente removível da Calabresa.
 
-Erros de validação têm código estável (`PIZZA_INVALID_STRUCTURE`, `PIZZA_SIZE_UNAVAILABLE`, `PIZZA_FLAVOR_UNAVAILABLE`, `PIZZA_HALVES_NOT_ALLOWED`, `PIZZA_EXTRA_LIMIT`, `PIZZA_EXTRA_DUPLICATED`, `PIZZA_REMOVAL_INVALID`, `PIZZA_REMOVAL_DUPLICATED`, ...) para o app mostrar a mensagem certa.
+Erros de validação têm código estável e caminho do campo (`path`, ex.: `extras[2].placement`) para o app mostrar a mensagem certa. A lista completa fica em `PIZZA_ERROR_CODES` de `packages/contracts`:
+
+| Etapa | Códigos                                                                                                                                                                                   |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | `PIZZA_INVALID_STRUCTURE`                                                                                                                                                                 |
+| 2     | `PIZZA_SIZE_UNAVAILABLE`, `PIZZA_HALVES_NOT_ALLOWED`, `PIZZA_FLAVOR_UNAVAILABLE`, `PIZZA_CRUST_UNAVAILABLE`, `PIZZA_EXTRA_UNAVAILABLE`, `PIZZA_REMOVAL_INVALID` (ingrediente inexistente) |
+| 3     | `PIZZA_EXTRA_PLACEMENT_INVALID`, `PIZZA_EXTRA_DUPLICATED`, `PIZZA_REMOVAL_PLACEMENT_INVALID`, `PIZZA_REMOVAL_INVALID`, `PIZZA_REMOVAL_DUPLICATED`                                         |
+| 7     | `PIZZA_EXTRA_LIMIT` (`path` = `extras` em `WHOLE`, `extras.LEFT` ou `extras.RIGHT` em `HALVES`)                                                                                           |
 
 ## Preço
 
