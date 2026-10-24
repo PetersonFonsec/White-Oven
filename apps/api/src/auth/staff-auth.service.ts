@@ -257,10 +257,24 @@ export class StaffAuth {
     if (!access) throw invalidSession();
     if (!(await this.membershipRole(claims.sub, tenantId)))
       throw tenantNotFound();
-    await this.sql(
-      "update staff_sessions set active_tenant_id = ? where id = ? and revoked_at is null",
-      [tenantId, claims.sid],
+    // Recheck the membership in the same statement that changes the session.
+    // This prevents persisting a tenant selected from an outdated preflight check.
+    const changed = await this.sql<{ id: string }>(
+      `update staff_sessions s set active_tenant_id = ?
+         where s.id = ? and s.staff_user_id = ?
+           and s.revoked_at is null and s.idle_expires_at > now()
+           and exists (
+             select 1 from whiteoven_staff_memberships(?) m
+               join tenants t on t.id = m.tenant_id
+              where m.tenant_id = ? and m.status = 'ACTIVE'
+                and (t.status in ('ONBOARDING', 'ACTIVE')
+                  or (t.status = 'SUSPENDED' and m.role = 'OWNER'))
+           )
+       returning s.id`,
+      [tenantId, claims.sid, claims.sub, claims.sub, tenantId],
     );
+    if (changed.length !== 1) throw tenantNotFound();
+    this.forgetSession(claims.sid);
     return this.issue({ ...claims, tid: tenantId });
   }
 
@@ -273,7 +287,9 @@ export class StaffAuth {
   async authorize(claims: StaffAccessClaims): Promise<StaffAccess | null> {
     const key = `${claims.sid}|${claims.tid ?? ""}`;
     const now = Date.now();
-    const cached = this.accessCache.get(key);
+    // Tenant permissions must be checked against the database on every request.
+    // Session-only lookups retain the bounded cache for non-privileged routes.
+    const cached = claims.tid ? undefined : this.accessCache.get(key);
     if (
       cached &&
       cached.until > now &&
@@ -302,7 +318,7 @@ export class StaffAuth {
       tenantId: claims.tid,
     };
     const ttl = this.config.auth.membershipCacheSeconds * 1000;
-    if (ttl > 0) {
+    if (ttl > 0 && !claims.tid) {
       if (this.accessCache.size >= 10_000) this.accessCache.clear();
       this.accessCache.set(key, { until: now + ttl, access });
     }
