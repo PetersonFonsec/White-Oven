@@ -14,7 +14,7 @@ export const STAFF_AUDIENCE = "whiteoven-admin";
 export interface StaffAccessClaims {
   sub: string;
   typ: "staff";
-  /** Active tenant, validated against an ACTIVE membership on every request (cached ≤ 60 s). */
+  /** Active tenant, validated against an ACTIVE membership on every request on this request. */
   tid: string | null;
   sid: string;
   /** True only when the session was authenticated with a second factor (M1.4 MFA). */

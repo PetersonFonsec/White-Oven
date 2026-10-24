@@ -50,7 +50,7 @@ const authenticationRequired = () =>
 /**
  * `StaffGuard` for `/v1/admin`: verifies the access token, then asks `StaffAuth.authorize`
  * whether the session is live and, on admin routes, whether the membership in the token's
- * tenant is ACTIVE (cached ≤ 60 s). Admin routes then check the role and bind the
+ * tenant is ACTIVE on this request. Admin routes then check the role and bind the
  * `TenantContext`; the tenant comes only from the verified token (tenant-isolation.md).
  */
 @Injectable()

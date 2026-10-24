@@ -402,7 +402,7 @@ export class AdminMeController {
   })
   @ApiOkResponse({ type: AdminMeBody })
   me(@CurrentStaff() staff: StaffPrincipal): AdminMeBody {
-    // StaffGuard verified the ACTIVE membership in the token's tenant (cached ≤ 60 s).
+    // StaffGuard verified the ACTIVE membership in the token's tenant on this request.
     return {
       staffUserId: staff.access.staffUserId,
       tenantId: staff.access.tenantId!,
