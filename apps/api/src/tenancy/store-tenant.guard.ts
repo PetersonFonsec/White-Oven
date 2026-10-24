@@ -23,6 +23,7 @@ import {
   runWithTenantContext,
 } from "./tenant-context";
 import { TENANT_SLUG, Tenant } from "./tenant.entity";
+import { TenantStatusPolicy } from "./tenant-status-policy";
 
 /** Route metadata marking a tenant surface; the isolation matrix test lists every such route. */
 export const TENANT_SURFACE = "whiteoven:tenant-surface";
@@ -63,7 +64,7 @@ export class StoreTenantGuard implements CanActivate {
     if (!tenant) throw storeNotFound();
     const claimed = claimedTenants.get(req);
     if (claimed !== undefined && claimed !== tenant.id) throw storeNotFound();
-    if (tenant.status !== "ACTIVE")
+    if (!TenantStatusPolicy.allows(tenant.status, "PUBLIC", "publicMenu"))
       throw new ApiError(
         HttpStatus.FORBIDDEN,
         "TENANT_NOT_ACTIVE",

@@ -259,6 +259,8 @@ O cardápio público é derivado das tabelas de catálogo no momento da leitura,
 
 ### Order
 
+M1.5 cria a projeção mínima `orders` (`id`, `tenant_id`, `status`, `rejection_reason` e timestamps) para tornar a suspensão transacional. O agregado completo e seus demais campos entram em M4 por migration posterior.
+
 | Campo                                                 | Regras                                                                       |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `number`                                              | Sequencial por tenant (`tenant_order_counters`), exibido como `#123`.        |

@@ -4,6 +4,8 @@ import { TENANT_SETTING } from "../database/tenant-isolation-sql";
 import { ApiError } from "../errors/api-error";
 import { TENANT_FILTER } from "./tenant-filter";
 import { type TenantActor, currentTenantContext } from "./tenant-context";
+import { TenantStatusPolicy } from "./tenant-status-policy";
+import type { TenantStatus } from "./tenant.entity";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -59,6 +61,12 @@ async function assertStaffStillAllowed(
   em: EntityManager,
   actor: Extract<TenantActor, { type: "staff" }>,
 ): Promise<void> {
+  // Match the platform suspension lock order: tenant row before session/user/membership rows.
+  // This serializes access with suspension without deadlocking a request against the platform op.
+  const [tenant] = await em.execute<{ status: TenantStatus }[]>(
+    "select whiteoven_lock_tenant_status(?) as status",
+    [currentTenantContext().tenantId],
+  );
   const sessions = await em.execute(
     `select 1 from staff_sessions s join staff_users u on u.id = s.staff_user_id
       where s.id = ? and s.staff_user_id = ? and s.revoked_at is null
@@ -74,15 +82,24 @@ async function assertStaffStillAllowed(
     );
   // Same login matrix as staffMayEnter (domain-model.md), under the tenant setting of this
   // transaction, so RLS still limits the read to the current tenant.
-  const [membership] = await em.execute<{ role: string }[]>(
-    `select m.role from memberships m join tenants t on t.id = m.tenant_id
+  const [membership] = await em.execute<
+    { role: "OWNER" | "MANAGER" | "STAFF" }[]
+  >(
+    `select m.role from memberships m
       where m.staff_user_id = ? and m.status = 'ACTIVE'
-        and (t.status in ('ONBOARDING', 'ACTIVE')
-          or (t.status = 'SUSPENDED' and m.role = 'OWNER'))
         for share of m`,
     [actor.staffUserId],
   );
   if (!membership)
+    throw new ApiError(
+      HttpStatus.FORBIDDEN,
+      "TENANT_ACCESS_DENIED",
+      "No access to this store.",
+    );
+  if (
+    !tenant?.status ||
+    !TenantStatusPolicy.staffMayEnter(tenant.status, membership.role)
+  )
     throw new ApiError(
       HttpStatus.FORBIDDEN,
       "TENANT_ACCESS_DENIED",

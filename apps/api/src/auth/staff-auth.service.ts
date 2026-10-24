@@ -10,6 +10,7 @@ import { TENANT_SETTING } from "../database/tenant-isolation-sql";
 import { ApiError } from "../errors/api-error";
 import type { TenantStatus } from "../tenancy/tenant.entity";
 import { runInTenant } from "../tenancy/tenant-transaction";
+import { TenantStatusPolicy } from "../tenancy/tenant-status-policy";
 import { AccessTokens, type StaffAccessClaims } from "./access-token";
 import { LoginThrottle } from "./login-throttle";
 import { MFA_CHALLENGE_TTL_SECONDS, MfaChallenges } from "./mfa-challenges";
@@ -63,8 +64,7 @@ export function staffMayEnter(
   role: MembershipRole,
   status: TenantStatus,
 ): boolean {
-  if (status === "ONBOARDING" || status === "ACTIVE") return true;
-  return status === "SUSPENDED" && role === "OWNER";
+  return TenantStatusPolicy.staffMayEnter(status, role);
 }
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest();
@@ -96,17 +96,21 @@ export async function lockedMembershipRole(
   tenantId: string,
 ): Promise<MembershipRole | null> {
   await em.execute("select set_config(?, ?, true)", [TENANT_SETTING, tenantId]);
-  const [row] = await em.execute<
-    { role: MembershipRole; status: TenantStatus }[]
-  >(
-    `select m.role, t.status
-       from memberships m join tenants t on t.id = m.tenant_id
+  const [tenant] = await em.execute<{ status: TenantStatus }[]>(
+    "select whiteoven_lock_tenant_status(?) as status",
+    [tenantId],
+  );
+  const [row] = await em.execute<{ role: MembershipRole }[]>(
+    `select m.role
+       from memberships m
       where m.staff_user_id = ? and m.status = 'ACTIVE'
         for share of m`,
     [staffUserId],
   );
   await em.execute("select set_config(?, '', true)", [TENANT_SETTING]);
-  return row && staffMayEnter(row.role, row.status) ? row.role : null;
+  return row && tenant?.status && staffMayEnter(row.role, tenant.status)
+    ? row.role
+    : null;
 }
 
 /**
@@ -317,6 +321,7 @@ export class StaffAuth {
   ): Promise<IssuedTokens> {
     if (!UUID.test(tenantId)) throw tenantNotFound();
     const outcome = await this.orm.em.fork().transactional(async (em) => {
+      await em.execute("select whiteoven_lock_tenant_status(?)", [tenantId]);
       const [session] = await em.execute<{ ok: boolean }[]>(
         `select (s.revoked_at is null and s.idle_expires_at > now()
                  and u.status = 'ACTIVE') as ok
@@ -384,15 +389,23 @@ export class StaffAuth {
     staffUserId: string,
     tenantId: string,
   ): Promise<MembershipRole | null> {
-    const [row] = await runInTenant(this.orm, tenantId, (em) =>
-      em.execute<{ role: MembershipRole; status: TenantStatus }[]>(
-        `select m.role, t.status
-           from memberships m join tenants t on t.id = m.tenant_id
+    const result = await runInTenant(this.orm, tenantId, async (em) => {
+      const [tenant] = await em.execute<{ status: TenantStatus }[]>(
+        "select whiteoven_lock_tenant_status(?) as status",
+        [tenantId],
+      );
+      const [row] = await em.execute<{ role: MembershipRole }[]>(
+        `select m.role from memberships m
           where m.staff_user_id = ? and m.status = 'ACTIVE'`,
         [staffUserId],
-      ),
-    );
-    return row && staffMayEnter(row.role, row.status) ? row.role : null;
+      );
+      return { row, status: tenant?.status };
+    });
+    return result.row &&
+      result.status &&
+      staffMayEnter(result.row.role, result.status)
+      ? result.row.role
+      : null;
   }
 
   issue(
