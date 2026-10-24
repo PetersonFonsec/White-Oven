@@ -15,6 +15,7 @@ import {
   TenantTransactions,
   runInTenant,
 } from "../src/tenancy/tenant-transaction";
+import { HeldTransactions } from "./concurrency";
 import { json, startTestServer, type TestServer } from "./helpers";
 import {
   createTestDatabase,
@@ -83,12 +84,12 @@ describe(
     let tenantA: string;
     let tenantB: string;
     let serial = 0;
-    /** Held transactions still open; released after each test so a failure cannot hang. */
-    const open = new Set<() => void>();
+    let locks: HeldTransactions;
 
     before(async () => {
       database = await createTestDatabase();
       owner = await database.connect(database.ownerUrl);
+      locks = new HeldTransactions(owner);
       tenantA = await insertTenant(owner, "consistencia-a");
       tenantB = await insertTenant(owner, "consistencia-b");
       // Two API instances sharing only PostgreSQL and the signing key, as in production.
@@ -103,10 +104,7 @@ describe(
         imports: [ConsistencyProbeModule],
       });
     });
-    afterEach(() => {
-      for (const commit of open) commit();
-      open.clear();
-    });
+    afterEach(() => locks.releaseAll());
     after(async () => {
       await first?.close();
       await second?.close();
@@ -172,45 +170,11 @@ describe(
         )
       )[0]!.tenant;
 
-    /**
-     * Runs `work` in an owner transaction (in `tenantId`'s context when given) and keeps it open,
-     * holding its row locks, until `commit` is called.
-     */
-    const hold = async (
+    const hold = (
       work: (em: EntityManager) => Promise<unknown>,
       tenantId?: string,
-    ) => {
-      let commit!: () => void;
-      const released = new Promise<void>((resolve) => (commit = resolve));
-      let ready!: () => void;
-      const started = new Promise<void>((resolve) => (ready = resolve));
-      const body = async (em: EntityManager) => {
-        await work(em);
-        ready();
-        await released;
-      };
-      const done = tenantId
-        ? runInTenant(owner, tenantId, body)
-        : owner.em.fork().transactional(body);
-      open.add(commit);
-      await Promise.race([started, done]);
-      return { commit, done };
-    };
-
-    /** Waits until `count` backends of this database are queued on a lock. */
-    const lockWaiters = async (count: number) => {
-      const deadline = Date.now() + 10_000;
-      for (;;) {
-        const [row] = await sql<{ n: number }>(
-          `select count(distinct l.pid)::int as n
-           from pg_locks l join pg_stat_activity a on a.pid = l.pid
-          where not l.granted and a.datname = current_database()`,
-        );
-        if (row!.n >= count) return;
-        assert.ok(Date.now() < deadline, `expected ${count} lock waiters`);
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-    };
+    ) => locks.hold(work, tenantId);
+    const lockWaiters = (count: number) => locks.lockWaiters(count);
 
     describe("revocations apply on the next request", () => {
       it("a role changed from OWNER to STAFF loses OWNER routes immediately", async () => {
