@@ -102,7 +102,7 @@ Recusa automática por tempo, limpeza e relatórios iteram tenants explicitament
 | T-01 | Consulta sem filtro de tenant (bug)                        | RLS forçado; filtro global do ORM; teste de isolamento por tabela.                                                                                                                       |
 | T-02 | IDOR: ID de recurso de outro tenant na URL ou corpo        | Carga dentro do contexto; FK compostas; 404 uniforme.                                                                                                                                    |
 | T-03 | Token de cliente do tenant A usado na URL do tenant B      | `tid` precisa bater com o slug; teste dedicado.                                                                                                                                          |
-| T-04 | Membro removido continua com token válido                  | Verificação de vínculo a cada requisição (cache curto invalidado na revogação); refresh revogado.                                                                                        |
+| T-04 | Membro removido continua com token válido                  | Verificação de vínculo a cada requisição, sem cache, e de novo com lock na transação do tenant; refresh revogado.                                                                        |
 | T-05 | Conexão do pool reaproveitada com tenant anterior          | `set_config(..., true)` só dentro de transação; teste que reutiliza conexão.                                                                                                             |
 | T-06 | Cache compartilhado servindo cardápio de outra pizzaria    | `tenantId` na chave; teste com dois tenants.                                                                                                                                             |
 | T-07 | Arquivo/imagem acessível por URL adivinhável               | Nomes aleatórios, prefixo por tenant; imagens de cardápio são públicas por natureza, documentos privados não são servidos diretamente.                                                   |
@@ -122,6 +122,6 @@ Executados em CI contra PostgreSQL real (container), não contra mocks:
 4. **Pool:** duas requisições sequenciais de tenants diferentes na mesma conexão não compartilham contexto.
 5. **FK compostas:** inserir item de pedido do tenant A com sabor do tenant B falha no banco.
 6. **Token cruzado:** token de cliente de A em rota de B falha.
-7. **Revogação:** membro revogado perde acesso em até o TTL do cache de vínculo (máximo 60 segundos).
+7. **Revogação:** membro revogado perde acesso na requisição seguinte; o vínculo é lido a cada requisição e relido com lock na transação do tenant (ADR 0007).
 
 Nenhuma PR que adicione tabela de tenant é aceita sem incluir a tabela nos testes 1 e 2.

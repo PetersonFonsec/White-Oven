@@ -219,13 +219,14 @@ export class StaffAuthController {
   async activeTenant(
     @Body() body: unknown,
     @CurrentStaff() staff: StaffPrincipal,
+    @Res({ passthrough: true }) res: Response,
   ): Promise<AccessTokenBody> {
     const { tenantId } = stringFields(body, ["tenantId"] as const);
     const issued = await this.auth.switchTenant(
       staff.claims,
       UUID.test(tenantId) ? tenantId : "",
     );
-    return toBody(issued);
+    return this.respond(res, issued);
   }
 
   private respond(res: Response, issued: IssuedTokens): AccessTokenBody {

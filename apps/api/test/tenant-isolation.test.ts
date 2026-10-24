@@ -9,7 +9,6 @@ import {
   findUnprotectedTenantTables,
   tenantIsolationSql,
 } from "../src/database/tenant-isolation-sql";
-import { loadConfig } from "../src/config/config";
 import { createOrm } from "../src/database/orm";
 import { TENANT_SURFACE } from "../src/tenancy/store-tenant.guard";
 import { Tenant } from "../src/tenancy/tenant.entity";
@@ -58,7 +57,6 @@ interface Fixture {
 }
 
 /** Staff membership cache TTL of this suite's server; production allows at most 60 s. */
-const MEMBERSHIP_CACHE_SECONDS = 1;
 const STAFF_PASSWORD = "isolamento-2026";
 
 /**
@@ -117,7 +115,6 @@ describe("tenant isolation", databaseSuite, () => {
       {
         DATABASE_URL: database.appUrl,
         DATABASE_POOL_MAX: "1",
-        AUTH_MEMBERSHIP_CACHE_SECONDS: String(MEMBERSHIP_CACHE_SECONDS),
       },
       { imports: [TenantProbeModule], entities: [ProbeFlavor] },
     );
@@ -799,7 +796,7 @@ describe("tenant isolation", databaseSuite, () => {
   });
 
   describe("7. membership revocation", () => {
-    it("a revoked member loses access within the membership cache TTL (≤ 60 s)", async () => {
+    it("a revoked member loses access on the very next request", async () => {
       const email = "revogada@isolamento.test";
       const userId = await insertStaffUser(owner, email, STAFF_PASSWORD);
       await insertMembership(owner, a.id, userId, "MANAGER");
@@ -817,20 +814,7 @@ describe("tenant isolation", databaseSuite, () => {
       assert.equal((await me()).status, 200);
 
       await setMembershipStatus(owner, a.id, userId, "REVOKED");
-      const revokedAt = Date.now();
-      let denied: Response | undefined;
-      while (Date.now() - revokedAt < (MEMBERSHIP_CACHE_SECONDS + 2) * 1000) {
-        const response = await me();
-        if (response.status !== 200) {
-          denied = response;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      assert.ok(denied, "access survived the cache TTL");
-      assert.ok(
-        Date.now() - revokedAt <= (MEMBERSHIP_CACHE_SECONDS + 1) * 1000,
-      );
+      const denied = await me();
       assert.equal(denied.status, 403);
       assert.equal((await json(denied)).code, "TENANT_ACCESS_DENIED");
 
@@ -853,15 +837,6 @@ describe("tenant isolation", databaseSuite, () => {
       );
       assert.equal(response.status, 404);
       assert.equal((await json(response)).code, "NOT_FOUND");
-    });
-
-    it("the membership cache TTL is capped at 60 s by configuration", () => {
-      assert.throws(() =>
-        loadConfig({
-          DATABASE_URL: database.appUrl,
-          AUTH_MEMBERSHIP_CACHE_SECONDS: "61",
-        }),
-      );
     });
   });
 });

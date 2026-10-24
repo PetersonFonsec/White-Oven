@@ -110,7 +110,6 @@ describe("staff authentication", databaseSuite, () => {
       {
         DATABASE_URL: database.appUrl,
         API_ADMIN_ORIGINS: ADMIN_ORIGIN,
-        AUTH_MEMBERSHIP_CACHE_SECONDS: "0",
       },
       { imports: [StaffProbeModule] },
     );
@@ -334,6 +333,7 @@ describe("staff authentication", databaseSuite, () => {
         ids.a,
       );
       assert.equal(response.status, 200);
+      assert.equal(response.headers.get("cache-control"), "no-store");
       const body = await json(response);
       assert.equal(body.activeTenantId, ids.a);
       assert.deepEqual(await json(await get("/admin/me", body.accessToken)), {

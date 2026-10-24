@@ -35,7 +35,6 @@ describe("loadConfig", () => {
       database: { url: DATABASE_URL, poolMax: 10 },
       auth: {
         accessTokenPrivateKey: null,
-        membershipCacheSeconds: 30,
         adminOrigins: [],
       },
     });
@@ -97,8 +96,6 @@ describe("loadConfig", () => {
         .privateKey.export({ format: "der", type: "pkcs8" })
         .toString("base64"),
     ],
-    ["AUTH_MEMBERSHIP_CACHE_SECONDS", "61"],
-    ["AUTH_MEMBERSHIP_CACHE_SECONDS", "-1"],
     ["API_ADMIN_ORIGINS", "https://admin.example.com/"],
     ["API_ADMIN_ORIGINS", "https://ok.example.com,ftp://x.example.com"],
   ] as const) {
@@ -116,7 +113,6 @@ describe("loadConfig", () => {
     const config = loadConfig({
       ...base,
       ...production,
-      AUTH_MEMBERSHIP_CACHE_SECONDS: "0",
       API_ADMIN_ORIGINS:
         "https://admin.whiteoven.com.br, http://localhost:4200",
     });
@@ -124,7 +120,6 @@ describe("loadConfig", () => {
       config.auth.accessTokenPrivateKey?.asymmetricKeyType,
       "ed25519",
     );
-    assert.equal(config.auth.membershipCacheSeconds, 0);
     assert.deepEqual(config.auth.adminOrigins, [
       "https://admin.whiteoven.com.br",
       "http://localhost:4200",
