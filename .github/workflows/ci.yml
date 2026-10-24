@@ -58,6 +58,27 @@ jobs:
           path: landing-image.tar.gz
           retention-days: 1
 
+  api-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the API image and wait for health in the development Compose
+        run: |
+          docker compose -f compose.dev.yaml build api
+          docker compose -f compose.dev.yaml up -d --wait --wait-timeout 60 api
+          curl -fsS http://127.0.0.1:3000/health
+          curl -fsS -o /dev/null http://127.0.0.1:3000/v1/openapi.json
+      - name: Invalid configuration prevents the start
+        run: |
+          if docker run --rm -e API_PORT=invalid whiteoven-api:dev; then
+            echo "API started with invalid configuration" >&2
+            exit 1
+          fi
+      - name: API logs
+        if: always()
+        run: docker compose -f compose.dev.yaml logs api && docker compose -f compose.dev.yaml down
+
   publish:
     needs: [verify, containers]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
