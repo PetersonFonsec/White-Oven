@@ -100,11 +100,12 @@ export class StaffMfa {
         [claims.sid, claims.sub],
       );
       // Roll back enrollment as well if the session was revoked mid-request.
-      if (sessions.length !== 1) throw new ApiError(
-        HttpStatus.UNAUTHORIZED,
-        "SESSION_INVALID",
-        "Session expired or revoked. Sign in again.",
-      );
+      if (sessions.length !== 1)
+        throw new ApiError(
+          HttpStatus.UNAUTHORIZED,
+          "SESSION_INVALID",
+          "Session expired or revoked. Sign in again.",
+        );
       return "activated" as const;
     });
     if (activated === "no-pending")

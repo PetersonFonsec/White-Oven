@@ -38,6 +38,18 @@ export class MfaChallenges {
 
   /** The pending challenge of `token`, or null when unknown, expired or used up. */
   peek(token: string): Readonly<Challenge> | null {
+    return this.live(token);
+  }
+
+  /** Reserve a challenge synchronously before any asynchronous factor verification. */
+  beginVerification(token: string): Readonly<Challenge> | null {
+    const challenge = this.live(token);
+    if (!challenge || challenge.verifying) return null;
+    challenge.verifying = true;
+    return { ...challenge };
+  }
+
+  private live(token: string): Challenge | null {
     const challenge = this.challenges.get(key(token));
     if (!challenge) return null;
     if (challenge.expiresAt <= this.now() || challenge.attemptsLeft <= 0) {
@@ -47,20 +59,11 @@ export class MfaChallenges {
     return challenge;
   }
 
-  /** Reserve a challenge synchronously before any asynchronous factor verification. */
-  beginVerification(token: string): Readonly<Challenge> | null {
-    const challenge = this.peek(token);
-    if (!challenge || challenge.verifying) return null;
-    challenge.verifying = true;
-    return { ...challenge };
-  }
-
   recordFailure(token: string): void {
     const challenge = this.challenges.get(key(token));
     if (!challenge) return;
     challenge.verifying = false;
-    if (--challenge.attemptsLeft <= 0)
-      this.challenges.delete(key(token));
+    if (--challenge.attemptsLeft <= 0) this.challenges.delete(key(token));
   }
 
   consume(token: string): void {
