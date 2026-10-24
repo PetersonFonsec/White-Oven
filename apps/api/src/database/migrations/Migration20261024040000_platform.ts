@@ -64,6 +64,17 @@ export class Migration20261024040000_platform extends Migration {
         constraint owner_invites_token_hash_key unique (token_hash),
         constraint owner_invites_expiry check (expires_at <= created_at + interval '72 hours')
       );
+      -- Global hash-only index avoids scanning every ONBOARDING tenant on public redemption.
+      -- App code cannot read it; the SECURITY DEFINER redemption function consumes its row.
+      create table owner_invite_lookup (
+        token_hash bytea primary key,
+        store_id uuid not null references tenants(id),
+        invite_id uuid not null unique,
+        constraint owner_invite_lookup_token_hash_length check (octet_length(token_hash)=32),
+        constraint owner_invite_lookup_invite_fk foreign key (store_id,invite_id)
+          references owner_invites(tenant_id,id)
+      );
+      revoke all on owner_invite_lookup from public, whiteoven_app, whiteoven_platform;
     `);
     for (const statement of tenantIsolationSql("owner_invites"))
       this.addSql(statement);
@@ -127,6 +138,8 @@ export class Migration20261024040000_platform extends Migration {
         insert into public.owner_invites (tenant_id, email, token_hash, expires_at, created_by)
           values (new_tenant, lower(btrim(p_email)), p_token_hash, now() + interval '72 hours', p_actor_id)
           returning id into new_invite;
+        insert into public.owner_invite_lookup(token_hash,store_id,invite_id)
+          values(p_token_hash,new_tenant,new_invite);
         perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
         insert into public.audit_events (tenant_id, actor_type, actor_id, action, entity_type, entity_id, changes, ip_hash, request_id)
           values (new_tenant, 'OPERATOR', p_actor_id, 'tenant.created', 'tenant', new_tenant,
@@ -160,6 +173,7 @@ export class Migration20261024040000_platform extends Migration {
           update public.staff_sessions s set revoked_at = now(), revoked_reason = 'TENANT_SUSPENDED'
             from public.memberships m
            where m.tenant_id = p_tenant_id and m.staff_user_id = s.staff_user_id
+             and s.active_tenant_id = p_tenant_id
              and m.status = 'ACTIVE' and m.role in ('MANAGER', 'STAFF') and s.revoked_at is null;
         end if;
         update public.tenants set status = p_status, updated_at = now() where id = p_tenant_id;
@@ -197,29 +211,29 @@ export class Migration20261024040000_platform extends Migration {
       ) returns table (staff_user_id uuid, tenant_id uuid)
       language plpgsql security definer set search_path = pg_catalog, public as $$
       declare prior_context text := current_setting('app.tenant_id', true);
-        candidate record; invite public.owner_invites%rowtype; new_user uuid;
+        invite public.owner_invites%rowtype; new_user uuid; lookup_tenant uuid; lookup_invite uuid;
       begin
         if octet_length(p_token_hash) <> 32 or p_name is null or char_length(btrim(p_name)) not between 1 and 120
           or p_password_hash not like '$argon2id$%' then raise exception 'invalid invite data'; end if;
-        for candidate in select id from public.tenants where status = 'ONBOARDING' order by id loop
-          perform set_config('app.tenant_id', candidate.id::text, true);
-          select * into invite from public.owner_invites
-            where token_hash = p_token_hash and accepted_at is null and expires_at > now()
-            for update;
-          if found then
-            insert into public.staff_users (email, name, password_hash, status)
-              values (invite.email, btrim(p_name), p_password_hash, 'ACTIVE') returning id into new_user;
-            update public.owner_invites set accepted_at = now() where id = invite.id;
-            insert into public.memberships (tenant_id, staff_user_id, role, status)
-              values (invite.tenant_id, new_user, 'OWNER', 'ACTIVE');
-            insert into public.audit_events (tenant_id, actor_type, actor_id, action, entity_type, entity_id, changes, request_id)
-              values (invite.tenant_id, 'SYSTEM', new_user, 'owner_invite.redeemed', 'membership', new_user,
-                jsonb_build_object('role', 'OWNER'), p_request_id);
-            perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
-            return query select new_user, invite.tenant_id;
-            return;
-          end if;
-        end loop;
+        select store_id, invite_id into lookup_tenant, lookup_invite from public.owner_invite_lookup
+          where token_hash=p_token_hash for update;
+        if not found then perform set_config('app.tenant_id', coalesce(prior_context, ''), true); return; end if;
+        perform set_config('app.tenant_id', lookup_tenant::text, true);
+        select * into invite from public.owner_invites
+          where id=lookup_invite and token_hash=p_token_hash and accepted_at is null and expires_at>now()
+          for update;
+        if not found then perform set_config('app.tenant_id', coalesce(prior_context, ''), true); return; end if;
+        insert into public.staff_users (email, name, password_hash, status)
+          values (invite.email, btrim(p_name), p_password_hash, 'ACTIVE') returning id into new_user;
+        update public.owner_invites set accepted_at = now() where id = invite.id;
+        delete from public.owner_invite_lookup where token_hash=p_token_hash;
+        insert into public.memberships (tenant_id, staff_user_id, role, status)
+          values (invite.tenant_id, new_user, 'OWNER', 'ACTIVE');
+        insert into public.audit_events (tenant_id, actor_type, actor_id, action, entity_type, entity_id, changes, request_id)
+          values (invite.tenant_id, 'SYSTEM', new_user, 'owner_invite.redeemed', 'membership', new_user,
+            jsonb_build_object('role', 'OWNER'), p_request_id);
+        perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
+        return query select new_user, invite.tenant_id;
         perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
       end $$;
       revoke all on function whiteoven_redeem_owner_invite(bytea,text,text,uuid) from public;
