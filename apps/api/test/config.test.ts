@@ -37,7 +37,6 @@ describe("loadConfig", () => {
       auth: {
         accessTokenPrivateKey: null,
         mfaEncryptionKey: null,
-        membershipCacheSeconds: 30,
         adminOrigins: [],
       },
     });
@@ -101,8 +100,6 @@ describe("loadConfig", () => {
     ],
     ["AUTH_MFA_ENCRYPTION_KEY", randomBytes(16).toString("base64")],
     ["AUTH_MFA_ENCRYPTION_KEY", "not-base64-at-all"],
-    ["AUTH_MEMBERSHIP_CACHE_SECONDS", "61"],
-    ["AUTH_MEMBERSHIP_CACHE_SECONDS", "-1"],
     ["API_ADMIN_ORIGINS", "https://admin.example.com/"],
     ["API_ADMIN_ORIGINS", "https://ok.example.com,ftp://x.example.com"],
   ] as const) {
@@ -121,7 +118,6 @@ describe("loadConfig", () => {
     const config = loadConfig({
       ...base,
       ...production,
-      AUTH_MEMBERSHIP_CACHE_SECONDS: "0",
       API_ADMIN_ORIGINS:
         "https://admin.whiteoven.com.br, http://localhost:4200",
     });
@@ -130,7 +126,6 @@ describe("loadConfig", () => {
       "ed25519",
     );
     assert.equal(config.auth.mfaEncryptionKey?.length, 32);
-    assert.equal(config.auth.membershipCacheSeconds, 0);
     assert.deepEqual(config.auth.adminOrigins, [
       "https://admin.whiteoven.com.br",
       "http://localhost:4200",

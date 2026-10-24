@@ -115,7 +115,6 @@ export class StaffMfa {
         "Start the two-factor setup first.",
       );
     if (activated === "invalid") throw invalidCode();
-    this.auth.forgetSession(claims.sid);
     return {
       recoveryCodes,
       tokens: this.auth.issue({ ...claims, mfa: true }),

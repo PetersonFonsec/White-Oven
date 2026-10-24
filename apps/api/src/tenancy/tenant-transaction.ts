@@ -1,8 +1,9 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import { type EntityManager, MikroORM } from "@mikro-orm/postgresql";
 import { TENANT_SETTING } from "../database/tenant-isolation-sql";
+import { ApiError } from "../errors/api-error";
 import { TENANT_FILTER } from "./tenant-filter";
-import { currentTenantContext } from "./tenant-context";
+import { type TenantActor, currentTenantContext } from "./tenant-context";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -33,12 +34,64 @@ export async function runInTenant<T>(
   });
 }
 
-/** Request-scoped entry point to tenant data: the only way services should reach it. */
+/**
+ * Request-scoped entry point to tenant data: the only way services should reach it.
+ *
+ * For a staff actor the transaction first re-reads the session, the user and the membership with
+ * row locks (FOR SHARE). The guard's check ran in an earlier transaction; this one closes the gap:
+ * a logout, a disabled user, a revocation or a role change either committed before (the work is
+ * refused) or waits until the work commits. No tenant work runs on an outdated role.
+ */
 @Injectable()
 export class TenantTransactions {
   constructor(@Inject(MikroORM) private readonly orm: MikroORM) {}
 
   async run<T>(work: (em: EntityManager) => Promise<T>): Promise<T> {
-    return runInTenant(this.orm, currentTenantContext().tenantId, work);
+    const { tenantId, actor } = currentTenantContext();
+    return runInTenant(this.orm, tenantId, async (em) => {
+      if (actor.type === "staff") await assertStaffStillAllowed(em, actor);
+      return work(em);
+    });
   }
+}
+
+async function assertStaffStillAllowed(
+  em: EntityManager,
+  actor: Extract<TenantActor, { type: "staff" }>,
+): Promise<void> {
+  const sessions = await em.execute(
+    `select 1 from staff_sessions s join staff_users u on u.id = s.staff_user_id
+      where s.id = ? and s.staff_user_id = ? and s.revoked_at is null
+        and s.idle_expires_at > now() and u.status = 'ACTIVE'
+        for share of s, u`,
+    [actor.sessionId, actor.staffUserId],
+  );
+  if (sessions.length !== 1)
+    throw new ApiError(
+      HttpStatus.UNAUTHORIZED,
+      "SESSION_INVALID",
+      "Session expired or revoked. Sign in again.",
+    );
+  // Same login matrix as staffMayEnter (domain-model.md), under the tenant setting of this
+  // transaction, so RLS still limits the read to the current tenant.
+  const [membership] = await em.execute<{ role: string }[]>(
+    `select m.role from memberships m join tenants t on t.id = m.tenant_id
+      where m.staff_user_id = ? and m.status = 'ACTIVE'
+        and (t.status in ('ONBOARDING', 'ACTIVE')
+          or (t.status = 'SUSPENDED' and m.role = 'OWNER'))
+        for share of m`,
+    [actor.staffUserId],
+  );
+  if (!membership)
+    throw new ApiError(
+      HttpStatus.FORBIDDEN,
+      "TENANT_ACCESS_DENIED",
+      "No access to this store.",
+    );
+  if (membership.role !== actor.role)
+    throw new ApiError(
+      HttpStatus.FORBIDDEN,
+      "ROLE_FORBIDDEN",
+      "Your role cannot perform this action.",
+    );
 }

@@ -37,7 +37,6 @@ describe("staff MFA, platform guard and first operator", databaseSuite, () => {
     tenantId = await insertTenant(owner, "mfa-loja");
     server = await startTestServer({
       DATABASE_URL: database.appUrl,
-      AUTH_MEMBERSHIP_CACHE_SECONDS: "0",
     });
   });
   after(async () => {

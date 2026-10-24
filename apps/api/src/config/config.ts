@@ -27,8 +27,6 @@ export interface AuthConfig {
    * production; elsewhere `null` means an ephemeral key (enrollments do not survive a restart).
    */
   mfaEncryptionKey: Buffer | null;
-  /** How long a verified (session, tenant) membership may be reused before re-checking: 0-60 s. */
-  membershipCacheSeconds: number;
   /** Browser origins allowed to call the cookie-based refresh and logout endpoints. */
   adminOrigins: readonly string[];
 }
@@ -177,18 +175,6 @@ function loadAuthConfig(
       );
   }
 
-  let membershipCacheSeconds = 30;
-  const rawTtl = env.AUTH_MEMBERSHIP_CACHE_SECONDS;
-  if (rawTtl !== undefined && rawTtl !== "") {
-    membershipCacheSeconds = /^\d{1,2}$/.test(rawTtl)
-      ? Number(rawTtl)
-      : Number.NaN;
-    if (!(membershipCacheSeconds >= 0 && membershipCacheSeconds <= 60))
-      problems.push(
-        "AUTH_MEMBERSHIP_CACHE_SECONDS must be an integer between 0 and 60",
-      );
-  }
-
   const adminOrigins = (env.API_ADMIN_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())
@@ -201,7 +187,6 @@ function loadAuthConfig(
   return {
     accessTokenPrivateKey,
     mfaEncryptionKey,
-    membershipCacheSeconds,
     adminOrigins: Object.freeze(adminOrigins),
   };
 }

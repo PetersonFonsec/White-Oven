@@ -156,7 +156,7 @@ Invariantes:
 
 - Par (`staffUserId`, `tenantId`) único.
 - Todo tenant `ACTIVE` tem ao menos um `OWNER` ativo; o último OWNER não pode ser removido nem rebaixado.
-- O tenant ativo do token de equipe precisa ter vínculo `ACTIVE` verificado a cada requisição (cache curto permitido, invalidado na revogação).
+- O tenant ativo do token de equipe precisa ter vínculo `ACTIVE` verificado a cada requisição (sem cache; ver ADR 0007).
 
 ### Customer
 

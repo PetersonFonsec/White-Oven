@@ -6,7 +6,7 @@ import {
 } from "node:crypto";
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import { MikroORM } from "@mikro-orm/postgresql";
-import { API_CONFIG, type ApiConfig } from "../config/config";
+import { TENANT_SETTING } from "../database/tenant-isolation-sql";
 import { ApiError } from "../errors/api-error";
 import type { TenantStatus } from "../tenancy/tenant.entity";
 import { runInTenant } from "../tenancy/tenant-transaction";
@@ -82,22 +82,46 @@ export const invalidCredentials = () =>
 export const invalidSession = () =>
   unauthorized("SESSION_INVALID", "Session expired or revoked. Sign in again.");
 
+type Executor = { execute: MikroORM["em"]["execute"] };
+
+/**
+ * The user's role in `tenantId`, read inside the caller's transaction with the membership row
+ * locked FOR SHARE. A concurrent revocation or role change either waits for that transaction to
+ * end or, when it committed first, is seen here: under READ COMMITTED a locking read re-checks
+ * the row's latest version. The tenant setting is transaction-local and cleared right after.
+ */
+export async function lockedMembershipRole(
+  em: Executor,
+  staffUserId: string,
+  tenantId: string,
+): Promise<MembershipRole | null> {
+  await em.execute("select set_config(?, ?, true)", [TENANT_SETTING, tenantId]);
+  const [row] = await em.execute<
+    { role: MembershipRole; status: TenantStatus }[]
+  >(
+    `select m.role, t.status
+       from memberships m join tenants t on t.id = m.tenant_id
+      where m.staff_user_id = ? and m.status = 'ACTIVE'
+        for share of m`,
+    [staffUserId],
+  );
+  await em.execute("select set_config(?, '', true)", [TENANT_SETTING]);
+  return row && staffMayEnter(row.role, row.status) ? row.role : null;
+}
+
 /**
  * Staff login, rotating refresh sessions, logout and active tenant (M1.4, ADR 0007). Global
  * tables (`staff_users`, `staff_sessions`) are read outside tenant context; memberships only
- * inside `runInTenant` or through `whiteoven_staff_memberships`, which keeps the tenant policy.
+ * under the tenant setting (`runInTenant`, `lockedMembershipRole`) or through
+ * `whiteoven_staff_memberships`, which keeps the tenant policy.
+ *
+ * Nothing is cached: every request reads the session, the user and the membership from
+ * PostgreSQL, so revocations apply on the next request of any API instance.
  */
 @Injectable()
 export class StaffAuth {
-  /** `${sessionId}|${tenantId}` → verified access and when it must be checked again. */
-  private readonly accessCache = new Map<
-    string,
-    { until: number; access: StaffAccess }
-  >();
-
   constructor(
     @Inject(MikroORM) private readonly orm: MikroORM,
-    @Inject(API_CONFIG) private readonly config: ApiConfig,
     @Inject(AccessTokens) private readonly tokens: AccessTokens,
     @Inject(LoginThrottle) private readonly throttle: LoginThrottle,
     @Inject(MfaChallenges) private readonly challenges: MfaChallenges,
@@ -207,30 +231,25 @@ export class StaffAuth {
         await this.revokeIn(em, sessionId, "USER_DISABLED");
         return { kind: "invalid" as const };
       }
+      // Checked under the session lock, so a concurrent tenant switch cannot be overwritten.
+      const tid =
+        row.activeTenantId &&
+        (await lockedMembershipRole(em, row.staffUserId, row.activeTenantId))
+          ? row.activeTenantId
+          : null;
       const next = randomBytes(32).toString("base64url");
       await em.execute(
         `update staff_sessions
-            set refresh_token_hash = ?, refreshed_at = now(),
+            set refresh_token_hash = ?, refreshed_at = now(), active_tenant_id = ?,
                 idle_expires_at = now() + make_interval(secs => ?)
           where id = ?`,
-        [sha256(next), STAFF_SESSION_IDLE_MS / 1000, sessionId],
+        [sha256(next), tid, STAFF_SESSION_IDLE_MS / 1000, sessionId],
       );
-      return { kind: "rotated" as const, row, next };
+      return { kind: "rotated" as const, row, tid, next };
     });
-    if (outcome.kind === "invalid") {
-      this.forgetSession(sessionId);
-      throw invalidSession();
-    }
+    if (outcome.kind === "invalid") throw invalidSession();
 
-    const { row, next } = outcome;
-    let tid = row.activeTenantId;
-    if (tid && !(await this.membershipRole(row.staffUserId, tid))) {
-      tid = null;
-      await this.sql(
-        "update staff_sessions set active_tenant_id = null where id = ?",
-        [sessionId],
-      );
-    }
+    const { row, tid, next } = outcome;
     return this.issue(
       { sub: row.staffUserId, sid: sessionId, tid, mfa: row.mfa },
       `${sessionId}.${next}`,
@@ -251,7 +270,6 @@ export class StaffAuth {
       if (row && timingSafeEqual(row.hash, sha256(secret)))
         await this.revokeIn(em, sessionId, "LOGOUT");
     });
-    this.forgetSession(sessionId);
   }
 
   /** Tenants this user may switch to: ACTIVE memberships in tenants whose status allows it. */
@@ -279,41 +297,47 @@ export class StaffAuth {
    * Switches the session's active tenant and issues a token for it. The tenant id comes from the
    * request body but grants nothing by itself: it must match an ACTIVE membership, read inside
    * that tenant's context. Unknown tenants and missing memberships answer the same 404.
+   *
+   * One transaction locks the session row (serializing with refresh, logout and other switches)
+   * and the membership row FOR SHARE (serializing with its revocation), so the tenant stored and
+   * the token issued always come from a membership that was ACTIVE when the switch committed.
    */
   async switchTenant(
     claims: StaffAccessClaims,
     tenantId: string,
   ): Promise<IssuedTokens> {
     if (!UUID.test(tenantId)) throw tenantNotFound();
-    const access = await this.authorize({ ...claims, tid: null });
-    if (!access) throw invalidSession();
-    if (!(await this.membershipRole(claims.sub, tenantId)))
-      throw tenantNotFound();
-    await this.sql(
-      "update staff_sessions set active_tenant_id = ? where id = ? and revoked_at is null",
-      [tenantId, claims.sid],
-    );
+    const outcome = await this.orm.em.fork().transactional(async (em) => {
+      const [session] = await em.execute<{ ok: boolean }[]>(
+        `select (s.revoked_at is null and s.idle_expires_at > now()
+                 and u.status = 'ACTIVE') as ok
+           from staff_sessions s join staff_users u on u.id = s.staff_user_id
+          where s.id = ? and s.staff_user_id = ?
+            for update of s`,
+        [claims.sid, claims.sub],
+      );
+      if (!session?.ok) return "session" as const;
+      if (!(await lockedMembershipRole(em, claims.sub, tenantId)))
+        return "tenant" as const;
+      await em.execute(
+        "update staff_sessions set active_tenant_id = ? where id = ?",
+        [tenantId, claims.sid],
+      );
+      return "switched" as const;
+    });
+    if (outcome === "session") throw invalidSession();
+    if (outcome === "tenant") throw tenantNotFound();
     return this.issue({ ...claims, tid: tenantId });
   }
 
   /**
    * Checks, for every request, that the session is live, the user active and, with a tenant,
-   * that the membership is ACTIVE and the tenant admits the role. Positive answers are cached for
-   * `AUTH_MEMBERSHIP_CACHE_SECONDS` (≤ 60 s): a revoked member loses access within that time
-   * (tenant-isolation.md, required test 7). Negative answers are never cached.
+   * that the membership is ACTIVE and the tenant admits the role. Read from PostgreSQL each time,
+   * so a revocation, a role change or a disabled user applies on the next request of every API
+   * instance (tenant-isolation.md, required test 7). `TenantTransactions.run` checks the same
+   * again, with row locks, inside the transaction that does the work.
    */
   async authorize(claims: StaffAccessClaims): Promise<StaffAccess | null> {
-    const key = `${claims.sid}|${claims.tid ?? ""}`;
-    const now = Date.now();
-    const cached = this.accessCache.get(key);
-    if (
-      cached &&
-      cached.until > now &&
-      cached.access.staffUserId === claims.sub
-    )
-      return cached.access;
-    this.accessCache.delete(key);
-
     const [session] = await this.sql<{
       ok: boolean;
       platformRole: StaffAccess["platformRole"];
@@ -335,7 +359,7 @@ export class StaffAuth {
       role = await this.membershipRole(claims.sub, claims.tid);
       if (!role) return null;
     }
-    const access: StaffAccess = {
+    return {
       staffUserId: claims.sub,
       sessionId: claims.sid,
       role,
@@ -344,12 +368,6 @@ export class StaffAuth {
       mfaEnrolled: session.mfaEnrolled,
       sessionMfa: session.sessionMfa,
     };
-    const ttl = this.config.auth.membershipCacheSeconds * 1000;
-    if (ttl > 0) {
-      if (this.accessCache.size >= 10_000) this.accessCache.clear();
-      this.accessCache.set(key, { until: now + ttl, access });
-    }
-    return access;
   }
 
   /** The user's role in `tenantId`, or null without an ACTIVE membership the tenant admits. */
@@ -382,7 +400,7 @@ export class StaffAuth {
   }
 
   private async revokeIn(
-    em: { execute: MikroORM["em"]["execute"] },
+    em: Executor,
     sessionId: string,
     reason: SessionRevokedReason,
   ): Promise<void> {
@@ -391,12 +409,6 @@ export class StaffAuth {
         where id = ? and revoked_at is null`,
       [reason, sessionId],
     );
-  }
-
-  /** Drops cached access of a session whose state changed (logout, reuse, MFA upgrade). */
-  forgetSession(sessionId: string): void {
-    for (const key of this.accessCache.keys())
-      if (key.startsWith(`${sessionId}|`)) this.accessCache.delete(key);
   }
 
   private sql<T>(query: string, params: unknown[] = []): Promise<T[]> {
