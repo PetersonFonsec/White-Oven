@@ -1,6 +1,6 @@
 # WhiteOven
 
-SaaS white label planejado para pizzarias. **M0** entregou a landing Astro, o Pizza Builder demonstrativo, a captação real de interesse com SQLite local e o empacotamento Docker/Compose. **M1.1** inicia a API NestJS em `apps/api` (configuração validada, `/health`, logs estruturados, erro padronizado e OpenAPI), ainda sem banco, tenants ou autenticação. Nenhum deploy real foi feito. Angular, React Native/Expo, pagamentos e onboarding continuam planejados.
+SaaS white label planejado para pizzarias. **M0** entregou a landing Astro, o Pizza Builder demonstrativo, a captação real de interesse com SQLite local e o empacotamento Docker/Compose. **M1.1** iniciou a API NestJS em `apps/api` (configuração validada, `/health`, logs estruturados, erro padronizado e OpenAPI) e **M1.2** a liga ao PostgreSQL com MikroORM, migrations e papéis de banco separados, ainda sem tenants ou autenticação. Nenhum deploy real foi feito. Angular, React Native/Expo, pagamentos e onboarding continuam planejados.
 
 ## Requisitos e início local
 
@@ -25,6 +25,8 @@ Abra `http://localhost:4321`. Sem configuração completa, o formulário permane
 | `pnpm check`                                      | Formatação, ESLint e tipos strict de todos os pacotes.                             |
 | `pnpm test`                                       | Testes de todos os pacotes (landing, API) e dos scripts de operação.               |
 | `pnpm api:dev`                                    | Compila e sobe a API em `http://127.0.0.1:3000`.                                   |
+| `pnpm db:up`                                      | Sobe o PostgreSQL de desenvolvimento (`compose.dev.yaml`) em `127.0.0.1:5432`.     |
+| `pnpm api:migrate`                                | Aplica as migrations como `whiteoven_owner` (`apps/api/.env.migrate`).             |
 | `pnpm test:e2e`                                   | Build + Playwright desktop/mobile com servidor e banco sintéticos.                 |
 | `pnpm leads inspect`                              | Lista IDs, datas, plano e volume, sem nome ou WhatsApp.                            |
 | `pnpm leads export .data/lead-exports/leads.json` | Exportação JSON restrita, sem sobrescrever arquivo existente.                      |
@@ -37,7 +39,7 @@ Instale Chromium com `pnpm exec playwright install chromium`. Alternativamente, 
 ## Estrutura e operação
 
 - `apps/landing`: interface, endpoint Astro `/api/leads`, política `/privacidade` e persistência temporária.
-- `apps/api`: API NestJS. Configuração em `apps/api/.env.example`; OpenAPI em `/v1/openapi.json` fora de produção. Decisões no [ADR 0004](docs/adr/0004-api-foundation.md).
+- `apps/api`: API NestJS. Configuração em `apps/api/.env.example` (API) e `apps/api/.env.migrate.example` (migrations); OpenAPI em `/v1/openapi.json` fora de produção. Decisões nos ADRs [0004](docs/adr/0004-api-foundation.md) e [0005](docs/adr/0005-database-roles-migrations.md).
 - `packages/contracts`: contrato e validação isomórfica do lead, sem dependências de servidor.
 - `packages/design-tokens`: identidade visual reutilizável.
 - `docs/product`, `docs/architecture`, `docs/adr`: estado do produto e decisões.
@@ -56,12 +58,17 @@ Consulte o [runbook](docs/operations/landing-deployment.md) antes de executar co
 
 Teste de containers (Docker obrigatório): `node --experimental-strip-types tests/deployment/containers.mjs`. Cria e remove somente recursos sintéticos identificados por projeto aleatório. CI executa essa suíte e os checks existentes; após merge em main, publica a imagem testada no GHCR com tag SHA, sem deploy automático. GHCR/HTTPS público e o destino real só serão verificados após configuração futura autorizada.
 
-## API em desenvolvimento — M1.1
+## API em desenvolvimento — M1.1 e M1.2
 
 ```sh
-pnpm api:dev                                    # local, porta 3000
-docker compose -f compose.dev.yaml up --build api   # container, loopback 127.0.0.1:3000
-curl http://127.0.0.1:3000/health               # {"status":"ok"}
+docker compose -f compose.dev.yaml up --build api   # postgres → migrate → api, loopback 127.0.0.1:3000
+curl http://127.0.0.1:3000/health               # liveness: {"status":"ok"}
+curl http://127.0.0.1:3000/health/ready         # prontidão: exige o banco
+
+# Sem container para a API:
+pnpm db:up
+cp apps/api/.env.migrate.example apps/api/.env.migrate && pnpm api:migrate
+cp apps/api/.env.example apps/api/.env && pnpm api:dev
 ```
 
-Configuração inválida (por exemplo `API_PORT=abc`) encerra o processo com código 1 antes de abrir a porta. `compose.dev.yaml` é só para desenvolvimento; PostgreSQL entra nele em M1.2. O `compose.yaml` de produção continua servindo apenas a landing.
+A API conecta apenas como `whiteoven_app` (sem `BYPASSRLS` e sem DDL); as migrations rodam em processo separado como `whiteoven_owner`. Configuração inválida (por exemplo `API_PORT=abc`), credencial de dono no ambiente da API, papel de banco inseguro ou banco inacessível encerram o processo com código 1 antes de abrir a porta. Testes de integração da API usam PostgreSQL real: com `pnpm db:up`, rode `TEST_DATABASE_OWNER_URL=postgres://whiteoven_owner:whiteoven-dev-owner-password@127.0.0.1:5432/whiteoven pnpm test`; sem a variável essas suítes são puladas localmente e falham na CI. `compose.dev.yaml` e suas senhas são só para desenvolvimento; o `compose.yaml` de produção continua servindo apenas a landing.

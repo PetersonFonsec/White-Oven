@@ -56,6 +56,20 @@ describe("API application", () => {
     assert.equal(response.headers.get("x-powered-by"), null);
   });
 
+  it("GET /health/ready answers 503 with the standard body when the database is unreachable", async () => {
+    const response = await fetch(`${server.baseUrl}/health/ready`);
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await json(response);
+    assert.deepEqual(Object.keys(body).sort(), [
+      "code",
+      "message",
+      "requestId",
+    ]);
+    assert.equal(body.code, "NOT_READY");
+    assert.equal(body.message, "Service not ready.");
+  });
+
   it("assigns a request id and reuses a well-formed upstream one", async () => {
     const generated = await fetch(`${server.baseUrl}/health`);
     assert.match(
@@ -201,6 +215,7 @@ describe("OpenAPI", () => {
       const document = await json(response);
       assert.match(document.openapi, /^3\./);
       assert.ok(document.paths["/health"]?.get);
+      assert.ok(document.paths["/health/ready"]?.get);
       assert.ok(document.components.schemas.ApiErrorBody);
       assert.ok(document.components.schemas.HealthBody);
     } finally {

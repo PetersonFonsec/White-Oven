@@ -10,6 +10,10 @@ export interface TestServer {
   close(): Promise<void>;
 }
 
+/** Nothing listens on the discard port: unit tests never reach a database. */
+export const UNREACHABLE_DATABASE_URL =
+  "postgres://whiteoven_app:unused-password@127.0.0.1:9/whiteoven";
+
 export async function startTestServer(
   overrides: NodeJS.ProcessEnv = {},
   options: Omit<CreateAppOptions, "logger"> = {},
@@ -17,6 +21,7 @@ export async function startTestServer(
   const config: ApiConfig = loadConfig({
     NODE_ENV: "test",
     API_LOG_LEVEL: "debug",
+    DATABASE_URL: UNREACHABLE_DATABASE_URL,
     ...overrides,
   });
   const logs: Record<string, unknown>[] = [];

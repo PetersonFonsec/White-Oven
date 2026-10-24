@@ -1,11 +1,18 @@
+import { MikroORM } from "@mikro-orm/postgresql";
 import { ConfigError, loadConfig } from "./config/config";
 import { createApp } from "./app";
+import {
+  UnsafeDatabaseRoleError,
+  assertSafeRuntimeRole,
+} from "./database/runtime-role";
 import { JsonLogger } from "./logging/json-logger";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
   const logger = new JsonLogger(config.logLevel);
   const app = await createApp(config, { logger });
+  // Fails before listening when the database is unreachable or the role could bypass RLS/run DDL.
+  await assertSafeRuntimeRole(app.get(MikroORM));
   await app.listen(config.port, config.host);
   logger.write("info", "api listening", {
     host: config.host,
@@ -15,7 +22,10 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   // Invalid configuration must stop the process before it listens.
-  if (error instanceof ConfigError) {
+  if (
+    error instanceof ConfigError ||
+    error instanceof UnsafeDatabaseRoleError
+  ) {
     process.stderr.write(`${error.message}\n`);
   } else {
     const code = (error as { code?: unknown } | null)?.code;
