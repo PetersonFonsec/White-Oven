@@ -92,9 +92,18 @@ export class StaffMfa {
           where id = ?`,
         [step, byteaArray(recoveryCodes.map(recoveryCodeHash)), claims.sub],
       );
-      await em.execute(
-        "update staff_sessions set mfa = true where id = ? and revoked_at is null",
-        [claims.sid],
+      const sessions = await em.execute<{ id: string }[]>(
+        `update staff_sessions set mfa = true
+           where id = ? and staff_user_id = ? and revoked_at is null
+             and idle_expires_at > now()
+           returning id`,
+        [claims.sid, claims.sub],
+      );
+      // Roll back enrollment as well if the session was revoked mid-request.
+      if (sessions.length !== 1) throw new ApiError(
+        HttpStatus.UNAUTHORIZED,
+        "SESSION_INVALID",
+        "Session expired or revoked. Sign in again.",
       );
       return "activated" as const;
     });
@@ -123,7 +132,7 @@ export class StaffMfa {
     factor: SecondFactor,
     ip: string,
   ): Promise<IssuedTokens> {
-    const challenge = this.challenges.peek(mfaToken);
+    const challenge = this.challenges.beginVerification(mfaToken);
     if (!challenge)
       throw new ApiError(
         HttpStatus.UNAUTHORIZED,
