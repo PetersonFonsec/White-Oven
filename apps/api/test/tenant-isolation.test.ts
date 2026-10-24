@@ -4,7 +4,7 @@ import { RequestMethod } from "@nestjs/common";
 import { METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { DiscoveryService, MetadataScanner } from "@nestjs/core";
 import { defineEntity, p } from "@mikro-orm/core";
-import type { MikroORM } from "@mikro-orm/postgresql";
+import { MikroORM } from "@mikro-orm/postgresql";
 import {
   findUnprotectedTenantTables,
   tenantIsolationSql,
@@ -249,9 +249,33 @@ describe("tenant isolation", databaseSuite, () => {
   });
 
   describe("2. RLS coverage", () => {
-    it("every table with tenant_id has RLS enabled, forced and a policy", async () => {
+    it("every table with tenant_id has RLS enabled, forced and only tenant-check policies", async () => {
       assert.deepEqual(await findUnprotectedTenantTables(owner), []);
     });
+
+    /** Problems reported for `table`, or [] when it is considered protected. */
+    const problemsOf = async (table: string) =>
+      (await findUnprotectedTenantTables(owner)).find((t) => t.table === table)
+        ?.problems ?? [];
+
+    /** Creates a protected tenant table, runs `extra` statements on it, then `check`, then drops it. */
+    const withCoverageTable = async (
+      extra: string[],
+      check: (table: string) => Promise<void>,
+    ) => {
+      const table = "coverage_probe";
+      const sql = owner.em.getConnection();
+      await sql.execute(
+        `create table ${table} (id uuid primary key default gen_random_uuid(), tenant_id uuid not null references tenants (id))`,
+      );
+      try {
+        for (const statement of [...tenantIsolationSql(table), ...extra])
+          await sql.execute(statement);
+        await check(table);
+      } finally {
+        await sql.execute(`drop table ${table}`);
+      }
+    };
 
     it("flags a new tenant table until it is fully protected", async () => {
       const sql = owner.em.getConnection();
@@ -259,18 +283,21 @@ describe("tenant isolation", databaseSuite, () => {
         "create table coverage_probe (id uuid primary key, tenant_id uuid not null references tenants (id))",
       );
       try {
-        const flagged = async () =>
-          (await findUnprotectedTenantTables(owner)).map((t) => t.table);
-        assert.deepEqual(await flagged(), ["coverage_probe"]);
+        assert.deepEqual(await problemsOf("coverage_probe"), [
+          "row level security disabled",
+          "row level security not forced",
+          "no permissive policy for whiteoven_app",
+        ]);
         await sql.execute(
           "alter table coverage_probe enable row level security",
         );
-        assert.deepEqual(await flagged(), ["coverage_probe"]);
         await sql.execute(
           "alter table coverage_probe force row level security",
         );
         // RLS without a policy denies everything, but is still flagged: the table is unusable.
-        assert.deepEqual(await flagged(), ["coverage_probe"]);
+        assert.deepEqual(await problemsOf("coverage_probe"), [
+          "no permissive policy for whiteoven_app",
+        ]);
         await sql.execute(
           "alter table coverage_probe no force row level security",
         );
@@ -279,7 +306,7 @@ describe("tenant isolation", databaseSuite, () => {
         );
         for (const statement of tenantIsolationSql("coverage_probe"))
           await sql.execute(statement);
-        assert.deepEqual(await flagged(), []);
+        assert.deepEqual(await problemsOf("coverage_probe"), []);
       } finally {
         await sql.execute("drop table coverage_probe");
       }
@@ -293,13 +320,154 @@ describe("tenant isolation", databaseSuite, () => {
       try {
         for (const statement of tenantIsolationSql("nullable_probe"))
           await sql.execute(statement);
-        assert.deepEqual(
-          (await findUnprotectedTenantTables(owner)).map((t) => t.table),
-          ["nullable_probe"],
-        );
+        assert.deepEqual(await problemsOf("nullable_probe"), [
+          "tenant_id is nullable",
+        ]);
       } finally {
         await sql.execute("drop table nullable_probe");
       }
+    });
+
+    it("flags an extra permissive policy that exposes every tenant without context", async () => {
+      await withCoverageTable(
+        [
+          "create policy open_all on coverage_probe using (true) with check (true)",
+        ],
+        async (table) => {
+          await runInTenant(owner, b.id, (em) =>
+            em.execute(`insert into ${table} (tenant_id) values (?)`, [b.id]),
+          );
+          // The leak is real: whiteoven_app reads tenant B's row with no context at all.
+          assert.equal(
+            await appCount(`select count(*)::int as count from ${table}`),
+            1,
+          );
+          assert.deepEqual(await problemsOf(table), [
+            'permissive policy "open_all": USING is not the tenant check',
+            'permissive policy "open_all": WITH CHECK is not the tenant check',
+          ]);
+        },
+      );
+    });
+
+    const UNSAFE_POLICIES: [string, string, string[]][] = [
+      [
+        "a SELECT-only policy for whiteoven_app",
+        "create policy app_reads on coverage_probe for select to whiteoven_app using (true)",
+        ['permissive policy "app_reads": USING is not the tenant check'],
+      ],
+      [
+        "an INSERT policy with an open WITH CHECK",
+        "create policy app_inserts on coverage_probe for insert with check (true)",
+        ['permissive policy "app_inserts": WITH CHECK is not the tenant check'],
+      ],
+      [
+        "an UPDATE policy that lets rows move to another tenant",
+        "create policy app_moves on coverage_probe for update using (tenant_id = whiteoven_current_tenant()) with check (tenant_id is not null)",
+        ['permissive policy "app_moves": WITH CHECK is not the tenant check'],
+      ],
+      [
+        "a DELETE policy wider than the tenant check",
+        "create policy app_deletes on coverage_probe for delete using (tenant_id = whiteoven_current_tenant() or tenant_id is not null)",
+        ['permissive policy "app_deletes": USING is not the tenant check'],
+      ],
+      [
+        "a policy for whiteoven_platform reading without context",
+        "create policy platform_reads on coverage_probe for select to whiteoven_platform using (true)",
+        ['permissive policy "platform_reads": USING is not the tenant check'],
+      ],
+      [
+        "a policy reading the setting without nullif (fails with an error, not closed)",
+        "create policy raw_setting on coverage_probe using (tenant_id = current_setting('app.tenant_id', true)::uuid)",
+        [
+          'permissive policy "raw_setting": USING is not the tenant check',
+          'permissive policy "raw_setting": WITH CHECK is not the tenant check',
+        ],
+      ],
+    ];
+
+    for (const [name, statement, expected] of UNSAFE_POLICIES) {
+      it(`flags ${name}`, async () => {
+        await withCoverageTable([statement], async (table) => {
+          assert.deepEqual(await problemsOf(table), expected);
+        });
+      });
+    }
+
+    it("flags the tenant policy rewritten with an open WITH CHECK", async () => {
+      await withCoverageTable(
+        ["alter policy tenant_isolation on coverage_probe with check (true)"],
+        async (table) => {
+          assert.deepEqual(await problemsOf(table), [
+            'permissive policy "tenant_isolation": WITH CHECK is not the tenant check',
+          ]);
+        },
+      );
+    });
+
+    it("flags a look-alike tenant function from another schema", async () => {
+      const sql = owner.em.getConnection();
+      await sql.execute("create schema coverage_lookalike");
+      try {
+        await withCoverageTable(
+          [
+            "create function coverage_lookalike.whiteoven_current_tenant() returns uuid language sql stable as $$ select tenant_id from public.coverage_probe limit 1 $$",
+            "alter policy tenant_isolation on coverage_probe using (tenant_id = coverage_lookalike.whiteoven_current_tenant()) with check (tenant_id = coverage_lookalike.whiteoven_current_tenant())",
+          ],
+          async (table) => {
+            assert.deepEqual(await problemsOf(table), [
+              'permissive policy "tenant_isolation": USING is not the tenant check',
+              'permissive policy "tenant_isolation": WITH CHECK is not the tenant check',
+            ]);
+          },
+        );
+      } finally {
+        await sql.execute("drop schema coverage_lookalike cascade");
+      }
+    });
+
+    it("flags a table whose only permissive policy excludes whiteoven_app", async () => {
+      await withCoverageTable(
+        [
+          "drop policy tenant_isolation on coverage_probe",
+          "create policy platform_only on coverage_probe to whiteoven_platform using (tenant_id = whiteoven_current_tenant()) with check (tenant_id = whiteoven_current_tenant())",
+        ],
+        async (table) => {
+          assert.deepEqual(await problemsOf(table), [
+            "no permissive policy for whiteoven_app",
+          ]);
+        },
+      );
+    });
+
+    it("accepts the tenant check without explicit WITH CHECK and extra restrictive policies, still failing closed", async () => {
+      await withCoverageTable(
+        [
+          "drop policy tenant_isolation on coverage_probe",
+          "create policy tenant_isolation on coverage_probe using (tenant_id = whiteoven_current_tenant())",
+          "create policy only_named on coverage_probe as restrictive using (id is not null)",
+        ],
+        async (table) => {
+          assert.deepEqual(await problemsOf(table), []);
+          await runInTenant(owner, a.id, (em) =>
+            em.execute(`insert into ${table} (tenant_id) values (?)`, [a.id]),
+          );
+          assert.equal(
+            await appCount(`select count(*)::int as count from ${table}`),
+            0,
+          );
+          assert.equal(
+            await sqlState(() =>
+              runInTenant(app, a.id, (em) =>
+                em.execute(`insert into ${table} (tenant_id) values (?)`, [
+                  b.id,
+                ]),
+              ),
+            ),
+            INSUFFICIENT_PRIVILEGE,
+          );
+        },
+      );
     });
 
     it("refuses an ORM entity mapping tenant_id without the default tenant filter", async () => {
@@ -317,6 +485,33 @@ describe("tenant isolation", databaseSuite, () => {
       );
       // `app` above was created with the probe entity and passed the same check.
       assert.doesNotThrow(() => assertTenantFilters(app));
+    });
+
+    it("closes the ORM it built when the tenant filter check fails", async () => {
+      const Unfiltered = defineEntity({
+        name: "UnfilteredProbe",
+        tableName: "isolation_probe_flavors",
+        properties: { id: p.uuid().primary(), tenantId: p.uuid() },
+      });
+      const closed: MikroORM[] = [];
+      const close = MikroORM.prototype.close;
+      MikroORM.prototype.close = function (this: MikroORM, ...args) {
+        closed.push(this);
+        return close.apply(this, args);
+      };
+      try {
+        await assert.rejects(
+          createOrm(
+            { url: database.appUrl, poolMax: 1 },
+            { entities: [Tenant, Unfiltered] },
+          ),
+          /UnfilteredProbe/,
+        );
+      } finally {
+        MikroORM.prototype.close = close;
+      }
+      assert.equal(closed.length, 1);
+      assert.equal(await closed[0]!.isConnected(), false);
     });
   });
 

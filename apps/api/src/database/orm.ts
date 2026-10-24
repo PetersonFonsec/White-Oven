@@ -34,6 +34,12 @@ export async function createOrm(
   extra: Options = {},
 ): Promise<MikroORM> {
   const orm = await MikroORM.init(ormOptions(connection, extra));
-  assertTenantFilters(orm);
+  try {
+    assertTenantFilters(orm);
+  } catch (error) {
+    // Release the pool and metadata before failing; the caller never receives this instance.
+    await orm.close().catch(() => undefined);
+    throw error;
+  }
   return orm;
 }
