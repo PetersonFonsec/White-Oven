@@ -6,6 +6,7 @@
 import {
   PLACEMENTS,
   validatePizzaConfiguration,
+  validatePricingPolicy,
   type CatalogExtraPrice,
   type HalfAndHalfStrategy,
   type HalfSide,
@@ -17,6 +18,7 @@ import {
   type PizzaRemovalSelection,
   type Placement,
   type PricingPolicy,
+  type PricingPolicyError,
 } from "@whiteoven/contracts";
 import { indexCatalog, type CatalogIndex } from "./catalog-index.ts";
 
@@ -63,14 +65,38 @@ export type PizzaEvaluation =
   | { ok: false; stage: FailingStage; errors: PizzaError[] };
 
 /**
+ * The tenant's PricingPolicy failed validatePricingPolicy. This is a configuration fault,
+ * not something the customer can fix, so it is thrown instead of returned as a PizzaError.
+ */
+export class InvalidPricingPolicyError extends Error {
+  readonly errors: PricingPolicyError[];
+  constructor(errors: PricingPolicyError[]) {
+    super(
+      `Invalid pricing policy: ${errors.map((entry) => entry.path || "(root)").join(", ")}`,
+    );
+    this.name = "InvalidPricingPolicyError";
+    this.errors = errors;
+  }
+}
+
+/** Validates with the contract and returns its detached copy, so later reads cannot change. */
+function checkedPolicy(policy: unknown): PricingPolicy {
+  const result = validatePricingPolicy(policy);
+  if (!result.ok) throw new InvalidPricingPolicyError(result.errors);
+  return result.value;
+}
+
+/**
  * Runs stages 1–8 in order and stops at the first stage with errors, returning all of
  * that stage's errors in field and index order. Stages 1–3 only read the original input.
+ * Throws InvalidPricingPolicyError before any stage when the policy is invalid.
  */
 export function evaluatePizza(
   input: unknown,
   catalog: PizzaCatalog | CatalogIndex,
-  policy: PricingPolicy,
+  pricingPolicy: PricingPolicy,
 ): PizzaEvaluation {
+  const policy = checkedPolicy(pricingPolicy);
   const structure = validatePizzaConfiguration(input);
   if (!structure.ok) return { ok: false, stage: 1, errors: structure.errors };
   const original = structure.value;
@@ -94,7 +120,7 @@ export function evaluatePizza(
   return {
     ok: true,
     configuration,
-    price: calculatePizzaPrice(configuration, index, policy),
+    price: priceConfiguration(configuration, index, policy),
   };
 }
 
@@ -318,13 +344,26 @@ function checkLimits(
  * Stage 8. Prices any configuration that passed stages 1–3, normalized or not, which is
  * what lets tests prove that normalization never increases the total. Integer cents only;
  * the single rounding is the ceiling of the AVERAGE base (PB-Q3 recommendation).
+ * Throws InvalidPricingPolicyError when the policy is invalid.
  */
 export function calculatePizzaPrice(
   configuration: PizzaConfiguration,
   catalog: PizzaCatalog | CatalogIndex,
+  pricingPolicy: PricingPolicy,
+): PizzaPriceBreakdown {
+  return priceConfiguration(
+    configuration,
+    "flavorPrice" in catalog ? catalog : indexCatalog(catalog),
+    checkedPolicy(pricingPolicy),
+  );
+}
+
+/** Stage 8 proper; `policy` must come from checkedPolicy. */
+function priceConfiguration(
+  configuration: PizzaConfiguration,
+  index: CatalogIndex,
   policy: PricingPolicy,
 ): PizzaPriceBreakdown {
-  const index = "flavorPrice" in catalog ? catalog : indexCatalog(catalog);
   const { sizeId } = configuration;
   const priced = <T>(value: T | undefined, what: string): T => {
     // Reaching this means the caller skipped stages 1–3.
@@ -346,10 +385,7 @@ export function calculatePizzaPrice(
     const right = flavorPrice("RIGHT");
     strategy = policy.halfAndHalfStrategy;
     flavorPrices = { LEFT: left, RIGHT: right };
-    baseCents =
-      strategy === "HIGHEST"
-        ? Math.max(left, right)
-        : Math.ceil((left + right) / 2);
+    baseCents = halfAndHalfBase(strategy, left, right);
     if (configuration.flavors.LEFT !== configuration.flavors.RIGHT)
       surchargeCents = policy.halfAndHalfSurchargeCents;
   }
@@ -389,4 +425,22 @@ export function calculatePizzaPrice(
     quantity: configuration.quantity,
     totalCents: unitPriceCents * configuration.quantity,
   };
+}
+
+function halfAndHalfBase(
+  strategy: HalfAndHalfStrategy,
+  left: number,
+  right: number,
+): number {
+  switch (strategy) {
+    case "HIGHEST":
+      return Math.max(left, right);
+    case "AVERAGE":
+      return Math.ceil((left + right) / 2);
+    default: {
+      // Unreachable after checkedPolicy; fails the build if a strategy is added unhandled.
+      const unknown: never = strategy;
+      throw new Error(`Unknown half-and-half strategy: ${String(unknown)}`);
+    }
+  }
 }
