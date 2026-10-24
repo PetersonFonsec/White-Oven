@@ -212,26 +212,22 @@ export function validatePricingPolicy(
   if (!plain(raw))
     return { ok: false, errors: [{ code: PRICING_POLICY_ERROR, path: "" }] };
   const paths = keyIssues(raw, POLICY_KEYS, "");
+  // Each field is read exactly once, so the value checked is the value returned.
+  const { halfAndHalfStrategy, halfAndHalfSurchargeCents, maxExtrasPerHalf } =
+    raw;
   if (
-    Object.hasOwn(raw, "halfAndHalfStrategy") &&
     !HALF_AND_HALF_STRATEGIES.includes(
-      raw.halfAndHalfStrategy as HalfAndHalfStrategy,
+      halfAndHalfStrategy as HalfAndHalfStrategy,
     )
   )
     paths.push("halfAndHalfStrategy");
-  if (
-    Object.hasOwn(raw, "halfAndHalfSurchargeCents") &&
-    !isCents(raw.halfAndHalfSurchargeCents)
-  )
+  if (!isCents(halfAndHalfSurchargeCents))
     paths.push("halfAndHalfSurchargeCents");
-  if (
-    Object.hasOwn(raw, "maxExtrasPerHalf") &&
-    !(
-      Number.isSafeInteger(raw.maxExtrasPerHalf) &&
-      (raw.maxExtrasPerHalf as number) >= 0 &&
-      (raw.maxExtrasPerHalf as number) <= MAX_EXTRAS_PER_HALF_LIMIT
-    )
-  )
+  if (!(
+    Number.isSafeInteger(maxExtrasPerHalf) &&
+    (maxExtrasPerHalf as number) >= 0 &&
+    (maxExtrasPerHalf as number) <= MAX_EXTRAS_PER_HALF_LIMIT
+  ))
     paths.push("maxExtrasPerHalf");
   if (paths.length)
     return {
@@ -244,9 +240,9 @@ export function validatePricingPolicy(
   return {
     ok: true,
     value: {
-      halfAndHalfStrategy: raw.halfAndHalfStrategy as HalfAndHalfStrategy,
-      halfAndHalfSurchargeCents: raw.halfAndHalfSurchargeCents as number,
-      maxExtrasPerHalf: raw.maxExtrasPerHalf as number,
+      halfAndHalfStrategy: halfAndHalfStrategy as HalfAndHalfStrategy,
+      halfAndHalfSurchargeCents: halfAndHalfSurchargeCents as number,
+      maxExtrasPerHalf: maxExtrasPerHalf as number,
     },
   };
 }
