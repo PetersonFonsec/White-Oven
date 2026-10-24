@@ -120,12 +120,28 @@ describe("staff authentication", databaseSuite, () => {
   });
 
   const url = (path: string) => `${server.baseUrl}/v1${path}`;
-  const post = (path: string, body?: unknown, headers = {}) =>
-    fetch(url(path), {
+  const post = (
+    path: string,
+    body?: unknown,
+    headers: Record<string, string | null> = {},
+  ) => {
+    const requestHeaders = { ...headers };
+    if (
+      ["/admin/auth/refresh", "/admin/auth/logout"].includes(path) &&
+      !Object.hasOwn(requestHeaders, "origin")
+    )
+      requestHeaders.origin = ADMIN_ORIGIN;
+    for (const [key, value] of Object.entries(requestHeaders))
+      if (value === null) delete requestHeaders[key];
+    return fetch(url(path), {
       method: "POST",
-      headers: { "content-type": "application/json", ...headers },
+      headers: {
+        "content-type": "application/json",
+        ...requestHeaders,
+      } as Record<string, string>,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+  };
   const get = (path: string, accessToken?: string) =>
     fetch(url(path), { headers: accessToken ? bearer(accessToken) : {} });
   const sessionRow = async (sessionId: string) => {
@@ -566,6 +582,19 @@ describe("staff authentication", databaseSuite, () => {
         "dona@auth.test",
         PASSWORD,
       );
+      const missingRefreshOrigin = await post(
+        "/admin/auth/refresh",
+        undefined,
+        {
+          cookie: login.cookie,
+          origin: null,
+        },
+      );
+      assert.equal(missingRefreshOrigin.status, 403);
+      assert.equal(
+        (await json(missingRefreshOrigin)).code,
+        "ORIGIN_NOT_ALLOWED",
+      );
       const foreign = await post("/admin/auth/refresh", undefined, {
         cookie: login.cookie,
         origin: "https://evil.test",
@@ -585,6 +614,24 @@ describe("staff authentication", databaseSuite, () => {
           })
         ).status,
         403,
+      );
+      const missingLogoutOrigin = await post("/admin/auth/logout", undefined, {
+        cookie: refreshCookieOf(allowed)!,
+        origin: null,
+      });
+      assert.equal(missingLogoutOrigin.status, 403);
+      assert.equal(
+        (await json(missingLogoutOrigin)).code,
+        "ORIGIN_NOT_ALLOWED",
+      );
+      assert.equal(
+        (
+          await post("/admin/auth/refresh", undefined, {
+            cookie: refreshCookieOf(allowed)!,
+            origin: ADMIN_ORIGIN,
+          })
+        ).status,
+        200,
       );
     });
 

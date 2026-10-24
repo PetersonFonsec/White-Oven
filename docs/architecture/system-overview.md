@@ -130,7 +130,7 @@ A autenticação própria é pequena e bem conhecida, desde que siga as regras a
 - Senhas com Argon2id (parâmetros recomendados pela OWASP), mínimo de 10 caracteres, verificação contra lista de senhas vazadas comuns local, sem regras de composição forçadas.
 - Access token JWT assinado (EdDSA ou ES256) com validade de 15 minutos e claims mínimos: `sub`, `typ` (`staff` ou `customer`), `tid` (tenant, obrigatório para cliente; tenant ativo para equipe), `sid` (sessão), `mfa` (verdadeiro quando a sessão foi autenticada com segundo fator).
 - Refresh token opaco aleatório, armazenado apenas como hash, com rotação a cada uso e detecção de reutilização (reuso revoga a sessão inteira). Validade de 30 dias para cliente e 12 horas deslizantes para equipe.
-- Painel: refresh token em cookie `HttpOnly`, `Secure`, `SameSite=Strict`, restrito ao caminho de refresh; access token apenas em memória. CSRF mitigado por SameSite e verificação de `Origin` no endpoint de refresh.
+- Painel: refresh token em cookie `HttpOnly`, `Secure`, `SameSite=Strict`, restrito ao caminho de refresh; access token apenas em memória. CSRF mitigado por SameSite e verificação obrigatória de `Origin` nos endpoints de refresh e logout: cabeçalho ausente ou origem fora de `API_ADMIN_ORIGINS` é recusado.
 - Aplicativo: refresh token no armazenamento seguro do sistema (`expo-secure-store`), nunca em AsyncStorage.
 - Bloqueio progressivo por conta e por IP após falhas de login; respostas que não revelam se o e-mail existe.
 - Recuperação de senha e convite por link de uso único com validade curta (30 minutos e 72 horas), dependentes do provedor de e-mail (Q-12).

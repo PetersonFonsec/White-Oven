@@ -33,6 +33,7 @@ import {
 } from "./staff-fixtures";
 
 const PASSWORD = "forno-a-lenha-2026";
+const ADMIN_ORIGIN = "https://admin.whiteoven.test";
 
 /** Lets a test pause a handler inside its tenant transaction. */
 let pause: { entered: () => void; release: Promise<void> } | null = null;
@@ -95,6 +96,7 @@ describe(
       // Two API instances sharing only PostgreSQL and the signing key, as in production.
       const env = {
         DATABASE_URL: database.appUrl,
+        API_ADMIN_ORIGINS: ADMIN_ORIGIN,
         AUTH_ACCESS_TOKEN_PRIVATE_KEY: generateKeyPairSync("ed25519")
           .privateKey.export({ format: "der", type: "pkcs8" })
           .toString("base64"),
@@ -151,7 +153,7 @@ describe(
     const refresh = (cookie: string) =>
       fetch(`${first.baseUrl}/v1/admin/auth/refresh`, {
         method: "POST",
-        headers: { cookie },
+        headers: { cookie, origin: ADMIN_ORIGIN },
       });
 
     const setRole = (tenantId: string, userId: string, role: string) =>
@@ -411,7 +413,7 @@ describe(
         // Logout on instance 1 ends the session on instance 2 at once.
         const logout = await fetch(`${first.baseUrl}/v1/admin/auth/logout`, {
           method: "POST",
-          headers: { cookie: user.cookie },
+          headers: { cookie: user.cookie, origin: ADMIN_ORIGIN },
         });
         assert.equal(logout.status, 204);
         for (const server of [second, first])
