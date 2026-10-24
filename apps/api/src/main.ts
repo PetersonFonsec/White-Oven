@@ -13,6 +13,11 @@ async function main(): Promise<void> {
   const app = await createApp(config, { logger });
   // Fails before listening when the database is unreachable or the role could bypass RLS/run DDL.
   await assertSafeRuntimeRole(app.get(MikroORM));
+  if (!config.auth.accessTokenPrivateKey)
+    logger.write(
+      "warn",
+      "AUTH_ACCESS_TOKEN_PRIVATE_KEY not set: using an ephemeral key (development only)",
+    );
   await app.listen(config.port, config.host);
   logger.write("info", "api listening", {
     host: config.host,

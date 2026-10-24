@@ -28,6 +28,13 @@ import {
   TenantProbeModule,
   createProbeTables,
 } from "./tenant-probes";
+import {
+  insertMembership,
+  insertStaffUser,
+  setMembershipStatus,
+  staffLogin,
+  switchTenant,
+} from "./staff-fixtures";
 
 const INSUFFICIENT_PRIVILEGE = "42501";
 const FOREIGN_KEY_VIOLATION = "23503";
@@ -49,9 +56,12 @@ interface Fixture {
   flavorId: string;
 }
 
+/** Staff membership cache TTL of this suite's server; production allows at most 60 s. */
+const STAFF_PASSWORD = "isolamento-2026";
+
 /**
  * Required tests of docs/architecture/tenant-isolation.md, against a real PostgreSQL. Tables
- * are the test-only probes of `tenant-probes.ts` until the first real tenant table (M1.4).
+ * are the test-only probes of `tenant-probes.ts` plus `memberships` (M1.4), the first real one.
  */
 describe("tenant isolation", databaseSuite, () => {
   let database: TestDatabase;
@@ -102,7 +112,10 @@ describe("tenant isolation", databaseSuite, () => {
       { entities: [Tenant, ProbeFlavor] },
     );
     server = await startTestServer(
-      { DATABASE_URL: database.appUrl, DATABASE_POOL_MAX: "1" },
+      {
+        DATABASE_URL: database.appUrl,
+        DATABASE_POOL_MAX: "1",
+      },
       { imports: [TenantProbeModule], entities: [ProbeFlavor] },
     );
   });
@@ -172,7 +185,11 @@ describe("tenant isolation", databaseSuite, () => {
         }
       }
       // Read-only listings have no victim id; they are covered by the "own rows only" test.
-      const listings = ["GET /public/stores/:storeSlug/isolation-probe"];
+      // `GET /admin/me` reads only the token's own membership; covered by test 7.
+      const listings = [
+        "GET /public/stores/:storeSlug/isolation-probe",
+        "GET /admin/me",
+      ];
       assert.deepEqual(
         routes.filter((route) => !listings.includes(route)).sort(),
         Object.keys(MATRIX).sort(),
@@ -251,6 +268,19 @@ describe("tenant isolation", databaseSuite, () => {
   describe("2. RLS coverage", () => {
     it("every table with tenant_id has RLS enabled, forced and only tenant-check policies", async () => {
       assert.deepEqual(await findUnprotectedTenantTables(owner), []);
+    });
+
+    it("covers the production tenant tables (memberships, M1.4)", async () => {
+      const rows = await owner.em
+        .getConnection()
+        .execute<{ table: string; forced: boolean }[]>(
+          `select c.relname as "table", c.relforcerowsecurity as forced
+           from pg_class c join pg_attribute a on a.attrelid = c.oid and a.attname = 'tenant_id'
+          where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
+            and c.relname not like 'isolation_probe_%'
+          order by 1`,
+        );
+      assert.deepEqual(rows, [{ table: "memberships", forced: true }]);
     });
 
     /** Problems reported for `table`, or [] when it is considered protected. */
@@ -766,8 +796,47 @@ describe("tenant isolation", databaseSuite, () => {
   });
 
   describe("7. membership revocation", () => {
-    it.todo(
-      "a revoked member loses access within the membership cache TTL (≤ 60 s): needs Membership and staff tokens, delivered and tested in M1.4",
-    );
+    it("a revoked member loses access on the very next request", async () => {
+      const email = "revogada@isolamento.test";
+      const userId = await insertStaffUser(owner, email, STAFF_PASSWORD);
+      await insertMembership(owner, a.id, userId, "MANAGER");
+      const login = await staffLogin(server.baseUrl, email, STAFF_PASSWORD);
+      const switched = await switchTenant(
+        server.baseUrl,
+        login.accessToken,
+        a.id,
+      );
+      const { accessToken } = await json(switched);
+      const me = () =>
+        call("/admin/me", {
+          headers: { authorization: `Bearer ${accessToken}` },
+        });
+      assert.equal((await me()).status, 200);
+
+      await setMembershipStatus(owner, a.id, userId, "REVOKED");
+      const denied = await me();
+      assert.equal(denied.status, 403);
+      assert.equal((await json(denied)).code, "TENANT_ACCESS_DENIED");
+
+      // The same token cannot pick the tenant again, and other stores stay invisible.
+      for (const tenantId of [a.id, b.id]) {
+        const retry = await switchTenant(server.baseUrl, accessToken, tenantId);
+        assert.equal(retry.status, 404);
+      }
+    });
+
+    it("a staff token of tenant A cannot act on tenant B", async () => {
+      const email = "so-a@isolamento.test";
+      const userId = await insertStaffUser(owner, email, STAFF_PASSWORD);
+      await insertMembership(owner, a.id, userId, "OWNER");
+      const login = await staffLogin(server.baseUrl, email, STAFF_PASSWORD);
+      const response = await switchTenant(
+        server.baseUrl,
+        login.accessToken,
+        b.id,
+      );
+      assert.equal(response.status, 404);
+      assert.equal((await json(response)).code, "NOT_FOUND");
+    });
   });
 });

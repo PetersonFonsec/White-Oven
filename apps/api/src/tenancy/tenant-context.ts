@@ -1,7 +1,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { Request } from "express";
 
-/** Who acts inside the tenant. Staff and customer actors arrive with authentication (M1.4+). */
-export type TenantActor = { type: "anonymous" };
+/** Who acts inside the tenant. Customer actors arrive with customer accounts (M4.2). */
+export type TenantActor =
+  | { type: "anonymous" }
+  | {
+      type: "staff";
+      staffUserId: string;
+      sessionId: string;
+      role: "OWNER" | "MANAGER" | "STAFF";
+    };
 
 /**
  * Immutable for the whole request (layer 2 of tenant-isolation.md). Created only by a surface
@@ -31,6 +39,17 @@ export function runWithTenantContext<T>(
     actor: Object.freeze({ ...context.actor }),
   });
   return storage.run(frozen, work);
+}
+
+const boundContexts = new WeakMap<Request, TenantContext>();
+
+/** Called by surface guards once the tenant is trusted; `TenantContextInterceptor` runs it. */
+export function bindTenantContext(req: Request, context: TenantContext): void {
+  boundContexts.set(req, context);
+}
+
+export function boundTenantContext(req: Request): TenantContext | undefined {
+  return boundContexts.get(req);
 }
 
 export function currentTenantContext(): TenantContext {

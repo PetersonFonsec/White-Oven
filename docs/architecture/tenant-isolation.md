@@ -1,6 +1,6 @@
 # Isolamento de tenants
 
-Status: especificação M0.3, implementada em M1.3 ([ADR 0006](../adr/0006-tenant-isolation.md)): `tenants`, `TenantContext`, guard por slug, `set_config(..., true)` por transação, RLS forçado, filtro global e testes 1–6. O teste 7 (revogação) depende de `Membership` e entra em M1.4. Define como a API garante que uma pizzaria nunca leia nem altere dados de outra. Esta estratégia é pré-requisito de qualquer fluxo de negócio (M1.3 no [roadmap](mvp-roadmap.md)).
+Status: especificação M0.3, implementada em M1.3 ([ADR 0006](../adr/0006-tenant-isolation.md)): `tenants`, `TenantContext`, guard por slug, `set_config(..., true)` por transação, RLS forçado, filtro global e testes 1–6. O teste 7 (revogação) foi implementado em M1.4 com `Membership` e tokens de equipe ([ADR 0007](../adr/0007-staff-authentication.md)). Define como a API garante que uma pizzaria nunca leia nem altere dados de outra. Esta estratégia é pré-requisito de qualquer fluxo de negócio (M1.3 no [roadmap](mvp-roadmap.md)).
 
 ## Decisão
 
@@ -54,7 +54,7 @@ Regras:
 - Unicidades de negócio incluem o tenant: `unique (tenant_id, email)` em clientes, `unique (tenant_id, number)` em pedidos.
 - Índices de consulta começam por `tenant_id`.
 
-Tabelas globais (sem `tenant_id`): `tenants`, `staff_users`, `staff_sessions`, `plans`. `memberships` tem `tenant_id` e RLS, mas o login precisa listar vínculos do usuário; essa consulta usa função `security definer` restrita ao `sub` autenticado.
+Tabelas globais (sem `tenant_id`): `tenants`, `staff_users`, `staff_sessions`, `plans`. `memberships` tem `tenant_id` e RLS, mas o login precisa listar vínculos do usuário; essa consulta usa a função `security definer` `whiteoven_staff_memberships(sub)`, que não contorna o RLS forçado: define o tenant de cada loja em sequência e lê só os vínculos daquele usuário ([ADR 0007](../adr/0007-staff-authentication.md)).
 
 ### Políticas
 
@@ -102,7 +102,7 @@ Recusa automática por tempo, limpeza e relatórios iteram tenants explicitament
 | T-01 | Consulta sem filtro de tenant (bug)                        | RLS forçado; filtro global do ORM; teste de isolamento por tabela.                                                                                                                       |
 | T-02 | IDOR: ID de recurso de outro tenant na URL ou corpo        | Carga dentro do contexto; FK compostas; 404 uniforme.                                                                                                                                    |
 | T-03 | Token de cliente do tenant A usado na URL do tenant B      | `tid` precisa bater com o slug; teste dedicado.                                                                                                                                          |
-| T-04 | Membro removido continua com token válido                  | Verificação de vínculo a cada requisição (cache curto invalidado na revogação); refresh revogado.                                                                                        |
+| T-04 | Membro removido continua com token válido                  | Verificação de vínculo a cada requisição, sem cache, e de novo com lock na transação do tenant; refresh revogado.                                                                        |
 | T-05 | Conexão do pool reaproveitada com tenant anterior          | `set_config(..., true)` só dentro de transação; teste que reutiliza conexão.                                                                                                             |
 | T-06 | Cache compartilhado servindo cardápio de outra pizzaria    | `tenantId` na chave; teste com dois tenants.                                                                                                                                             |
 | T-07 | Arquivo/imagem acessível por URL adivinhável               | Nomes aleatórios, prefixo por tenant; imagens de cardápio são públicas por natureza, documentos privados não são servidos diretamente.                                                   |
@@ -122,6 +122,6 @@ Executados em CI contra PostgreSQL real (container), não contra mocks:
 4. **Pool:** duas requisições sequenciais de tenants diferentes na mesma conexão não compartilham contexto.
 5. **FK compostas:** inserir item de pedido do tenant A com sabor do tenant B falha no banco.
 6. **Token cruzado:** token de cliente de A em rota de B falha.
-7. **Revogação:** membro revogado perde acesso em até o TTL do cache de vínculo (máximo 60 segundos).
+7. **Revogação:** membro revogado perde acesso na requisição seguinte; o vínculo é lido a cada requisição e relido com lock na transação do tenant (ADR 0007).
 
 Nenhuma PR que adicione tabela de tenant é aceita sem incluir a tabela nos testes 1 e 2.

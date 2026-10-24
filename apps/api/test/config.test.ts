@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { describe, it } from "node:test";
 import { ConfigError, loadConfig } from "../src/config/config";
 
 const DATABASE_URL = "postgres://whiteoven_app:pw@db.internal:5432/whiteoven";
 const base = { DATABASE_URL };
+const ACCESS_KEY = generateKeyPairSync("ed25519")
+  .privateKey.export({ format: "der", type: "pkcs8" })
+  .toString("base64");
+/** Production requires the access token key; everything else about production is tested here. */
+const production = {
+  NODE_ENV: "production",
+  AUTH_ACCESS_TOKEN_PRIVATE_KEY: ACCESS_KEY,
+};
 
 const problemsOf = (env: NodeJS.ProcessEnv): string[] => {
   try {
@@ -24,18 +33,19 @@ describe("loadConfig", () => {
       logLevel: "info",
       openApiEnabled: true,
       database: { url: DATABASE_URL, poolMax: 10 },
+      auth: {
+        accessTokenPrivateKey: null,
+        adminOrigins: [],
+      },
     });
   });
 
   it("disables OpenAPI by default in production but allows opting in", () => {
-    assert.equal(
-      loadConfig({ ...base, NODE_ENV: "production" }).openApiEnabled,
-      false,
-    );
+    assert.equal(loadConfig({ ...base, ...production }).openApiEnabled, false);
     assert.equal(
       loadConfig({
         ...base,
-        NODE_ENV: "production",
+        ...production,
         API_OPENAPI_ENABLED: "true",
       }).openApiEnabled,
       true,
@@ -46,7 +56,7 @@ describe("loadConfig", () => {
     const config = loadConfig({
       ...base,
       DATABASE_POOL_MAX: "20",
-      NODE_ENV: "production",
+      ...production,
       API_HOST: "0.0.0.0",
       API_PORT: "8080",
       API_LOG_LEVEL: "warn",
@@ -78,6 +88,16 @@ describe("loadConfig", () => {
     ["DATABASE_POOL_MAX", "101"],
     ["DATABASE_POOL_MAX", "ten"],
     ["DATABASE_OWNER_URL", "postgres://whiteoven_owner:pw@db/whiteoven"],
+    ["AUTH_ACCESS_TOKEN_PRIVATE_KEY", "not base64!"],
+    ["AUTH_ACCESS_TOKEN_PRIVATE_KEY", Buffer.from("x").toString("base64")],
+    [
+      "AUTH_ACCESS_TOKEN_PRIVATE_KEY",
+      generateKeyPairSync("ec", { namedCurve: "P-256" })
+        .privateKey.export({ format: "der", type: "pkcs8" })
+        .toString("base64"),
+    ],
+    ["API_ADMIN_ORIGINS", "https://admin.example.com/"],
+    ["API_ADMIN_ORIGINS", "https://ok.example.com,ftp://x.example.com"],
   ] as const) {
     it(`rejects ${name}=${value}`, () => {
       const problems = problemsOf({ [name]: value });
@@ -85,6 +105,27 @@ describe("loadConfig", () => {
       assert.match(problems[0]!, new RegExp(`^${name} `));
     });
   }
+
+  it("requires the access token key in production only", () => {
+    assert.deepEqual(problemsOf({ NODE_ENV: "production" }), [
+      "AUTH_ACCESS_TOKEN_PRIVATE_KEY is required in production",
+    ]);
+    const config = loadConfig({
+      ...base,
+      ...production,
+      API_ADMIN_ORIGINS:
+        "https://admin.whiteoven.com.br, http://localhost:4200",
+    });
+    assert.equal(
+      config.auth.accessTokenPrivateKey?.asymmetricKeyType,
+      "ed25519",
+    );
+    assert.deepEqual(config.auth.adminOrigins, [
+      "https://admin.whiteoven.com.br",
+      "http://localhost:4200",
+    ]);
+    assert.ok(Object.isFrozen(config.auth));
+  });
 
   it("ignores unrelated variables that share the API_ prefix", () => {
     assert.equal(loadConfig({ ...base, API_TIMEOUT_MS: "1" }).port, 3000);

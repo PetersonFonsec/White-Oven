@@ -16,14 +16,18 @@ import type { Request } from "express";
 import { Observable } from "rxjs";
 import { ApiError } from "../errors/api-error";
 import { setRequestTenant } from "../logging/request-context";
-import { runWithTenantContext } from "./tenant-context";
+import { ROUTE_ACCESS } from "../auth/route-access";
+import {
+  bindTenantContext,
+  boundTenantContext,
+  runWithTenantContext,
+} from "./tenant-context";
 import { TENANT_SLUG, Tenant } from "./tenant.entity";
 
 /** Route metadata marking a tenant surface; the isolation matrix test lists every such route. */
 export const TENANT_SURFACE = "whiteoven:tenant-surface";
 export const STORE_SLUG_PARAM = "storeSlug";
 
-const resolvedTenants = new WeakMap<Request, string>();
 const claimedTenants = new WeakMap<Request, string>();
 
 /**
@@ -65,22 +69,25 @@ export class StoreTenantGuard implements CanActivate {
         "TENANT_NOT_ACTIVE",
         "Store unavailable.",
       );
-    resolvedTenants.set(req, tenant.id);
+    bindTenantContext(req, {
+      tenantId: tenant.id,
+      actor: { type: "anonymous" },
+    });
     setRequestTenant(req, tenant.id);
     return true;
   }
 }
 
-/** Runs the handler inside the immutable `TenantContext` the guard resolved (layer 2). */
+/** Runs the handler inside the immutable `TenantContext` a surface guard bound (layer 2). */
 @Injectable()
 export class TenantContextInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const req = context.switchToHttp().getRequest<Request>();
-    const tenantId = resolvedTenants.get(req);
-    // Unreachable behind StoreTenantGuard; fail closed if the decorators are ever split.
-    if (!tenantId) throw storeNotFound();
+    const tenantContext = boundTenantContext(req);
+    // Unreachable behind a surface guard; fail closed if the decorators are ever split.
+    if (!tenantContext) throw storeNotFound();
     return new Observable((subscriber) =>
-      runWithTenantContext({ tenantId, actor: { type: "anonymous" } }, () =>
+      runWithTenantContext(tenantContext, () =>
         next.handle().subscribe(subscriber),
       ),
     );
@@ -91,6 +98,7 @@ export class TenantContextInterceptor implements NestInterceptor {
 export const StoreTenant = () =>
   applyDecorators(
     SetMetadata(TENANT_SURFACE, "store"),
+    SetMetadata(ROUTE_ACCESS, "store"),
     UseGuards(StoreTenantGuard),
     UseInterceptors(TenantContextInterceptor),
   );
