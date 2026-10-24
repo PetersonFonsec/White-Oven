@@ -8,6 +8,7 @@ import {
 import type { Request, Response } from "express";
 import type { JsonLogger } from "../logging/json-logger";
 import { requestIdOf } from "../logging/request-context";
+import { describeError } from "../logging/sanitize";
 import { ApiError, type ApiErrorBody } from "./api-error";
 
 const CODE_BY_STATUS: Partial<Record<number, string>> = {
@@ -67,17 +68,9 @@ export class ApiExceptionFilter implements ExceptionFilter {
         requestId,
       };
       // Only the error class and stack frames: messages may include values (SQL, input).
-      const frames =
-        exception instanceof Error
-          ? exception.stack?.split("\n").slice(1, 11)
-          : undefined;
       this.logger.write("error", "unhandled exception", {
         requestId,
-        errorType:
-          exception instanceof Error
-            ? exception.constructor.name
-            : typeof exception,
-        frames: frames?.map((line) => line.trim()),
+        ...describeError(exception),
       });
     }
 

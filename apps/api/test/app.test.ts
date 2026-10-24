@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { Controller, Get, HttpStatus, Module } from "@nestjs/common";
+import { Controller, Get, HttpStatus, Logger, Module } from "@nestjs/common";
 import { ApiError } from "../src/errors/api-error";
 import { json, nextTick, startTestServer, type TestServer } from "./helpers";
 
@@ -9,6 +9,22 @@ class ProbeController {
   @Get("crash")
   crash(): never {
     throw new Error("SELECT * FROM users WHERE email = 'ana@example.com'");
+  }
+
+  @Get("crash-multiline")
+  crashMultiline(): never {
+    throw new Error(
+      "query failed\nWHERE email = 'ana@example.com'\n  password=hunter2",
+    );
+  }
+
+  @Get("library-log")
+  libraryLog(): { ok: true } {
+    // Code and libraries log through Nest's Logger, which forwards to JsonLogger.
+    const logger = new Logger("PaymentsClient");
+    logger.warn("retrying for ana@example.com with Bearer abc.def");
+    logger.error(new Error("card 4111 1111 1111 1111 declined"));
+    return { ok: true };
   }
 
   @Get("conflict")
@@ -100,6 +116,41 @@ describe("API application", () => {
     const entry = server.logs.find((log) => log.msg === "unhandled exception");
     assert.equal(entry?.requestId, body.requestId);
     assert.equal(entry?.errorType, "Error");
+  });
+
+  it("never leaks continuation lines of a multi-line error message", async () => {
+    server.logs.length = 0;
+    const response = await fetch(`${server.baseUrl}/v1/probe/crash-multiline`);
+    assert.equal(response.status, 500);
+    await nextTick();
+    const entry = server.logs.find((log) => log.msg === "unhandled exception");
+    assert.ok(Array.isArray(entry?.frames));
+    assert.ok(
+      (entry.frames as string[]).every((frame) => frame.startsWith("at ")),
+    );
+    assert.doesNotMatch(
+      JSON.stringify(server.logs),
+      /ana@example|hunter2|WHERE/,
+    );
+  });
+
+  it("sanitizes messages logged through Nest's Logger by code and libraries", async () => {
+    server.logs.length = 0;
+    const response = await fetch(`${server.baseUrl}/v1/probe/library-log`);
+    assert.equal(response.status, 200);
+    await nextTick();
+    const warn = server.logs.find(
+      (log) => log.context === "PaymentsClient" && log.level === "warn",
+    );
+    assert.match(String(warn?.msg), /^retrying for \[EMAIL\]/);
+    const error = server.logs.find(
+      (log) => log.context === "PaymentsClient" && log.level === "error",
+    );
+    assert.equal(error?.errorType, "Error");
+    assert.doesNotMatch(
+      JSON.stringify(server.logs),
+      /ana@example|abc\.def|4111/,
+    );
   });
 
   it("writes structured access logs with the route template only", async () => {

@@ -33,14 +33,108 @@ describe("JsonLogger", () => {
     const lines: string[] = [];
     const logger = new JsonLogger("debug", (line) => lines.push(line));
     logger.log("started", "NestApplication");
-    logger.error("boom", "stack trace", "ExceptionsHandler");
     const info = JSON.parse(lines[0]!);
     assert.equal(info.level, "info");
+    assert.equal(info.msg, "started");
     assert.equal(info.context, "NestApplication");
-    const error = JSON.parse(lines[1]!);
-    assert.equal(error.context, "ExceptionsHandler");
-    assert.equal(error.stack, undefined);
   });
+});
+
+describe("JsonLogger security", () => {
+  const capture = () => {
+    const lines: string[] = [];
+    const logger = new JsonLogger("debug", (line) => lines.push(line));
+    return { logger, entries: () => lines.map((line) => JSON.parse(line)) };
+  };
+
+  it("sanitizes the free-text msg passed to write()", () => {
+    const { logger, entries } = capture();
+    logger.write("warn", "login failed for ana@example.com, Bearer abc.def");
+    const [entry] = entries();
+    assert.doesNotMatch(entry.msg, /ana@example|abc\.def/);
+    assert.match(entry.msg, /^login failed for \[EMAIL\]/);
+  });
+
+  it("sanitizes string field values under non-sensitive keys", () => {
+    const { logger, entries } = capture();
+    logger.write("info", "event", {
+      detail: "token=xyz from +55 11 99999-9999",
+      nested: { reason: "WHERE email='ana@example.com'" },
+    });
+    assert.doesNotMatch(JSON.stringify(entries()), /xyz|99999|ana@example/);
+  });
+
+  it("does not let fields overwrite time, level or msg", () => {
+    const { logger, entries } = capture();
+    logger.write("info", "real", { level: "error", msg: "forged", time: "x" });
+    const [entry] = entries();
+    assert.equal(entry.level, "info");
+    assert.equal(entry.msg, "real");
+    assert.notEqual(entry.time, "x");
+  });
+
+  it("keeps the API-generated requestId verbatim", () => {
+    const { logger, entries } = capture();
+    logger.write("info", "event", {
+      requestId: "12345678-1234-1234-1234-123456789012",
+    });
+    assert.equal(
+      entries()[0].requestId,
+      "12345678-1234-1234-1234-123456789012",
+    );
+  });
+
+  it("logs an Error passed as message by type and frames, without its text", () => {
+    const { logger, entries } = capture();
+    logger.log(
+      new Error("SELECT * FROM u WHERE email='ana@example.com'"),
+      "Ctx",
+    );
+    const [entry] = entries();
+    assert.equal(entry.errorType, "Error");
+    assert.equal(entry.context, "Ctx");
+    assert.ok(entry.frames.length > 0);
+    assert.doesNotMatch(JSON.stringify(entry), /SELECT|ana@example/);
+  });
+
+  it("handles Nest's error(message, stack, context) without leaking either", () => {
+    const { logger, entries } = capture();
+    const error = new Error("multi\nline ana@example.com");
+    logger.error(
+      "Key (email)=(ana@example.com) already exists",
+      error.stack,
+      "ExceptionsHandler",
+    );
+    const [entry] = entries();
+    assert.equal(entry.level, "error");
+    assert.equal(entry.context, "ExceptionsHandler");
+    assert.ok(entry.frames.every((frame: string) => frame.startsWith("at ")));
+    assert.doesNotMatch(JSON.stringify(entry), /ana@example|multi|line /);
+  });
+
+  it("redacts objects passed as message by libraries", () => {
+    const { logger, entries } = capture();
+    logger.warn({ query: "x", email: "ana@example.com", note: "pwd: 123" });
+    const [entry] = entries();
+    assert.equal(entry.msg, "structured log");
+    assert.equal(entry.data.email, "[REDACTED]");
+    assert.doesNotMatch(JSON.stringify(entry), /ana@example|pwd: 123/);
+  });
+
+  for (const method of [
+    "log",
+    "warn",
+    "debug",
+    "verbose",
+    "fatal",
+    "error",
+  ] as const) {
+    it(`sanitizes string messages on ${method}()`, () => {
+      const { logger, entries } = capture();
+      logger[method]("connect postgres://app:s3cret@db/wo failed");
+      assert.doesNotMatch(JSON.stringify(entries()), /s3cret/);
+    });
+  }
 });
 
 describe("redact", () => {
@@ -56,6 +150,7 @@ describe("redact", () => {
       },
       name: "Ana",
       requestId: "abc",
+      error: new Error("ana@example.com"),
     });
     assert.deepEqual(value, {
       route: "/v1/x",
@@ -68,6 +163,8 @@ describe("redact", () => {
       },
       name: "[REDACTED]",
       requestId: "abc",
+      error: (value as { error: unknown }).error,
     });
+    assert.doesNotMatch(JSON.stringify(value), /ana@example/);
   });
 });
