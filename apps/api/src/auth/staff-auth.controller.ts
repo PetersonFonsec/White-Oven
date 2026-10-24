@@ -11,6 +11,7 @@ import {
 } from "@nestjs/common";
 import {
   ApiBody,
+  ApiExtraModels,
   ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
@@ -19,6 +20,7 @@ import {
   ApiTags,
   ApiTooManyRequestsResponse,
   ApiUnauthorizedResponse,
+  getSchemaPath,
 } from "@nestjs/swagger";
 import type { Request, Response } from "express";
 import { API_CONFIG, type ApiConfig } from "../config/config";
@@ -27,12 +29,15 @@ import { PublicRoute } from "./route-access";
 import { PASSWORD_MAX_LENGTH } from "./password";
 import {
   type IssuedTokens,
+  type MfaChallenge,
   StaffAuth,
   type TenantChoice,
 } from "./staff-auth.service";
+import { type SecondFactor, StaffMfa } from "./staff-mfa.service";
 import {
   AdminRoute,
   CurrentStaff,
+  PlatformRoute,
   StaffRoute,
   type StaffPrincipal,
 } from "./staff.guard";
@@ -65,6 +70,53 @@ export class AccessTokenBody {
   expiresIn!: number;
   @ApiPropertyOptional({ format: "uuid", nullable: true, type: String })
   activeTenantId!: string | null;
+}
+
+export class MfaChallengeBody {
+  @ApiProperty({ enum: [true] })
+  mfaRequired!: true;
+  @ApiProperty({
+    description: "Single use; send it to POST /v1/admin/auth/login/mfa",
+  })
+  mfaToken!: string;
+  @ApiProperty({ example: 300 })
+  expiresIn!: number;
+}
+
+export class MfaLoginBody {
+  @ApiProperty()
+  mfaToken!: string;
+  @ApiPropertyOptional({
+    example: "123456",
+    description: "TOTP code, or recoveryCode",
+  })
+  code?: string;
+  @ApiPropertyOptional({ example: "abcde-fghij" })
+  recoveryCode?: string;
+}
+
+export class MfaCodeBody {
+  @ApiProperty({ example: "123456" })
+  code!: string;
+}
+
+export class MfaSetupResponse {
+  @ApiProperty({ description: "Base32 TOTP secret, shown once" })
+  secret!: string;
+  @ApiProperty({ example: "otpauth://totp/WhiteOven:..." })
+  otpauthUri!: string;
+}
+
+export class MfaActivatedBody extends AccessTokenBody {
+  @ApiProperty({ type: [String], description: "Single-use codes, shown once" })
+  recoveryCodes!: string[];
+}
+
+export class PlatformMeBody {
+  @ApiProperty({ format: "uuid" })
+  staffUserId!: string;
+  @ApiProperty({ enum: ["OPERATOR"] })
+  platformRole!: "OPERATOR";
 }
 
 export class TenantChoiceBody {
@@ -128,10 +180,12 @@ function stringFields<K extends string>(
  * Authorization header. Refresh and logout also check `Origin` against `API_ADMIN_ORIGINS`.
  */
 @ApiTags("admin auth")
+@ApiExtraModels(AccessTokenBody, MfaChallengeBody)
 @Controller("admin/auth")
 export class StaffAuthController {
   constructor(
     @Inject(StaffAuth) private readonly auth: StaffAuth,
+    @Inject(StaffMfa) private readonly mfa: StaffMfa,
     @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {}
 
@@ -140,18 +194,106 @@ export class StaffAuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Sign in with e-mail and password" })
   @ApiBody({ type: StaffLoginBody })
-  @ApiOkResponse({ type: AccessTokenBody })
+  @ApiOkResponse({
+    description:
+      "Tokens, or an MFA challenge when the user has a second factor",
+    schema: {
+      oneOf: [
+        { $ref: getSchemaPath(AccessTokenBody) },
+        { $ref: getSchemaPath(MfaChallengeBody) },
+      ],
+    },
+  })
   @ApiUnauthorizedResponse({ type: ApiErrorBody })
   @ApiTooManyRequestsResponse({ type: ApiErrorBody })
   async login(
     @Body() body: unknown,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<AccessTokenBody> {
+  ): Promise<AccessTokenBody | MfaChallengeBody> {
     const fields = stringFields(body, ["email", "password"] as const);
     const email = fields.email.trim().toLowerCase();
+    const ip = clientIp(req);
+    this.assertNotThrottled(email, ip, res);
     // Oversized passwords fail like wrong ones, after throttling, without being hashed.
-    const ip = req.socket.remoteAddress ?? "unknown";
+    const password =
+      fields.password.length <= PASSWORD_MAX_LENGTH * 4 ? fields.password : "";
+    const result = await this.auth.login(email, password, ip);
+    if ("mfaRequired" in result) {
+      res.setHeader("Cache-Control", "no-store");
+      return result satisfies MfaChallenge;
+    }
+    return this.respond(res, result);
+  }
+
+  @Post("login/mfa")
+  @PublicRoute()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Second login step: TOTP code or recovery code" })
+  @ApiBody({ type: MfaLoginBody })
+  @ApiOkResponse({ type: AccessTokenBody })
+  @ApiUnauthorizedResponse({ type: ApiErrorBody })
+  @ApiTooManyRequestsResponse({ type: ApiErrorBody })
+  async loginMfa(
+    @Body() body: unknown,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AccessTokenBody> {
+    const usesRecovery = plain(body) && Object.hasOwn(body, "recoveryCode");
+    const fields = stringFields(
+      body,
+      usesRecovery
+        ? (["mfaToken", "recoveryCode"] as const)
+        : (["mfaToken", "code"] as const),
+    ) as Record<string, string>;
+    const factor: SecondFactor = usesRecovery
+      ? { recoveryCode: fields.recoveryCode!.slice(0, 64) }
+      : { code: fields.code!.slice(0, 16) };
+    const ip = clientIp(req);
+    this.assertNotThrottled(this.mfa.challengeEmail(fields.mfaToken!), ip, res);
+    return this.respond(
+      res,
+      await this.mfa.completeLogin(fields.mfaToken!, factor, ip),
+    );
+  }
+
+  @Post("mfa/setup")
+  @StaffRoute({ allowWithoutMfa: true })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Start TOTP enrollment (new pending secret)" })
+  @ApiOkResponse({ type: MfaSetupResponse })
+  async mfaSetup(
+    @CurrentStaff() staff: StaffPrincipal,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<MfaSetupResponse> {
+    res.setHeader("Cache-Control", "no-store");
+    return this.mfa.setup(staff.access.staffUserId);
+  }
+
+  @Post("mfa/activate")
+  @StaffRoute({ allowWithoutMfa: true })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Confirm enrollment with a first code; returns recovery codes once",
+  })
+  @ApiBody({ type: MfaCodeBody })
+  @ApiOkResponse({ type: MfaActivatedBody })
+  async mfaActivate(
+    @Body() body: unknown,
+    @CurrentStaff() staff: StaffPrincipal,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<MfaActivatedBody> {
+    const { code } = stringFields(body, ["code"] as const);
+    const { recoveryCodes, tokens } = await this.mfa.activate(
+      staff.claims,
+      code.slice(0, 16),
+    );
+    res.setHeader("Cache-Control", "no-store");
+    return { ...toBody(tokens), recoveryCodes };
+  }
+
+  private assertNotThrottled(email: string, ip: string, res: Response): void {
     const wait = this.auth.loginRetryAfterSeconds(email, ip);
     if (wait > 0) {
       res.setHeader("Retry-After", String(wait));
@@ -161,10 +303,6 @@ export class StaffAuthController {
         "Too many attempts. Try again later.",
       );
     }
-    const password =
-      fields.password.length <= PASSWORD_MAX_LENGTH * 4 ? fields.password : "";
-    const issued = await this.auth.login(email, password, ip);
-    return this.respond(res, issued);
   }
 
   @Post("refresh")
@@ -272,6 +410,22 @@ export class AdminMeController {
     };
   }
 }
+
+/** First platform route: proves `PlatformGuard` (operator + second-factor session). */
+@ApiTags("platform")
+@Controller("platform")
+export class PlatformMeController {
+  @Get("me")
+  @PlatformRoute()
+  @ApiOperation({ summary: "Signed-in WhiteOven operator" })
+  @ApiOkResponse({ type: PlatformMeBody })
+  me(@CurrentStaff() staff: StaffPrincipal): PlatformMeBody {
+    return { staffUserId: staff.access.staffUserId, platformRole: "OPERATOR" };
+  }
+}
+
+/** The TCP peer until the API runs behind a trusted proxy (ADR 0007, lockout). */
+const clientIp = (req: Request) => req.socket.remoteAddress ?? "unknown";
 
 function toBody(issued: IssuedTokens): AccessTokenBody {
   return {
