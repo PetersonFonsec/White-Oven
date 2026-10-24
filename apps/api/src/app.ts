@@ -9,6 +9,7 @@ import {
 } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
 import type { ApiConfig } from "./config/config";
+import { createOrm } from "./database/orm";
 import { ApiErrorBody } from "./errors/api-error";
 import { ApiExceptionFilter } from "./errors/api-exception.filter";
 import { JsonLogger } from "./logging/json-logger";
@@ -28,12 +29,15 @@ export async function createApp(
   options: CreateAppOptions = {},
 ): Promise<NestExpressApplication> {
   const logger = options.logger ?? new JsonLogger(config.logLevel);
+  // Lazy pool: building the app never touches the database; main.ts verifies the role.
+  const orm = await createOrm(config.database);
+  const appModule = AppModule.forRoot(config, orm);
   const root = options.imports?.length
     ? {
         module: class RootModule {},
-        imports: [AppModule.forRoot(config), ...options.imports],
+        imports: [appModule, ...options.imports],
       }
-    : AppModule.forRoot(config);
+    : appModule;
 
   const app = await NestFactory.create<NestExpressApplication>(root, {
     logger,
@@ -43,7 +47,7 @@ export async function createApp(
   app.disable("x-powered-by");
   app.useBodyParser("json", { limit: "100kb" });
   app.use(requestContext(logger));
-  app.setGlobalPrefix(API_PREFIX, { exclude: ["health"] });
+  app.setGlobalPrefix(API_PREFIX, { exclude: ["health", "health/ready"] });
   app.useGlobalFilters(new ApiExceptionFilter(logger));
   app.enableShutdownHooks();
 

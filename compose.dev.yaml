@@ -1,8 +1,58 @@
 # Development stack. Production keeps using compose.yaml (landing) until the API has its
-# own deployment review. PostgreSQL joins this file in M1.2.
+# own deployment review. Passwords below are development-only defaults.
 #   docker compose -f compose.dev.yaml up --build api
+#   docker compose -f compose.dev.yaml up -d --wait postgres   # only the database (tests)
 name: whiteoven-dev
+x-db-passwords: &db-passwords
+  WHITEOVEN_OWNER_PASSWORD: ${WHITEOVEN_OWNER_PASSWORD:-whiteoven-dev-owner-password}
+  DATABASE_APP_PASSWORD: ${DATABASE_APP_PASSWORD:-whiteoven-dev-app-password}
+  DATABASE_PLATFORM_PASSWORD: ${DATABASE_PLATFORM_PASSWORD:-whiteoven-dev-platform-password}
+
 services:
+  postgres:
+    image: postgres:17.11-bookworm@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+    environment:
+      <<: *db-passwords
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${WHITEOVEN_POSTGRES_PASSWORD:-whiteoven-dev-superuser-password}
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./ops/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${WHITEOVEN_DB_PORT:-5432}:5432"
+    shm_size: 128m
+    healthcheck:
+      # TCP only: the init scripts run against a socket-only temporary server.
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, postgres, -d, whiteoven]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+
+  # One-shot: applies migrations as whiteoven_owner and sets the runtime roles' passwords.
+  migrate:
+    image: ${WHITEOVEN_API_IMAGE:-whiteoven-api:dev}
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      args:
+        VCS_REF: ${WHITEOVEN_REVISION:-local}
+    command: [node, --enable-source-maps, dist/database/migrate.js, up]
+    environment:
+      DATABASE_OWNER_URL: postgres://whiteoven_owner:${WHITEOVEN_OWNER_PASSWORD:-whiteoven-dev-owner-password}@postgres:5432/whiteoven
+      DATABASE_APP_PASSWORD: ${DATABASE_APP_PASSWORD:-whiteoven-dev-app-password}
+      DATABASE_PLATFORM_PASSWORD: ${DATABASE_PLATFORM_PASSWORD:-whiteoven-dev-platform-password}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
   api:
     image: ${WHITEOVEN_API_IMAGE:-whiteoven-api:dev}
     build:
@@ -16,6 +66,11 @@ services:
       API_PORT: "3000"
       API_LOG_LEVEL: ${API_LOG_LEVEL:-info}
       API_OPENAPI_ENABLED: "true"
+      # Runtime role only: the API never receives the owner credentials.
+      DATABASE_URL: postgres://whiteoven_app:${DATABASE_APP_PASSWORD:-whiteoven-dev-app-password}@postgres:5432/whiteoven
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:${WHITEOVEN_API_PORT:-3000}:3000"
     init: true
@@ -31,3 +86,6 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+
+volumes:
+  postgres-data:

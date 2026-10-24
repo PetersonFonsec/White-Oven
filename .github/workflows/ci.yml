@@ -24,8 +24,12 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
-      - name: Domain, endpoint and SQLite tests
+      - name: Start PostgreSQL for API integration tests
+        run: docker compose -f compose.dev.yaml up -d --wait postgres
+      - name: Domain, endpoint, SQLite and PostgreSQL tests
         run: pnpm test
+        env:
+          TEST_DATABASE_OWNER_URL: postgres://whiteoven_owner:whiteoven-dev-owner-password@127.0.0.1:5432/whiteoven
       - run: pnpm exec playwright install --with-deps chromium
       - name: Build and browser tests with synthetic capture configuration
         run: pnpm test:e2e
@@ -63,12 +67,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Build the API image and wait for health in the development Compose
+      - name: Build the API image, migrate as owner and wait for health in the development Compose
         run: |
           docker compose -f compose.dev.yaml build api
-          docker compose -f compose.dev.yaml up -d --wait --wait-timeout 60 api
+          docker compose -f compose.dev.yaml up -d --wait --wait-timeout 90 api
           curl -fsS http://127.0.0.1:3000/health
+          curl -fsS http://127.0.0.1:3000/health/ready
           curl -fsS -o /dev/null http://127.0.0.1:3000/v1/openapi.json
+      - name: No pending migrations after the one-shot migrate service
+        run: docker compose -f compose.dev.yaml run --rm --no-deps migrate node dist/database/migrate.js check
       - name: Invalid configuration prevents the start
         run: |
           if docker run --rm -e API_PORT=invalid whiteoven-api:dev; then
@@ -77,7 +84,7 @@ jobs:
           fi
       - name: API logs
         if: always()
-        run: docker compose -f compose.dev.yaml logs api && docker compose -f compose.dev.yaml down
+        run: docker compose -f compose.dev.yaml logs migrate api && docker compose -f compose.dev.yaml down -v
 
   publish:
     needs: [verify, containers]

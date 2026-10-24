@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
+import { UNREACHABLE_DATABASE_URL } from "./helpers";
+import {
+  createTestDatabase,
+  databaseSuite,
+  type TestDatabase,
+} from "./postgres";
 
 // Compiled layout: dist/tests/test/startup.test.js -> dist/tests/src/main.js
 const MAIN = join(__dirname, "..", "src", "main.js");
@@ -61,10 +67,37 @@ describe("process startup", () => {
     assert.doesNotMatch(result.stdout, /api listening/);
   });
 
-  it("starts with valid configuration, logs JSON and stops on SIGTERM", async () => {
+  it("refuses to start when the database is unreachable, without echoing the URL", async () => {
+    const result = await run({
+      NODE_ENV: "test",
+      API_PORT: String(await freePort()),
+      DATABASE_URL: UNREACHABLE_DATABASE_URL,
+    });
+    assert.equal(result.code, 1);
+    assert.match(
+      result.stderr,
+      /^API failed to start: \w+ \(ECONNREFUSED\)\n$/,
+    );
+    assert.doesNotMatch(result.stdout + result.stderr, /unused-password/);
+    assert.doesNotMatch(result.stdout, /api listening/);
+  });
+});
+
+describe("process startup with PostgreSQL", databaseSuite, () => {
+  let database: TestDatabase;
+  before(async () => {
+    database = await createTestDatabase();
+  });
+  after(() => database?.drop());
+
+  it("starts as whiteoven_app, logs JSON and stops on SIGTERM", async () => {
     const port = await freePort();
     const result = await run(
-      { NODE_ENV: "test", API_PORT: String(port) },
+      {
+        NODE_ENV: "test",
+        API_PORT: String(port),
+        DATABASE_URL: database.appUrl,
+      },
       /api listening/,
     );
     assert.equal(result.stderr, "");
@@ -76,5 +109,41 @@ describe("process startup", () => {
     assert.equal(listening.port, port);
     // Nest closes the app on SIGTERM, then re-raises the signal so the exit reason is preserved.
     assert.equal(result.signal, "SIGTERM");
+  });
+
+  it("refuses to serve with a role that could create databases, before listening", async () => {
+    // loadConfig already rejects whiteoven_owner by name; the database check catches any other
+    // unsafe role. The owner (CREATEROLE + CREATEDB) can create one for the test.
+    const role = `whiteoven_test_unsafe_${process.pid}`;
+    const password = "unsafe-role-password-1234";
+    const owner = await database.connect(database.ownerUrl);
+    const sql = owner.em.getConnection();
+    await sql.execute(
+      `create role ${role} login createdb password '${password}'`,
+    );
+    try {
+      await sql.execute(
+        `grant connect on database "${database.name}" to ${role}`,
+      );
+      const url = new URL(database.appUrl);
+      url.username = role;
+      url.password = password;
+      const result = await run({
+        NODE_ENV: "test",
+        API_PORT: String(await freePort()),
+        DATABASE_URL: url.toString(),
+      });
+      assert.equal(result.code, 1);
+      assert.equal(
+        result.stderr,
+        "Unsafe database role for the API: create_db\n",
+      );
+      assert.doesNotMatch(result.stdout, /api listening/);
+    } finally {
+      await sql.execute(
+        `revoke connect on database "${database.name}" from ${role}`,
+      );
+      await sql.execute(`drop role ${role}`);
+    }
   });
 });
