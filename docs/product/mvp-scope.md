@@ -38,7 +38,7 @@ Critério de sucesso do MVP: uma pizzaria piloto opera um período combinado rec
 - Cadastro de pizzaria (tenant) pelo operador WhiteOven, com convite do dono por e-mail.
 - Isolamento de dados por tenant em todas as camadas ([estratégia](../architecture/tenant-isolation.md)).
 - Usuários da equipe com papéis OWNER, MANAGER e STAFF por tenant.
-- Suspensão de tenant (bloqueia novos pedidos e acesso da equipe, preserva dados).
+- Suspensão de tenant: bloqueia novos pedidos, configuração e acesso de MANAGER/STAFF, recusa pedidos ainda não aceitos e deixa o OWNER apenas ler e encerrar pedidos em andamento; preserva dados.
 - Trilha de auditoria de ações administrativas.
 
 ### Catálogo e cardápio

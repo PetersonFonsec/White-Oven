@@ -34,7 +34,7 @@ Validações na criação (todas no servidor, na mesma transação):
 5. Todos os itens válidos e disponíveis; preços recalculados.
 6. `itemsSubtotalCents ≥ minimumOrderCents`.
 7. Forma de pagamento aceita pela loja; troco (`changeForCents`) só em dinheiro e maior ou igual ao total.
-8. `Idempotency-Key` UUID: repetição com o mesmo conteúdo retorna o mesmo pedido; mesma chave com conteúdo diferente retorna 409 (mesma semântica do formulário de leads). Chave válida por 24 horas.
+8. `Idempotency-Key` UUID, registrada em `OrderCreationKey` com escopo não nulo (`customer:{customerId}` no MVP): repetição com o mesmo conteúdo retorna o mesmo pedido; mesma chave com conteúdo diferente retorna 409 (mesma semântica do formulário de leads). Chave válida por 24 horas. A verificação da chave acontece antes das validações 2 a 7, para que um retry de um pedido já criado não falhe porque a loja fechou entre as tentativas. Detalhes em [domain-model](../architecture/domain-model.md#ordercreationkey).
 
 Totais: `total = subtotal de itens + taxa de entrega − desconto` (desconto sempre 0 no MVP). A taxa de entrega é fixa por pizzaria e zero em retirada (Q-04).
 
@@ -45,9 +45,11 @@ Pagamento no MVP é sempre offline (dinheiro, cartão na entrega/retirada, Pix p
 A loja aceita pedidos quando **todas** as condições valem no instante da criação, no fuso do tenant:
 
 1. Tenant `ACTIVE`.
-2. Sem pausa manual vigente (`pausedUntil` nulo ou no passado). A equipe pausa por 15, 30 ou 60 minutos, ou até reabrir manualmente.
-3. Nenhuma `ClosureException` fechando a data local.
-4. O instante está dentro de uma `OpeningRule` do dia (ou da regra do dia anterior que atravessa a meia-noite). `closesAt` é o último instante para **criar** pedidos; pedidos já criados continuam sendo processados após o fechamento.
+2. Sem pausa manual vigente (`pausedUntil` nulo ou no passado). A equipe pausa por 15, 30 ou 60 minutos, ou até reabrir manualmente. A pausa tem precedência sobre qualquer horário.
+3. O instante está dentro de um turno da data operacional atual ou da anterior (turno que cruza a meia-noite pertence à data em que começa). `ClosureException` remove ou substitui apenas os turnos da própria data operacional.
+4. `closesAt` é exclusivo e é o limite para **criar** pedidos; pedidos já criados continuam sendo processados após o fechamento.
+
+A definição formal de turno, a precedência entre `OpeningRule` e `ClosureException` e os cenários de teste H1 a H10 estão em [domain-model](../architecture/domain-model.md#openingrule-e-closureexception); este documento não repete as regras para não divergir.
 
 O cardápio continua visível com a loja fechada, com aviso e próximo horário de abertura. Pedidos agendados não existem no MVP. Antecedência de corte (ex.: parar de aceitar 15 minutos antes de fechar) é questão aberta (OL-Q2).
 
@@ -90,6 +92,7 @@ stateDiagram-v2
 | `PLACED`           | `PREPARING`        | STAFF+  | —                                      |                    |
 | `PLACED`           | `REJECTED`         | STAFF+  | —                                      |         ✓          |
 | `PLACED`           | `REJECTED`         | SYSTEM  | `acceptTimeoutMinutes` esgotado (Q-07) |  `ACCEPT_TIMEOUT`  |
+| `PLACED`           | `REJECTED`         | SYSTEM  | Tenant suspenso (mesma transação)      | `STORE_SUSPENDED`  |
 | `PLACED`           | `CANCELED`         | Cliente | Ainda não aceito                       | `CUSTOMER_REQUEST` |
 | `PREPARING`        | `READY`            | STAFF+  | —                                      |                    |
 | `PREPARING`        | `CANCELED`         | STAFF+  | —                                      |         ✓          |
@@ -103,13 +106,42 @@ STAFF+ significa qualquer papel da pizzaria (STAFF, MANAGER, OWNER). Qualquer tr
 
 Regras gerais:
 
-- A requisição informa o estado esperado (`from`). Se o pedido já mudou (outra pessoa da equipe agiu), a API retorna 409 e o painel recarrega. Isso evita aceitar e recusar o mesmo pedido em duas telas.
-- Transições são idempotentes: repetir a mesma transição já aplicada retorna sucesso sem gravar novo histórico.
+- Toda transição pedida por cliente ou equipe é um comando com `Idempotency-Key`, `from` e `to` (e motivo, quando obrigatório). Ver [idempotência e concorrência](#idempotência-e-concorrência-das-transições).
 - Cada transição grava `OrderStatusChange` e, quando feita pela equipe, `AuditEvent`, na mesma transação.
 - A ida para `COMPLETED` grava `BillingEntry` na mesma transação.
 - Não há transição saindo de estados terminais. Correção de pedido concluído por engano é feita por estorno de cobrança, sem mudar o estado (ver [domain-model](../architecture/domain-model.md)).
 - Recusa automática: job periódico (a cada minuto) por tenant, transição feita pelo ator `SYSTEM`.
-- Suspensão do tenant não altera pedidos em andamento; a equipe OWNER ainda consegue concluí-los ou cancelá-los.
+- Suspensão do tenant: na mesma transação, pedidos em `PLACED` vão para `REJECTED` com `STORE_SUSPENDED` (ator `SYSTEM`). Pedidos em `PREPARING`, `READY` e `OUT_FOR_DELIVERY` só podem seguir as transições da tabela que levam a estado terminal, executadas pelo OWNER. Matriz completa em [domain-model](../architecture/domain-model.md#capacidades-por-status-do-tenant).
+
+### Idempotência e concorrência das transições
+
+Retry do mesmo comando e conflito entre comandos diferentes são situações distintas e têm respostas distintas. O cliente (app ou painel) gera uma `Idempotency-Key` nova para cada **ação do usuário** (cada clique em “Aceitar”, “Cancelar” etc.) e a reutiliza apenas ao repetir essa mesma ação por timeout ou erro de rede.
+
+Autenticação e papel são verificados pelos guards antes de tudo (403 sem efeito). Depois, a API processa o comando nesta ordem, dentro de uma transação com bloqueio da linha do pedido (`SELECT ... FOR UPDATE`):
+
+1. **Chave já usada neste pedido** (`OrderStatusChange` com o mesmo `commandKeyHash`):
+   - mesmo `commandHash` (`from`, `to`, motivo): retorna **200 com o resultado original** (a mudança registrada naquele momento e o estado atual do pedido), sem gravar nada, mesmo que o pedido já tenha avançado depois;
+   - `commandHash` diferente: **409 `IDEMPOTENCY_KEY_REUSED`**.
+2. **Chave nova e `from` diferente do estado atual**: **409 `ORDER_STATE_CONFLICT`** com o estado atual e a última mudança, para o painel recarregar. É o caso de duas pessoas agindo ao mesmo tempo.
+3. **Chave nova e `from` igual ao estado atual, mas transição inválida**: fora da tabela retorna **422 `ORDER_INVALID_TRANSITION`**; prevista na tabela, mas não permitida para o status do tenant, retorna **403 `TENANT_NOT_ACTIVE`**.
+4. **Caso contrário**: aplica a transição e grava `OrderStatusChange` com a chave, na mesma transação do histórico, da auditoria e do `BillingEntry`.
+
+Se duas requisições com a mesma chave chegam juntas, o bloqueio da linha e a restrição `unique (tenant_id, order_id, command_key_hash)` garantem que só uma grava; a outra cai no passo 1. A chave vale enquanto o pedido existir.
+
+Transições do ator `SYSTEM` usam chave determinística (`system:accept-timeout`, `system:tenant-suspended`), então um job repetido cai no passo 1 em vez de duplicar histórico.
+
+Cenários obrigatórios (pedido em `PLACED`):
+
+| #   | Sequência                                          | Resposta esperada                                       |
+| --- | -------------------------------------------------- | ------------------------------------------------------- |
+| I1  | Aceitar (K1, `PLACED → PREPARING`)                 | 200; pedido em `PREPARING`                              |
+| I2  | I1 e repetir K1 com o mesmo corpo (timeout)        | 200 com o resultado de I1; um único histórico           |
+| I3  | I1, avançar para `READY` (K2) e repetir K1         | 200 com o resultado de I1; pedido continua em `READY`   |
+| I4  | I1 e repetir K1 com `to = REJECTED`                | 409 `IDEMPOTENCY_KEY_REUSED`                            |
+| I5  | I1 e outra tela envia recusa (K3, `from = PLACED`) | 409 `ORDER_STATE_CONFLICT` com estado `PREPARING`       |
+| I6  | K1 e K3 (aceitar e recusar) concorrentes           | Exatamente uma aplicada; a outra recebe 409 de conflito |
+| I7  | K1 enviado duas vezes concorrentemente             | Um histórico; as duas respostas iguais                  |
+| I8  | Job de recusa automática executado duas vezes      | Um histórico `ACCEPT_TIMEOUT`                           |
 
 ### Motivos
 
@@ -123,6 +155,7 @@ Regras gerais:
 | `NOT_PICKED_UP`        | Retirada não realizada.                        |
 | `SUSPECTED_FRAUD`      | Pedido suspeito (trote).                       |
 | `ACCEPT_TIMEOUT`       | Exclusivo do sistema.                          |
+| `STORE_SUSPENDED`      | Exclusivo do sistema, na suspensão do tenant.  |
 | `OTHER`                | Exige texto livre de até 280 caracteres.       |
 
 O cliente vê um texto amigável derivado do código, nunca o texto interno de `OTHER`.

@@ -128,16 +128,18 @@ A autenticação própria é pequena e bem conhecida, desde que siga as regras a
 ### Regras
 
 - Senhas com Argon2id (parâmetros recomendados pela OWASP), mínimo de 10 caracteres, verificação contra lista de senhas vazadas comuns local, sem regras de composição forçadas.
-- Access token JWT assinado (EdDSA ou ES256) com validade de 15 minutos e claims mínimos: `sub`, `typ` (`staff` ou `customer`), `tid` (tenant, obrigatório para cliente; tenant ativo para equipe), `sid` (sessão).
+- Access token JWT assinado (EdDSA ou ES256) com validade de 15 minutos e claims mínimos: `sub`, `typ` (`staff` ou `customer`), `tid` (tenant, obrigatório para cliente; tenant ativo para equipe), `sid` (sessão), `mfa` (verdadeiro quando a sessão foi autenticada com segundo fator).
 - Refresh token opaco aleatório, armazenado apenas como hash, com rotação a cada uso e detecção de reutilização (reuso revoga a sessão inteira). Validade de 30 dias para cliente e 12 horas deslizantes para equipe.
 - Painel: refresh token em cookie `HttpOnly`, `Secure`, `SameSite=Strict`, restrito ao caminho de refresh; access token apenas em memória. CSRF mitigado por SameSite e verificação de `Origin` no endpoint de refresh.
 - Aplicativo: refresh token no armazenamento seguro do sistema (`expo-secure-store`), nunca em AsyncStorage.
 - Bloqueio progressivo por conta e por IP após falhas de login; respostas que não revelam se o e-mail existe.
 - Recuperação de senha e convite por link de uso único com validade curta (30 minutos e 72 horas), dependentes do provedor de e-mail (Q-12).
-- MFA (TOTP) recomendado para OWNER e operadores da plataforma; obrigatório para operadores antes de produção.
+- MFA (TOTP, com códigos de recuperação guardados como hash) é **obrigatório para operadores da plataforma desde a primeira versão que expõe rotas de plataforma** (M1.4/M1.5), em qualquer ambiente acessível fora da máquina do desenvolvedor, inclusive homologação. O `PlatformGuard` nega toda rota sem `mfa = true` na sessão. O primeiro operador é criado por comando de linha (CLI) e, no primeiro login, só consegue acessar o cadastro do segundo fator. Redefinir o MFA de um operador exige outro operador e é auditado. O TOTP não depende do provedor de e-mail (Q-12).
+- Para OWNER, MANAGER e STAFF o MFA é opcional e recomendado no MVP; torná-lo obrigatório para OWNER é decisão de produto em aberto.
 
 ### Autorização
 
+- Status do tenant: depois do papel, a `TenantStatusPolicy` aplica a [matriz de capacidades por status](domain-model.md#capacidades-por-status-do-tenant) (ex.: tenant suspenso só permite leitura e encerramento de pedidos pelo OWNER).
 - Guards por superfície: `PublicGuard`, `CustomerGuard`, `StaffGuard`, `PlatformGuard`. Nenhuma rota fica sem guard explícito (teste automatizado lista as rotas e falha se faltar declaração).
 - Permissões por papel definidas em código, não em banco, no MVP:
 
