@@ -21,6 +21,8 @@ export interface DatabaseConfig {
 
 /** Owns tables and runs migrations only; the API process must never connect with it. */
 export const OWNER_ROLE = "whiteoven_owner";
+/** The only role the API process may run as. */
+export const APP_ROLE = "whiteoven_app";
 
 const HOST_PATTERN =
   /^(?:[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*|\[[0-9A-Fa-f:]+\]|[0-9A-Fa-f:]+)$/;

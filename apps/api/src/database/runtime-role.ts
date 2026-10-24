@@ -1,5 +1,5 @@
 import type { MikroORM } from "@mikro-orm/postgresql";
-import { OWNER_ROLE } from "../config/config";
+import { APP_ROLE, OWNER_ROLE } from "../config/config";
 
 /** The connected role could bypass RLS or run DDL. Lists attribute names only. */
 export class UnsafeDatabaseRoleError extends Error {
@@ -10,6 +10,8 @@ export class UnsafeDatabaseRoleError extends Error {
 }
 
 interface RoleFacts {
+  /** Session or effective user differs from whiteoven_app (e.g. whiteoven_platform). */
+  not_app_role: boolean;
   superuser: boolean;
   bypass_rls: boolean;
   create_role: boolean;
@@ -23,7 +25,8 @@ interface RoleFacts {
 }
 
 const ROLE_FACTS_SQL = `
-  select r.rolsuper as superuser,
+  select (session_user <> ? or current_user <> ?) as not_app_role,
+         r.rolsuper as superuser,
          r.rolbypassrls as bypass_rls,
          r.rolcreaterole as create_role,
          r.rolcreatedb as create_db,
@@ -39,13 +42,15 @@ const ROLE_FACTS_SQL = `
    where r.rolname = current_user and d.datname = current_database()`;
 
 /**
- * Refuses to serve with a role that can bypass RLS or change the schema. The API must run as
- * `whiteoven_app`; migrations run separately as `whiteoven_owner`.
+ * Refuses to serve unless the connection runs exactly as `whiteoven_app` (session and effective
+ * user), and with any role that can bypass RLS or change the schema. A role without elevated
+ * attributes is still rejected when it is not `whiteoven_app`: its grants and future RLS
+ * policies are not the API's. Migrations run separately as `whiteoven_owner`.
  */
 export async function assertSafeRuntimeRole(orm: MikroORM): Promise<void> {
   const [facts] = await orm.em
     .getConnection()
-    .execute<RoleFacts[]>(ROLE_FACTS_SQL, [OWNER_ROLE]);
+    .execute<RoleFacts[]>(ROLE_FACTS_SQL, [APP_ROLE, APP_ROLE, OWNER_ROLE]);
   if (!facts) throw new UnsafeDatabaseRoleError(["role not found"]);
   const reasons = Object.entries(facts)
     .filter(([, value]) => value === true)

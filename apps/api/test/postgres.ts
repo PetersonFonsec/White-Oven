@@ -13,9 +13,9 @@ import { createOrm } from "../src/database/orm";
 const OWNER_URL = process.env.TEST_DATABASE_OWNER_URL;
 // Roles and passwords are cluster-wide, so every test process must set the same values; the
 // defaults match compose.dev.yaml so tests do not break a running development stack.
-const APP_PASSWORD =
+export const APP_PASSWORD =
   process.env.TEST_DATABASE_APP_PASSWORD ?? "whiteoven-dev-app-password";
-const PLATFORM_PASSWORD =
+export const PLATFORM_PASSWORD =
   process.env.TEST_DATABASE_PLATFORM_PASSWORD ??
   "whiteoven-dev-platform-password";
 
@@ -26,6 +26,19 @@ if (!OWNER_URL && process.env.CI)
 export const databaseSuite = {
   skip: OWNER_URL ? false : "TEST_DATABASE_OWNER_URL not set",
 } as const;
+
+/** True when `url` can authenticate and run a query. */
+export async function canLogin(url: string): Promise<boolean> {
+  const orm = await createOrm({ url, poolMax: 1 });
+  try {
+    await orm.em.getConnection().execute("select 1");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await orm.close();
+  }
+}
 
 export interface TestDatabase {
   name: string;

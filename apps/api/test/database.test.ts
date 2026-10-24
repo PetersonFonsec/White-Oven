@@ -2,13 +2,20 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { MikroORM } from "@mikro-orm/postgresql";
 import { MIGRATIONS } from "../src/database/migrations";
-import { runMigrations } from "../src/database/migrate";
+import {
+  applyPasswordChanges,
+  runMigrations,
+  scramVerifier,
+} from "../src/database/migrate";
 import {
   UnsafeDatabaseRoleError,
   assertSafeRuntimeRole,
 } from "../src/database/runtime-role";
 import { json, startTestServer } from "./helpers";
 import {
+  APP_PASSWORD,
+  PLATFORM_PASSWORD,
+  canLogin,
   createTestDatabase,
   databaseSuite,
   type TestDatabase,
@@ -147,12 +154,60 @@ describe("PostgreSQL roles and migrations", databaseSuite, () => {
         INSUFFICIENT_PRIVILEGE,
       );
     });
-
-    it(`${role} passes the API startup role check`, async () => {
-      const orm = role === "whiteoven_app" ? app : platform;
-      await assertSafeRuntimeRole(orm);
-    });
   }
+
+  it("whiteoven_app passes the API startup role check", async () => {
+    await assertSafeRuntimeRole(app);
+  });
+
+  it("rejects whiteoven_platform in the API startup role check, although it has no elevated attributes", async () => {
+    await assert.rejects(assertSafeRuntimeRole(platform), (error) => {
+      assert.ok(error instanceof UnsafeDatabaseRoleError);
+      assert.deepEqual(error.reasons, ["not_app_role"]);
+      return true;
+    });
+  });
+
+  it("whiteoven_app cannot switch its effective user with SET ROLE", async () => {
+    // The startup check compares session_user and current_user; today whiteoven_app is a member
+    // of no role, so the effective user cannot drift.
+    assert.equal(
+      await sqlState(app, "set role whiteoven_platform"),
+      INSUFFICIENT_PRIVILEGE,
+    );
+  });
+
+  it("applies runtime password changes atomically: a failing second change keeps the first", async () => {
+    const replacement = "replacement-app-password-0001";
+    await assert.rejects(
+      applyPasswordChanges(owner, [
+        { role: "whiteoven_app", verifier: scramVerifier(replacement) },
+        // Fails inside the transaction, after whiteoven_app was altered.
+        {
+          role: "whiteoven_missing_role_for_test",
+          verifier: scramVerifier(replacement),
+        },
+      ]),
+      (error) => (error as { code?: string }).code === "42704",
+    );
+    const withReplacement = new URL(database.appUrl);
+    withReplacement.password = replacement;
+    assert.equal(await canLogin(withReplacement.toString()), false);
+    assert.equal(await canLogin(database.appUrl), true);
+  });
+
+  it("applies every runtime password change when all of them succeed", async () => {
+    // Same passwords the other test processes use: roles are cluster-wide.
+    await applyPasswordChanges(owner, [
+      { role: "whiteoven_app", verifier: scramVerifier(APP_PASSWORD) },
+      {
+        role: "whiteoven_platform",
+        verifier: scramVerifier(PLATFORM_PASSWORD),
+      },
+    ]);
+    assert.equal(await canLogin(database.appUrl), true);
+    assert.equal(await canLogin(database.platformUrl), true);
+  });
 
   it("grants DML on new owner tables to whiteoven_app only", async () => {
     await owner.em
@@ -213,6 +268,7 @@ describe("PostgreSQL roles and migrations", databaseSuite, () => {
     await assert.rejects(assertSafeRuntimeRole(owner), (error) => {
       assert.ok(error instanceof UnsafeDatabaseRoleError);
       assert.deepEqual(error.reasons, [
+        "not_app_role",
         "create_role",
         "create_db",
         "owns_database",

@@ -111,39 +111,79 @@ describe("process startup with PostgreSQL", databaseSuite, () => {
     assert.equal(result.signal, "SIGTERM");
   });
 
-  it("refuses to serve with a role that could create databases, before listening", async () => {
-    // loadConfig already rejects whiteoven_owner by name; the database check catches any other
-    // unsafe role. The owner (CREATEROLE + CREATEDB) can create one for the test.
-    const role = `whiteoven_test_unsafe_${process.pid}`;
-    const password = "unsafe-role-password-1234";
+  /** Creates a login role able to connect (owner has CREATEROLE), runs `fn`, then drops it. */
+  async function withRole<T>(
+    attributes: string,
+    fn: (url: string) => Promise<T>,
+  ): Promise<T> {
+    const role = `whiteoven_test_role_${process.pid}`;
+    const password = "test-role-password-1234";
     const owner = await database.connect(database.ownerUrl);
     const sql = owner.em.getConnection();
     await sql.execute(
-      `create role ${role} login createdb password '${password}'`,
+      `create role ${role} login ${attributes} password '${password}'`,
     );
     try {
       await sql.execute(
         `grant connect on database "${database.name}" to ${role}`,
       );
+      await sql.execute(`grant usage on schema public to ${role}`);
       const url = new URL(database.appUrl);
       url.username = role;
       url.password = password;
-      const result = await run({
-        NODE_ENV: "test",
-        API_PORT: String(await freePort()),
-        DATABASE_URL: url.toString(),
-      });
-      assert.equal(result.code, 1);
-      assert.equal(
-        result.stderr,
-        "Unsafe database role for the API: create_db\n",
-      );
-      assert.doesNotMatch(result.stdout, /api listening/);
+      return await fn(url.toString());
     } finally {
+      await sql.execute(`revoke usage on schema public from ${role}`);
       await sql.execute(
         `revoke connect on database "${database.name}" from ${role}`,
       );
       await sql.execute(`drop role ${role}`);
     }
+  }
+
+  const startWith = async (databaseUrl: string) =>
+    run({
+      NODE_ENV: "test",
+      API_PORT: String(await freePort()),
+      DATABASE_URL: databaseUrl,
+    });
+
+  it("refuses to serve as any role other than whiteoven_app, even without elevated privileges", async () => {
+    await withRole(
+      "nosuperuser nobypassrls nocreatedb nocreaterole noreplication noinherit",
+      async (url) => {
+        const result = await startWith(url);
+        assert.equal(result.code, 1);
+        assert.equal(
+          result.stderr,
+          "Unsafe database role for the API: not_app_role\n",
+        );
+        assert.doesNotMatch(result.stdout, /api listening/);
+      },
+    );
+  });
+
+  it("refuses to serve as whiteoven_platform", async () => {
+    const result = await startWith(database.platformUrl);
+    assert.equal(result.code, 1);
+    assert.equal(
+      result.stderr,
+      "Unsafe database role for the API: not_app_role\n",
+    );
+    assert.doesNotMatch(result.stdout, /api listening/);
+  });
+
+  it("refuses to serve with a role that could create databases, before listening", async () => {
+    // loadConfig already rejects whiteoven_owner by name; the database check catches any other
+    // unsafe role.
+    await withRole("createdb", async (url) => {
+      const result = await startWith(url);
+      assert.equal(result.code, 1);
+      assert.equal(
+        result.stderr,
+        "Unsafe database role for the API: not_app_role, create_db\n",
+      );
+      assert.doesNotMatch(result.stdout, /api listening/);
+    });
   });
 });

@@ -103,24 +103,47 @@ export function scramVerifier(
   return `SCRAM-SHA-256$${iterations}:${salt.toString("base64")}$${storedKey}:${serverKey}`;
 }
 
+export interface PasswordChange {
+  role: string;
+  /** SCRAM-SHA-256 verifier from `scramVerifier`, never a plain password. */
+  verifier: string;
+}
+
+/**
+ * Applies every password change in one transaction (ALTER ROLE is transactional in PostgreSQL):
+ * if any statement fails, none of the roles changes, so the API and platform credentials never
+ * end up half rotated.
+ */
+export async function applyPasswordChanges(
+  orm: MikroORM,
+  changes: readonly PasswordChange[],
+): Promise<void> {
+  if (changes.length === 0) return;
+  const connection = orm.em.getConnection();
+  await connection.transactional(async (trx) => {
+    for (const { role, verifier } of changes) {
+      const [row] = await connection.execute<{ statement: string }[]>(
+        "select format('alter role %I with login password %L', ?::text, ?::text) as statement",
+        [role, verifier],
+        "all",
+        trx,
+      );
+      if (!row) throw new Error("could not build password statement");
+      await connection.execute(row.statement, [], "run", trx);
+    }
+  });
+}
+
 async function setPasswords(
   orm: MikroORM,
   passwords: MigrationConfig["passwords"],
 ): Promise<RuntimeRole[]> {
-  const connection = orm.em.getConnection();
-  const changed: RuntimeRole[] = [];
-  for (const role of RUNTIME_ROLES) {
-    const password = passwords[role];
-    if (!password) continue;
-    const [row] = await connection.execute<{ statement: string }[]>(
-      "select format('alter role %I with login password %L', ?::text, ?::text) as statement",
-      [role, scramVerifier(password)],
-    );
-    if (!row) throw new Error("could not build password statement");
-    await connection.execute(row.statement);
-    changed.push(role);
-  }
-  return changed;
+  const roles = RUNTIME_ROLES.filter((role) => passwords[role]);
+  await applyPasswordChanges(
+    orm,
+    roles.map((role) => ({ role, verifier: scramVerifier(passwords[role]!) })),
+  );
+  return roles;
 }
 
 export interface MigrationRun {
