@@ -1,0 +1,36 @@
+{
+	admin off
+	servers {
+		timeouts {
+			read_header 5s
+			read_body 7s
+			write 15s
+			idle 30s
+		}
+	}
+}
+
+{$WHITEOVEN_DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+	@health path /health/*
+	respond @health 404
+	request_body /api/leads {
+		max_size 8KB
+	}
+	reverse_proxy {$WHITEOVEN_UPSTREAM:landing:4321} {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+		transport http {
+			dial_timeout 3s
+			response_header_timeout 10s
+		}
+	}
+}

@@ -1,6 +1,6 @@
 # WhiteOven
 
-SaaS white label planejado para pizzarias. **M0.1-B** implementa a landing Astro, Pizza Builder demonstrativo e captação real de interesse com SQLite local. Angular, React Native/Expo, API principal NestJS, pagamentos e onboarding continuam planejados.
+SaaS white label planejado para pizzarias. **M0.2** prepara empacotamento Docker, Compose e operação para a landing Astro, Pizza Builder demonstrativo e captação real de interesse com SQLite local. Nenhum deploy real foi feito. Angular, React Native/Expo, API principal NestJS, pagamentos e onboarding continuam planejados.
 
 ## Requisitos e início local
 
@@ -45,3 +45,11 @@ Use `pnpm start`, que aplica limites HTTP, identifica clientes pela conexão e i
 O build agora **exige processo Node para captação e política dinâmica**; servir apenas arquivos estáticos não oferece esse fluxo. A decisão e as alternativas estão no [ADR 0002](docs/adr/0002-lead-capture.md). Veja [operação, privacidade e métricas](docs/architecture/m0-1b-lead-capture.md). Caddy poderá atuar como reverse proxy em uma milestone futura; não há deploy nem alterações de infraestrutura Orbia nesta entrega.
 
 A CI usa instalação congelada, formatação, lint, typecheck, testes de domínio/endpoint, build e E2E. As decisões de M0 e M0.1-A estão mantidas como registros históricos; não descrevem o formulário atual. A captação não envia mensagens automáticas, e o adaptador de analytics atual emite apenas eventos locais sem PII, sem fornecedor externo.
+
+## Deploy e operação — M0.2
+
+Consulte o [runbook](docs/operations/landing-deployment.md) antes de executar comandos de infraestrutura. `Dockerfile` multi-stage compila addons para Linux, executa como UID 1000 e preserva o inicializador seguro. `compose.yaml` mantém dados/backups em volumes e publica Node somente em loopback. Caddy é exemplo opcional separado, sem domínio ou servidor presumido.
+
+`/health/live` verifica HTTP; `/health/ready` distingue prontidão, captação e armazenamento sem gravar no banco. Scripts de atualização/rollback preservam o banco atual; restauração é offline e explícita. Backup usa a API online do SQLite, com integridade, prazo e diário de exclusões.
+
+Teste de containers (Docker obrigatório): `node --experimental-strip-types tests/deployment/containers.mjs`. Cria e remove somente recursos sintéticos identificados por projeto aleatório. CI executa essa suíte e os checks existentes; após merge em main, publica a imagem testada no GHCR com tag SHA, sem deploy automático. GHCR/HTTPS público e o destino real só serão verificados após configuração futura autorizada.

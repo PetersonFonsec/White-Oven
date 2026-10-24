@@ -159,6 +159,11 @@ export class SqliteLeadStore implements LeadRepository {
   clearDevelopment(): void {
     this.db.exec("DELETE FROM lead_requests; DELETE FROM leads;");
   }
+  isHealthy(): boolean {
+    this.db.prepare("SELECT id FROM leads LIMIT 0").all();
+    this.db.prepare("SELECT key FROM lead_requests LIMIT 0").all();
+    return this.db.pragma("quick_check", { simple: true }) === "ok";
+  }
   close(): void {
     this.db.pragma("wal_checkpoint(TRUNCATE)");
     this.db.close();

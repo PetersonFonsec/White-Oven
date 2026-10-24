@@ -47,9 +47,6 @@ importers:
 
   apps/landing:
     dependencies:
-      '@astrojs/check':
-        specifier: ^0.9.4
-        version: 0.9.12(@emnapi/runtime@1.11.3)(prettier-plugin-astro@0.14.1)(prettier@3.9.10)(typescript@5.9.3)
       '@astrojs/node':
         specifier: 9.5.5
         version: 9.5.5(astro@5.18.2(@types/node@22.20.5)(rollup@4.65.0)(supports-color@7.2.0)(typescript@5.9.3)(yaml@2.9.1))(supports-color@7.2.0)
@@ -68,6 +65,10 @@ importers:
       sharp:
         specifier: 0.34.5
         version: 0.34.5
+    devDependencies:
+      '@astrojs/check':
+        specifier: ^0.9.4
+        version: 0.9.12(@emnapi/runtime@1.11.3)(prettier-plugin-astro@0.14.1)(prettier@3.9.10)(typescript@5.9.3)
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

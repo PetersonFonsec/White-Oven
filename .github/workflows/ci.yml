@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -32,3 +35,79 @@ jobs:
           name: browser-test-results
           path: test-results/
           retention-days: 7
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Build and validate containers with synthetic data
+        run: node --experimental-strip-types tests/deployment/containers.mjs
+        env:
+          WHITEOVEN_TEST_IMAGE: whiteoven:ci
+      - name: Save the exact tested image for publication
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker save whiteoven:ci | gzip > landing-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: landing-image-${{ github.sha }}
+          path: landing-image.tar.gz
+          retention-days: 1
+
+  publish:
+    needs: [verify, containers]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: ghcr-${{ github.sha }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: landing-image-${{ github.sha }}
+      - run: gunzip -c landing-image.tar.gz | docker load
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish immutable commit tag without rebuilding
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          OWNER: ${{ github.repository_owner }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' whiteoven:ci)"
+          test "$revision" = "$COMMIT_SHA"
+          owner="${OWNER,,}"
+          image="ghcr.io/$owner/white-oven-landing:sha-$COMMIT_SHA"
+          if docker manifest inspect "$image" >/dev/null 2>manifest-error.txt; then
+            echo "Commit tag already published; preserving its existing digest."
+            exit 0
+          fi
+          if ! grep -Eqi 'no such manifest|manifest unknown|not found' manifest-error.txt; then
+            # A package that does not exist yet may report DENIED at the registry.
+            # Confirm its absence via GitHub; any other error fails closed.
+            kind="$(gh api "repos/$REPOSITORY" --jq '.owner.type')"
+            prefix=users
+            if test "$kind" = Organization; then prefix=orgs; fi
+            status="$(curl --silent --show-error --output package-status.json --write-out '%{http_code}' \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/$prefix/$owner/packages/container/white-oven-landing")"
+            if test "$status" != 404; then
+              echo "Registry verification failed; refusing to overwrite a commit tag."
+              exit 1
+            fi
+          fi
+          docker tag whiteoven:ci "$image"
+          docker push "$image"

@@ -16,3 +16,6 @@ playwright-report/
 *.sqlite-wal
 *.sqlite-shm
 lead-exports/
+
+.ops-state/
+backups/

@@ -1,0 +1,53 @@
+name: whiteoven
+services:
+  landing:
+    image: ${WHITEOVEN_IMAGE:?Set WHITEOVEN_IMAGE to a tested image tag or digest}
+    build:
+      context: .
+      args:
+        VCS_REF: ${WHITEOVEN_REVISION:-local}
+    env_file:
+      - path: ${WHITEOVEN_ENV_FILE:-./ops/.env}
+        required: true
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "4321"
+      LEADS_DB_PATH: /var/lib/whiteoven/leads.sqlite
+    ports:
+      - "127.0.0.1:${WHITEOVEN_PORT:-4321}:4321"
+    volumes:
+      - leads:/var/lib/whiteoven
+      - backups:/var/backups/whiteoven
+    networks: [whiteoven]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,uid=1000,gid=1000,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 15s
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    healthcheck:
+      test: [CMD, node, scripts/healthcheck.mjs]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+volumes:
+  leads:
+  backups:
+networks:
+  whiteoven:
+    ipam:
+      config:
+        - subnet: ${WHITEOVEN_SUBNET:-172.30.87.0/24}

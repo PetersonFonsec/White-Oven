@@ -26,5 +26,5 @@ App Store e Google Play são indicadas como “Em breve”, sem links de downloa
 
 - Não haverá logística, cálculo de frete, roteirização, gestão de entregadores ou rastreamento.
 - Ocorrências de entrega são registros de atendimento ligados a pedidos; não são ferramentas de logística.
-- M0.1-B implementa somente o endpoint temporário de captação Astro e SQLite. Não implementa API NestJS, PostgreSQL SaaS, autenticação, pagamentos, CRM, mensagens automáticas ou deploy. M1 requer nova aprovação.
+- M0.1-B implementa somente o endpoint temporário de captação Astro e SQLite. Não implementa API NestJS, PostgreSQL SaaS, autenticação, pagamentos, CRM, mensagens automáticas ou deploy. M0.2 prepara empacotamento e operação, sem deploy real. M1 requer nova aprovação.
 - Não criar aplicações futuras vazias apenas para preencher diretórios.
