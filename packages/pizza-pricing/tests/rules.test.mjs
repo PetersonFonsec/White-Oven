@@ -151,6 +151,18 @@ test("PB-12: removals must be removable and present in the flavor at that positi
     evaluate(whole("calabresa", { removals: [removal("cebola", "LEFT")] })),
     failure(3, ["PIZZA_REMOVAL_PLACEMENT_INVALID", "removals[0].placement"]),
   );
+  const archivedIngredient = structuredClone(catalog);
+  archivedIngredient.ingredients.find(
+    (entry) => entry.id === "cebola",
+  ).archived = true;
+  assert.deepEqual(
+    evaluatePizza(
+      whole("calabresa", { removals: [removal("cebola", "WHOLE")] }),
+      archivedIngredient,
+      policy(),
+    ),
+    failure(3, ["PIZZA_REMOVAL_INVALID", "removals[0].ingredientId"]),
+  );
 });
 
 test("PB-13: removals are free, unlimited, and rejected when repeated on the same position", () => {

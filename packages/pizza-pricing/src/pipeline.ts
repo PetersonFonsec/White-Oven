@@ -225,6 +225,7 @@ function checkPlacements(
     const flavor = index.flavors.get(flavorId);
     if (
       !index.ingredients.get(ingredientId)?.removable ||
+      index.ingredients.get(ingredientId)?.archived ||
       !flavor?.ingredientIds.includes(ingredientId)
     )
       return void errors.push(

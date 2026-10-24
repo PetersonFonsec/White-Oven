@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { RequestMethod } from "@nestjs/common";
 import { METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
@@ -54,6 +55,10 @@ interface Fixture {
   id: string;
   slug: string;
   flavorId: string;
+  catalogFlavorId: string;
+  categoryId: string;
+  sizeId: string;
+  ingredientId: string;
 }
 
 /** Staff membership cache TTL of this suite's server; production allows at most 60 s. */
@@ -61,7 +66,7 @@ const STAFF_PASSWORD = "isolamento-2026";
 
 /**
  * Required tests of docs/architecture/tenant-isolation.md, against a real PostgreSQL. Tables
- * are the test-only probes of `tenant-probes.ts` plus memberships, orders and owner_invites.
+ * are the test-only probes of `tenant-probes.ts` plus every production tenant table.
  */
 describe("tenant isolation", databaseSuite, () => {
   let database: TestDatabase;
@@ -90,7 +95,39 @@ describe("tenant isolation", databaseSuite, () => {
         [id, flavor],
       ),
     );
-    return { id, slug, flavorId: row!.id };
+    const catalog = await runInTenant(owner, id, async (em) => {
+      const [category] = await em.execute<{ id: string }[]>(
+        "insert into catalog_categories (tenant_id,name,kind) values (?,?,'PIZZA') returning id",
+        [id, `${slug} category`],
+      );
+      const [size] = await em.execute<{ id: string }[]>(
+        "insert into pizza_sizes (tenant_id,name,slices,max_flavors) values (?,?,8,2) returning id",
+        [id, `${slug} size`],
+      );
+      const [ingredient] = await em.execute<{ id: string }[]>(
+        "insert into catalog_ingredients (tenant_id,name) values (?,?) returning id",
+        [id, `${slug} ingredient`],
+      );
+      const [flavorRow] = await em.execute<{ id: string }[]>(
+        "insert into catalog_flavors (tenant_id,category_id,name) values (?,?,?) returning id",
+        [id, category!.id, `${slug} flavor`],
+      );
+      await em.execute(
+        "insert into catalog_flavor_ingredients (tenant_id,flavor_id,ingredient_id) values (?,?,?)",
+        [id, flavorRow!.id, ingredient!.id],
+      );
+      await em.execute(
+        "insert into catalog_flavor_prices (tenant_id,flavor_id,size_id,price_cents) values (?,?,?,1000)",
+        [id, flavorRow!.id, size!.id],
+      );
+      return {
+        categoryId: category!.id,
+        sizeId: size!.id,
+        ingredientId: ingredient!.id,
+        catalogFlavorId: flavorRow!.id,
+      };
+    });
+    return { id, slug, flavorId: row!.id, ...catalog };
   };
 
   const appCount = async (sql: string, params: unknown[] = []) => {
@@ -127,6 +164,38 @@ describe("tenant isolation", databaseSuite, () => {
 
   const call = (path: string, init: RequestInit = {}) =>
     fetch(`${server.baseUrl}/v1${path}`, init);
+  const adminCatalogCall = async (
+    store: Fixture,
+    path: string,
+    method = "GET",
+  ) => {
+    const email = `matrix-${store.slug}-${randomUUID()}@isolamento.test`;
+    const userId = await insertStaffUser(owner, email, STAFF_PASSWORD);
+    await insertMembership(owner, store.id, userId, "OWNER");
+    const login = await staffLogin(server.baseUrl, email, STAFF_PASSWORD);
+    const switched = await switchTenant(
+      server.baseUrl,
+      login.accessToken,
+      store.id,
+    );
+    const { accessToken } = await json(switched);
+    const body =
+      method === "PUT"
+        ? { priceCents: 500 }
+        : method === "POST"
+          ? { name: "Nova", kind: "PIZZA" }
+          : method === "PATCH"
+            ? { name: "Nova" }
+            : undefined;
+    return call(path, {
+      method,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        ...(body ? { "content-type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  };
 
   describe("1. isolation matrix", () => {
     /** Every tenant route, with how tenant A attacks tenant B's resource through it. */
@@ -160,6 +229,66 @@ describe("tenant isolation", databaseSuite, () => {
             headers: { "x-test-token-tid": attacker.id },
           },
         ),
+      "PATCH /admin/catalog/categories/:id": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/categories/${victim.categoryId}`,
+          "PATCH",
+        ),
+      "DELETE /admin/catalog/categories/:id": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/categories/${victim.categoryId}`,
+          "DELETE",
+        ),
+      "PATCH /admin/catalog/sizes/:id": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/sizes/${victim.sizeId}`,
+          "PATCH",
+        ),
+      "DELETE /admin/catalog/sizes/:id": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/sizes/${victim.sizeId}`,
+          "DELETE",
+        ),
+      "PATCH /admin/catalog/ingredients/:id": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/ingredients/${victim.ingredientId}`,
+          "PATCH",
+        ),
+      "DELETE /admin/catalog/ingredients/:id": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/ingredients/${victim.ingredientId}`,
+          "DELETE",
+        ),
+      "PATCH /admin/catalog/flavors/:id": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/flavors/${victim.catalogFlavorId}`,
+          "PATCH",
+        ),
+      "DELETE /admin/catalog/flavors/:id": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/flavors/${victim.catalogFlavorId}`,
+          "DELETE",
+        ),
+      "PUT /admin/catalog/flavors/:id/prices/:sizeId": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/flavors/${victim.catalogFlavorId}/prices/${victim.sizeId}`,
+          "PUT",
+        ),
+      "DELETE /admin/catalog/flavors/:id/prices/:sizeId": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/flavors/${victim.catalogFlavorId}/prices/${victim.sizeId}`,
+          "DELETE",
+        ),
     };
 
     it("lists every tenant route of the API (new routes must join the matrix)", () => {
@@ -189,6 +318,12 @@ describe("tenant isolation", databaseSuite, () => {
       const listings = [
         "GET /public/stores/:storeSlug/isolation-probe",
         "GET /admin/me",
+        "GET /admin/catalog/items",
+        "GET /admin/catalog/audit-events",
+        "POST /admin/catalog/categories",
+        "POST /admin/catalog/sizes",
+        "POST /admin/catalog/ingredients",
+        "POST /admin/catalog/flavors",
       ];
       assert.deepEqual(
         routes.filter((route) => !listings.includes(route)).sort(),
@@ -204,7 +339,11 @@ describe("tenant isolation", databaseSuite, () => {
         ] as const) {
           const response = await attack(attacker, victim);
           assert.equal(response.status, 404);
-          assert.equal((await json(response)).code, "NOT_FOUND");
+          assert.ok(
+            ["NOT_FOUND", "CATALOG_RESOURCE_NOT_FOUND"].includes(
+              (await json(response)).code,
+            ),
+          );
           const [row] = await runInTenant(owner, victim.id, (em) =>
             em.execute<{ name: string }[]>(
               "select name from isolation_probe_flavors where id = ?",
@@ -212,6 +351,54 @@ describe("tenant isolation", databaseSuite, () => {
             ),
           );
           assert.notEqual(row!.name, "hijacked");
+          const state = await runInTenant(owner, victim.id, async (em) => {
+            const [category] = await em.execute<
+              { name: string; archived_at: Date | null }[]
+            >("select name,archived_at from catalog_categories where id=?", [
+              victim.categoryId,
+            ]);
+            const [size] = await em.execute<
+              { name: string; archived_at: Date | null }[]
+            >("select name,archived_at from pizza_sizes where id=?", [
+              victim.sizeId,
+            ]);
+            const [ingredient] = await em.execute<
+              { name: string; archived_at: Date | null }[]
+            >("select name,archived_at from catalog_ingredients where id=?", [
+              victim.ingredientId,
+            ]);
+            const [flavor] = await em.execute<
+              { name: string; archived_at: Date | null }[]
+            >("select name,archived_at from catalog_flavors where id=?", [
+              victim.catalogFlavorId,
+            ]);
+            const [price] = await em.execute<{ price_cents: number }[]>(
+              "select price_cents from catalog_flavor_prices where flavor_id=? and size_id=?",
+              [victim.catalogFlavorId, victim.sizeId],
+            );
+            const [link] = await em.execute<{ count: number }[]>(
+              "select count(*)::int as count from catalog_flavor_ingredients where flavor_id=? and ingredient_id=?",
+              [victim.catalogFlavorId, victim.ingredientId],
+            );
+            return {
+              category: category!,
+              size: size!,
+              ingredient: ingredient!,
+              flavor: flavor!,
+              price: price!,
+              link: link!,
+            };
+          });
+          assert.equal(state.category.name, `${victim.slug} category`);
+          assert.equal(state.category.archived_at, null);
+          assert.equal(state.size.name, `${victim.slug} size`);
+          assert.equal(state.size.archived_at, null);
+          assert.equal(state.ingredient.name, `${victim.slug} ingredient`);
+          assert.equal(state.ingredient.archived_at, null);
+          assert.equal(state.flavor.name, `${victim.slug} flavor`);
+          assert.equal(state.flavor.archived_at, null);
+          assert.equal(state.price.price_cents, 1000);
+          assert.equal(state.link.count, 1);
         }
       });
     }
@@ -282,9 +469,15 @@ describe("tenant isolation", databaseSuite, () => {
           order by 1`,
         );
       assert.deepEqual(rows, [
+        { table: "catalog_categories", forced: true },
+        { table: "catalog_flavor_ingredients", forced: true },
+        { table: "catalog_flavor_prices", forced: true },
+        { table: "catalog_flavors", forced: true },
+        { table: "catalog_ingredients", forced: true },
         { table: "memberships", forced: true },
         { table: "orders", forced: true },
         { table: "owner_invites", forced: true },
+        { table: "pizza_sizes", forced: true },
       ]);
     });
 

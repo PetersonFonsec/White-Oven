@@ -245,6 +245,10 @@ Invariantes:
 - Disponibilidade é um booleano simples. Itens arquivados não aparecem no cardápio público e não podem ser pedidos.
 - `Category.kind` é `PIZZA` ou `PRODUCT`; sabores só em categorias `PIZZA`, produtos simples só em `PRODUCT`.
 
+### API de catálogo (M2.3)
+
+O catálogo administrativo de M2.3 grava categorias, tamanhos, ingredientes, sabores, relações sabor–ingrediente e preços de sabor por tamanho em tabelas próprias por tenant. Todas usam RLS forçado e FKs compostas `(tenant_id, id)` para impedir referências cruzadas mesmo sem depender da camada HTTP. Escrita requer membership OWNER ou MANAGER e tenant em `ONBOARDING` ou `ACTIVE`. Categorias, tamanhos, ingredientes e sabores são arquivados por `archived_at`; arquivar um ingrediente preserva seus vínculos com sabores para manter a receita histórica. Vínculos sabor–ingrediente e preços podem ser removidos explicitamente, sempre na mesma transação da auditoria. Uma alteração de preço gera evento com valor anterior e novo; o app não tem acesso direto à tabela global de auditoria, apenas às funções de leitura/gravação com escopo de tenant e membership validado.
+
 Produtos simples não têm variações nem grupos de opções no MVP (ex.: “Refrigerante 2L” e “Refrigerante lata” são produtos distintos).
 
 ### PricingPolicy

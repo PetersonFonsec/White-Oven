@@ -9,6 +9,7 @@ import { HealthController } from "./health/health.controller";
 import { JsonLogger } from "./logging/json-logger";
 import { TenancyModule } from "./tenancy/tenancy.module";
 import { PlatformModule } from "./platform/platform.module";
+import { CatalogModule } from "./catalog/catalog.module";
 
 @Module({})
 export class AppModule {
@@ -25,6 +26,7 @@ export class AppModule {
         TenancyModule,
         AuthModule,
         PlatformModule,
+        CatalogModule,
       ],
       controllers: [HealthController],
       providers: [

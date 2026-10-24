@@ -193,6 +193,7 @@ export const AdminRoute = (...roles: MembershipRole[]) =>
   applyDecorators(
     SetMetadata(ROUTE_ACCESS, "admin"),
     SetMetadata(TENANT_SURFACE, "admin"),
+    SetMetadata("whiteoven:tenant-surface", "admin"),
     SetMetadata(ROLES, roles),
     UseGuards(StaffGuard),
     UseInterceptors(TenantContextInterceptor),
