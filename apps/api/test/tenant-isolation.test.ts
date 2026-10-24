@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { RequestMethod } from "@nestjs/common";
 import { METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
@@ -61,7 +62,7 @@ const STAFF_PASSWORD = "isolamento-2026";
 
 /**
  * Required tests of docs/architecture/tenant-isolation.md, against a real PostgreSQL. Tables
- * are the test-only probes of `tenant-probes.ts` plus memberships, orders and owner_invites.
+ * are the test-only probes of `tenant-probes.ts` plus every production tenant table.
  */
 describe("tenant isolation", databaseSuite, () => {
   let database: TestDatabase;
@@ -127,6 +128,38 @@ describe("tenant isolation", databaseSuite, () => {
 
   const call = (path: string, init: RequestInit = {}) =>
     fetch(`${server.baseUrl}/v1${path}`, init);
+  const adminCatalogCall = async (
+    store: Fixture,
+    path: string,
+    method = "GET",
+  ) => {
+    const email = `matrix-${store.slug}-${randomUUID()}@isolamento.test`;
+    const userId = await insertStaffUser(owner, email, STAFF_PASSWORD);
+    await insertMembership(owner, store.id, userId, "OWNER");
+    const login = await staffLogin(server.baseUrl, email, STAFF_PASSWORD);
+    const switched = await switchTenant(
+      server.baseUrl,
+      login.accessToken,
+      store.id,
+    );
+    const { accessToken } = await json(switched);
+    const body =
+      method === "PUT"
+        ? { priceCents: 500 }
+        : method === "POST"
+          ? { name: "Nova", kind: "PIZZA" }
+          : method === "PATCH"
+            ? { name: "Nova" }
+            : undefined;
+    return call(path, {
+      method,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        ...(body ? { "content-type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  };
 
   describe("1. isolation matrix", () => {
     /** Every tenant route, with how tenant A attacks tenant B's resource through it. */
@@ -160,6 +193,66 @@ describe("tenant isolation", databaseSuite, () => {
             headers: { "x-test-token-tid": attacker.id },
           },
         ),
+      "PATCH /admin/catalog/categories/:id": (attacker) =>
+        adminCatalogCall(
+          attacker,
+          "/admin/catalog/categories/00000000-0000-4000-8000-000000000001",
+          "PATCH",
+        ),
+      "DELETE /admin/catalog/categories/:id": (attacker) =>
+        adminCatalogCall(
+          attacker,
+          "/admin/catalog/categories/00000000-0000-4000-8000-000000000001",
+          "DELETE",
+        ),
+      "PATCH /admin/catalog/sizes/:id": (attacker) =>
+        adminCatalogCall(
+          attacker,
+          "/admin/catalog/sizes/00000000-0000-4000-8000-000000000001",
+          "PATCH",
+        ),
+      "DELETE /admin/catalog/sizes/:id": (attacker) =>
+        adminCatalogCall(
+          attacker,
+          "/admin/catalog/sizes/00000000-0000-4000-8000-000000000001",
+          "DELETE",
+        ),
+      "PATCH /admin/catalog/ingredients/:id": (attacker) =>
+        adminCatalogCall(
+          attacker,
+          "/admin/catalog/ingredients/00000000-0000-4000-8000-000000000001",
+          "PATCH",
+        ),
+      "DELETE /admin/catalog/ingredients/:id": (attacker) =>
+        adminCatalogCall(
+          attacker,
+          "/admin/catalog/ingredients/00000000-0000-4000-8000-000000000001",
+          "DELETE",
+        ),
+      "PATCH /admin/catalog/flavors/:id": (attacker) =>
+        adminCatalogCall(
+          attacker,
+          "/admin/catalog/flavors/00000000-0000-4000-8000-000000000001",
+          "PATCH",
+        ),
+      "DELETE /admin/catalog/flavors/:id": (attacker) =>
+        adminCatalogCall(
+          attacker,
+          "/admin/catalog/flavors/00000000-0000-4000-8000-000000000001",
+          "DELETE",
+        ),
+      "PUT /admin/catalog/flavors/:id/prices/:sizeId": (attacker) =>
+        adminCatalogCall(
+          attacker,
+          "/admin/catalog/flavors/00000000-0000-4000-8000-000000000001/prices/00000000-0000-4000-8000-000000000002",
+          "PUT",
+        ),
+      "DELETE /admin/catalog/flavors/:id/prices/:sizeId": (attacker) =>
+        adminCatalogCall(
+          attacker,
+          "/admin/catalog/flavors/00000000-0000-4000-8000-000000000001/prices/00000000-0000-4000-8000-000000000002",
+          "DELETE",
+        ),
     };
 
     it("lists every tenant route of the API (new routes must join the matrix)", () => {
@@ -189,6 +282,12 @@ describe("tenant isolation", databaseSuite, () => {
       const listings = [
         "GET /public/stores/:storeSlug/isolation-probe",
         "GET /admin/me",
+        "GET /admin/catalog/items",
+        "GET /admin/catalog/audit-events",
+        "POST /admin/catalog/categories",
+        "POST /admin/catalog/sizes",
+        "POST /admin/catalog/ingredients",
+        "POST /admin/catalog/flavors",
       ];
       assert.deepEqual(
         routes.filter((route) => !listings.includes(route)).sort(),
@@ -204,7 +303,11 @@ describe("tenant isolation", databaseSuite, () => {
         ] as const) {
           const response = await attack(attacker, victim);
           assert.equal(response.status, 404);
-          assert.equal((await json(response)).code, "NOT_FOUND");
+          assert.ok(
+            ["NOT_FOUND", "CATALOG_RESOURCE_NOT_FOUND"].includes(
+              (await json(response)).code,
+            ),
+          );
           const [row] = await runInTenant(owner, victim.id, (em) =>
             em.execute<{ name: string }[]>(
               "select name from isolation_probe_flavors where id = ?",
@@ -282,9 +385,15 @@ describe("tenant isolation", databaseSuite, () => {
           order by 1`,
         );
       assert.deepEqual(rows, [
+        { table: "catalog_categories", forced: true },
+        { table: "catalog_flavor_ingredients", forced: true },
+        { table: "catalog_flavor_prices", forced: true },
+        { table: "catalog_flavors", forced: true },
+        { table: "catalog_ingredients", forced: true },
         { table: "memberships", forced: true },
         { table: "orders", forced: true },
         { table: "owner_invites", forced: true },
+        { table: "pizza_sizes", forced: true },
       ]);
     });
 
