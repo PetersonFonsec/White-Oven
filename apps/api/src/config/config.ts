@@ -27,6 +27,8 @@ export interface AuthConfig {
    * production; elsewhere `null` means an ephemeral key (enrollments do not survive a restart).
    */
   mfaEncryptionKey: Buffer | null;
+  /** Dedicated persistent 32-byte secret for deterministic OWNER invitation tokens. */
+  ownerInviteSecret: Buffer | null;
   /** Browser origins allowed to call the cookie-based refresh and logout endpoints. */
   adminOrigins: readonly string[];
 }
@@ -175,6 +177,20 @@ function loadAuthConfig(
       );
   }
 
+  let ownerInviteSecret: Buffer | null = null;
+  const rawInviteKey = env.OWNER_INVITE_SECRET;
+  if (rawInviteKey === undefined || rawInviteKey === "") {
+    if (nodeEnv === "production")
+      problems.push("OWNER_INVITE_SECRET is required in production");
+  } else {
+    const bytes = /^[A-Za-z0-9+/]{43}=$/.test(rawInviteKey)
+      ? Buffer.from(rawInviteKey, "base64")
+      : null;
+    if (bytes?.length === 32) ownerInviteSecret = bytes;
+    else
+      problems.push("OWNER_INVITE_SECRET must be 32 bytes encoded in base64");
+  }
+
   const adminOrigins = (env.API_ADMIN_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())
@@ -187,6 +203,7 @@ function loadAuthConfig(
   return {
     accessTokenPrivateKey,
     mfaEncryptionKey,
+    ownerInviteSecret,
     adminOrigins: Object.freeze(adminOrigins),
   };
 }

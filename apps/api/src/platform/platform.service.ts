@@ -73,16 +73,9 @@ export class PlatformService {
     @Inject(MikroORM) private readonly orm: MikroORM,
     @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {
-    const signingKey = config.auth.accessTokenPrivateKey?.export({
-      type: "pkcs8",
-      format: "der",
-    });
-    this.inviteKey = signingKey
-      ? createHash("sha256")
-          .update("whiteoven-owner-invite-key-v1")
-          .update(signingKey)
-          .digest()
-      : randomBytes(32);
+    // Invitation tokens have an independent key lifecycle from access-token signing. In
+    // production config validation requires the stable secret; ephemeral fallback is local/test only.
+    this.inviteKey = config.auth.ownerInviteSecret ?? randomBytes(32);
   }
 
   async listTenants(
