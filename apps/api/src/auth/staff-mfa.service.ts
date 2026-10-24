@@ -139,7 +139,15 @@ export class StaffMfa {
         "MFA_CHALLENGE_INVALID",
         "Sign in again.",
       );
-    if (!(await this.verify(challenge.staffUserId, factor))) {
+    let verified: boolean;
+    try {
+      verified = await this.verify(challenge.staffUserId, factor);
+    } catch (error) {
+      // Release the reservation if the database check fails unexpectedly.
+      this.challenges.recordFailure(mfaToken);
+      throw error;
+    }
+    if (!verified) {
       this.challenges.recordFailure(mfaToken);
       this.throttle.recordFailure(challenge.email, ip);
       throw invalidCode();
