@@ -109,7 +109,7 @@ export class CatalogService {
   async createFlavor(body: CatalogFlavorBody, requestId: string) {
     const tenantId = currentTenantContext().tenantId;
     const id = randomUUID();
-    await this.perform(async (em) => {
+    await this.perform(requestId, async (em) => {
       const [category] = await em.execute<
         { kind: string; archivedAt: Date | null }[]
       >(
@@ -133,27 +133,19 @@ export class CatalogService {
         this.mapConstraint(error);
       }
       await this.replaceFlavorIngredients(em, id, body.ingredientIds ?? []);
-      await this.audit(
-        em,
-        "catalog.flavor.created",
-        "flavor",
-        id,
-        { categoryId: body.categoryId },
-        requestId,
-      );
     });
     return { id };
   }
 
   async updateSimple(
     table: string,
-    entity: string,
+    _entity: string,
     id: string,
     patch: Record<string, unknown>,
     requestId: string,
   ) {
     this.assertTable(table);
-    await this.perform(async (em) => {
+    await this.perform(requestId, async (em) => {
       const before = await this.findOne(em, table, id);
       if (!before || before.archived_at) throw notFound();
       const mapping: Record<string, string> = {
@@ -166,13 +158,11 @@ export class CatalogService {
       };
       const assignments: string[] = [];
       const values: unknown[] = [];
-      const changes: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(patch)) {
         const column = mapping[key];
         if (!column) continue;
         assignments.push(`${column} = ?`);
         values.push(key === "name" ? (value as string).trim() : value);
-        changes[key] = value;
       }
       if (!assignments.length) throw notFound();
       assignments.push("updated_at = now()");
@@ -185,14 +175,6 @@ export class CatalogService {
       } catch (error) {
         this.mapConstraint(error);
       }
-      await this.audit(
-        em,
-        `catalog.${entity}.updated`,
-        entity,
-        id,
-        changes,
-        requestId,
-      );
     });
     return { id };
   }
@@ -202,12 +184,11 @@ export class CatalogService {
     patch: Record<string, unknown>,
     requestId: string,
   ) {
-    await this.perform(async (em) => {
+    await this.perform(requestId, async (em) => {
       const before = await this.findOne(em, "catalog_flavors", id);
       if (!before || before.archived_at) throw notFound();
       const assignments: string[] = [];
       const values: unknown[] = [];
-      const changes: Record<string, unknown> = {};
       const map: Record<string, string> = {
         categoryId: "category_id",
         name: "name",
@@ -219,7 +200,6 @@ export class CatalogService {
           const value = patch[key];
           assignments.push(`${map[key]} = ?`);
           values.push(key === "name" ? (value as string).trim() : value);
-          changes[key] = value;
         }
       if ("categoryId" in patch) {
         const [row] = await em.execute<
@@ -248,16 +228,7 @@ export class CatalogService {
           id,
           patch.ingredientIds as string[],
         );
-        changes.ingredientIds = patch.ingredientIds;
       }
-      await this.audit(
-        em,
-        "catalog.flavor.updated",
-        "flavor",
-        id,
-        changes,
-        requestId,
-      );
     });
     return { id };
   }
@@ -268,7 +239,7 @@ export class CatalogService {
     priceCents: number,
     requestId: string,
   ) {
-    await this.perform(async (em) => {
+    await this.perform(requestId, async (em) => {
       const [flavor] = await em.execute<{ id: string }[]>(
         "select id from catalog_flavors where id = ? and archived_at is null",
         [flavorId],
@@ -278,53 +249,29 @@ export class CatalogService {
         [sizeId],
       );
       if (!flavor || !size) throw notFound();
-      // A missing price row cannot be locked with FOR UPDATE. Serialize by pair so
-      // concurrent first writes observe the prior writer's committed price and audit it.
-      await em.execute(
-        `select pg_advisory_xact_lock(hashtextextended(?::text, 0))`,
-        [`${flavorId}:${sizeId}`],
-      );
-      const [old] = await em.execute<{ priceCents: number }[]>(
-        'select price_cents as "priceCents" from catalog_flavor_prices where flavor_id = ? and size_id = ? for update',
-        [flavorId, sizeId],
-      );
+      await this.lockFlavorPrice(em, flavorId, sizeId);
       await em.execute(
         `insert into catalog_flavor_prices (tenant_id,flavor_id,size_id,price_cents) values (current_setting('app.tenant_id')::uuid,?,?,?) on conflict (tenant_id,flavor_id,size_id) do update set price_cents=excluded.price_cents,updated_at=now()`,
         [flavorId, sizeId, priceCents],
-      );
-      await this.audit(
-        em,
-        old ? "catalog.flavor.price_changed" : "catalog.flavor.price_created",
-        "flavor_price",
-        flavorId,
-        { sizeId, from: old?.priceCents ?? null, to: priceCents },
-        requestId,
       );
     });
     return { flavorId, sizeId, priceCents };
   }
 
   async removeFlavorPrice(flavorId: string, sizeId: string, requestId: string) {
-    await this.perform(async (em) => {
+    await this.perform(requestId, async (em) => {
+      await this.lockFlavorPrice(em, flavorId, sizeId);
       const [row] = await em.execute<{ priceCents: number }[]>(
         `delete from catalog_flavor_prices where flavor_id=? and size_id=? returning price_cents as "priceCents"`,
         [flavorId, sizeId],
       );
       if (!row) throw notFound();
-      await this.audit(
-        em,
-        "catalog.flavor.price_removed",
-        "flavor_price",
-        flavorId,
-        { sizeId, from: row.priceCents, to: null },
-        requestId,
-      );
     });
   }
 
-  async archive(table: string, entity: string, id: string, requestId: string) {
+  async archive(table: string, _entity: string, id: string, requestId: string) {
     this.assertTable(table);
-    await this.perform(async (em) => {
+    await this.perform(requestId, async (em) => {
       const availability = ["pizza_sizes", "catalog_flavors"].includes(table)
         ? ", available=false"
         : "";
@@ -334,34 +281,17 @@ export class CatalogService {
       );
       if (!row) throw notFound();
       if (table === "catalog_categories") {
-        const flavors = await em.execute<{ id: string }[]>(
-          "update catalog_flavors set archived_at=now(),available=false,updated_at=now() where category_id=? and archived_at is null returning id",
+        await em.execute(
+          "update catalog_flavors set archived_at=now(),available=false,updated_at=now() where category_id=? and archived_at is null",
           [id],
         );
-        for (const flavor of flavors)
-          await this.audit(
-            em,
-            "catalog.flavor.archived",
-            "flavor",
-            flavor.id,
-            { archived: true, categoryId: id },
-            requestId,
-          );
       }
-      await this.audit(
-        em,
-        `catalog.${entity}.archived`,
-        entity,
-        id,
-        { archived: true },
-        requestId,
-      );
     });
   }
 
   private async create(
     table: string,
-    entity: string,
+    _entity: string,
     data: Record<string, unknown>,
     requestId: string,
   ) {
@@ -369,7 +299,7 @@ export class CatalogService {
       tenantId = currentTenantContext().tenantId;
     const columns = Object.keys(data);
     const values = Object.values(data);
-    await this.perform(async (em) => {
+    await this.perform(requestId, async (em) => {
       try {
         await em.execute(
           `insert into ${table} (id,tenant_id,${columns.join(",")}) values (?, ?, ${columns.map(() => "?").join(",")})`,
@@ -378,14 +308,6 @@ export class CatalogService {
       } catch (error) {
         this.mapConstraint(error);
       }
-      await this.audit(
-        em,
-        `catalog.${entity}.created`,
-        entity,
-        id,
-        data,
-        requestId,
-      );
     });
     return { id };
   }
@@ -415,31 +337,8 @@ export class CatalogService {
     );
     return row;
   }
-  private async audit(
-    em: import("@mikro-orm/postgresql").EntityManager,
-    action: string,
-    entity: string,
-    id: string,
-    changes: Record<string, unknown>,
-    requestId: string,
-  ) {
-    const context = currentTenantContext();
-    if (context.actor.type !== "staff")
-      throw new Error("catalog writes require a staff actor");
-    await em.execute(
-      `select whiteoven_catalog_write_audit(?,?,?,?,?,?::jsonb,?::uuid)`,
-      [
-        context.actor.staffUserId,
-        context.actor.sessionId,
-        action,
-        entity,
-        id,
-        JSON.stringify(changes),
-        uuid(requestId) ? requestId : null,
-      ],
-    );
-  }
   private async perform<T>(
+    requestId: string,
     work: (em: import("@mikro-orm/postgresql").EntityManager) => Promise<T>,
   ): Promise<T> {
     try {
@@ -447,6 +346,14 @@ export class CatalogService {
         const context = currentTenantContext();
         if (context.actor.type !== "staff")
           throw new Error("catalog writes require staff");
+        await em.execute(
+          "select set_config('app.catalog_actor_id', ?, true), set_config('app.catalog_session_id', ?, true), set_config('app.catalog_request_id', ?, true)",
+          [
+            context.actor.staffUserId,
+            context.actor.sessionId,
+            uuid(requestId) ? requestId : "",
+          ],
+        );
         const [tenant] = await em.execute<{ status: TenantStatus }[]>(
           "select status from tenants where id = ?",
           [context.tenantId],
@@ -471,6 +378,16 @@ export class CatalogService {
       this.mapConstraint(error);
       throw error;
     }
+  }
+  private async lockFlavorPrice(
+    em: import("@mikro-orm/postgresql").EntityManager,
+    flavorId: string,
+    sizeId: string,
+  ) {
+    await em.execute(
+      "select pg_advisory_xact_lock(hashtextextended(?::text, 0))",
+      [`${flavorId}:${sizeId}`],
+    );
   }
   private mapConstraint(error: unknown): never {
     const code = (error as { code?: string } | null)?.code;

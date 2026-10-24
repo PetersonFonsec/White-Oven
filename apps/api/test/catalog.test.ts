@@ -182,6 +182,53 @@ describe("M2.3 tenant catalog API", databaseSuite, () => {
     );
   });
 
+  it("serializes simultaneous first price creation and deletion", async () => {
+    const category = await json(
+      await call("/categories", "POST", {
+        name: "Put-delete concorrente",
+        kind: "PIZZA",
+      }),
+    );
+    const size = await json(
+      await call("/sizes", "POST", {
+        name: "Put-delete concorrente",
+        slices: 8,
+        maxFlavors: 2,
+      }),
+    );
+    const flavor = await json(
+      await call("/flavors", "POST", {
+        categoryId: category.id,
+        name: "Put-delete concorrente",
+      }),
+    );
+    const [put, remove] = await Promise.all([
+      call(`/flavors/${flavor.id}/prices/${size.id}`, "PUT", {
+        priceCents: 6100,
+      }),
+      call(`/flavors/${flavor.id}/prices/${size.id}`, "DELETE"),
+    ]);
+    assert.equal(put.status, 200);
+    assert.ok([204, 404].includes(remove.status));
+    const catalog = await json(await call("/items"));
+    const exists = catalog.flavorPrices.some(
+      (price: { flavorId: string; sizeId: string }) =>
+        price.flavorId === flavor.id && price.sizeId === size.id,
+    );
+    assert.equal(exists, remove.status === 404);
+    const audit = await json(await call("/audit-events"));
+    const events = audit.filter(
+      (event: { entityType: string; entityId: string }) =>
+        event.entityType === "flavor_price" && event.entityId === flavor.id,
+    );
+    assert.deepEqual(
+      events.map((event: { action: string }) => event.action).sort(),
+      remove.status === 404
+        ? ["catalog.flavor.price_created"]
+        : ["catalog.flavor.price_created", "catalog.flavor.price_removed"],
+    );
+  });
+
   it("archives a category and its linked flavors while retaining their recipe links", async () => {
     const category = await json(
       await call("/categories", "POST", {
@@ -318,7 +365,7 @@ describe("M2.3 tenant catalog API", databaseSuite, () => {
     );
   });
 
-  it("binds SECURITY DEFINER audit writes to the actor's live session", async () => {
+  it("only writes audit events from catalog mutations with the actor's live session", async () => {
     const app = await database.connect(database.appUrl);
     try {
       const [session] = await owner.em
@@ -328,43 +375,76 @@ describe("M2.3 tenant catalog API", databaseSuite, () => {
           [staffUserId],
         );
       assert.ok(session);
-      for (const [actorId, sessionId] of [
-        [staffUserId, randomUUID()],
-        [randomUUID(), session.id],
-      ]) {
-        const code = await runInTenant(app, tenantId, async (em) => {
-          try {
+      const activeSessionId = session.id!;
+      const arbitraryWriter = await (async () => {
+        try {
+          await runInTenant(app, tenantId, (em) =>
+            em.execute(
+              "select whiteoven_catalog_write_audit(?::uuid,?::uuid,'catalog.category.created','category',?::uuid,'{}'::jsonb,?::uuid)",
+              [staffUserId, activeSessionId, randomUUID(), randomUUID()],
+            ),
+          );
+          return undefined;
+        } catch (error) {
+          return (error as { code?: string }).code;
+        }
+      })();
+      assert.equal(arbitraryWriter, "42883");
+      const unauthorizedMutation = async (
+        tenant: string,
+        actorId: string,
+        sessionId: string,
+      ) => {
+        try {
+          await runInTenant(app, tenant, async (em) => {
             await em.execute(
-              "select whiteoven_catalog_write_audit(?::uuid,?::uuid,'test','category',?::uuid,'{}'::jsonb,?::uuid)",
-              [actorId, sessionId, randomUUID(), randomUUID()],
+              "select set_config('app.catalog_actor_id', ?, true), set_config('app.catalog_session_id', ?, true)",
+              [actorId, sessionId],
             );
-            return undefined;
-          } catch (error) {
-            return (error as { code?: string }).code;
-          }
-        });
+            await em.execute(
+              "insert into catalog_categories (tenant_id,name,kind) values (?,?,'PIZZA')",
+              [tenant, `forbidden-${randomUUID()}`],
+            );
+          });
+          return undefined;
+        } catch (error) {
+          return (error as { code?: string }).code;
+        }
+      };
+      const mismatchedActors: [string, string][] = [
+        [staffUserId, randomUUID()],
+        [randomUUID(), activeSessionId],
+      ];
+      for (const [actorId, sessionId] of mismatchedActors) {
+        const code = await unauthorizedMutation(tenantId, actorId, sessionId);
         assert.equal(code, "42501");
       }
       const otherTenant = await insertTenant(
         owner,
         `catalog-audit-${randomUUID().slice(0, 8)}`,
       );
-      const mismatchedTenantCode = await runInTenant(
-        app,
+      const mismatchedTenantCode = await unauthorizedMutation(
         otherTenant,
-        async (em) => {
-          try {
-            await em.execute(
-              "select whiteoven_catalog_write_audit(?::uuid,?::uuid,'test','category',?::uuid,'{}'::jsonb,?::uuid)",
-              [staffUserId, session.id, randomUUID(), randomUUID()],
-            );
-            return undefined;
-          } catch (error) {
-            return (error as { code?: string }).code;
-          }
-        },
+        staffUserId,
+        activeSessionId,
       );
       assert.equal(mismatchedTenantCode, "42501");
+      const directAuditInsert = await unauthorizedMutation(tenantId, "", "");
+      assert.equal(directAuditInsert, "42501");
+      const directEventWrite = await (async () => {
+        try {
+          await runInTenant(app, tenantId, (em) =>
+            em.execute(
+              "insert into audit_events (tenant_id,actor_type,actor_id,action,entity_type,entity_id) values (?, 'STAFF', ?, 'fake', 'category', ?)",
+              [tenantId, staffUserId, randomUUID()],
+            ),
+          );
+          return undefined;
+        } catch (error) {
+          return (error as { code?: string }).code;
+        }
+      })();
+      assert.equal(directEventWrite, "42501");
     } finally {
       await app.close();
     }
