@@ -166,11 +166,18 @@ export class StaffAuth {
     return this.startSession(user.id, false);
   }
 
-  /** Creates a session after every required factor was checked by the caller. */
-  async startSession(staffUserId: string, mfa: boolean): Promise<IssuedTokens> {
+  /**
+   * Creates a session after every required factor was checked by the caller. With `em`, the
+   * session is written in the caller's transaction (it commits or rolls back with the factor).
+   */
+  async startSession(
+    staffUserId: string,
+    mfa: boolean,
+    em?: Executor,
+  ): Promise<IssuedTokens> {
     const sessionId = randomUUID();
     const secret = randomBytes(32).toString("base64url");
-    await this.orm.em.fork().transactional(async (em) => {
+    const write = async (em: Executor) => {
       await em.execute(
         `insert into staff_sessions (id, staff_user_id, mfa, refresh_token_hash, idle_expires_at)
          values (?, ?, ?, ?, now() + make_interval(secs => ?))`,
@@ -186,7 +193,9 @@ export class StaffAuth {
         "update staff_users set last_login_at = now() where id = ?",
         [staffUserId],
       );
-    });
+    };
+    if (em) await write(em);
+    else await this.orm.em.fork().transactional(write);
     return this.issue(
       { sub: staffUserId, sid: sessionId, tid: null, mfa },
       `${sessionId}.${secret}`,

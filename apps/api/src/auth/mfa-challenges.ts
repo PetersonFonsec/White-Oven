@@ -16,7 +16,17 @@ interface Challenge {
 /**
  * Second step of a login with MFA: after the password, the client gets an opaque single-use
  * token valid for 5 minutes and 5 codes. Kept in memory and keyed by SHA-256, like the login
- * throttle (one API instance in the MVP); a restart only asks for the password again.
+ * throttle; a restart only asks for the password again.
+ *
+ * Lifecycle: `beginVerification` reserves the challenge synchronously (one verification at a
+ * time; a concurrent one is refused), then exactly one of `consume` (factor accepted, session
+ * committed), `recordFailure` (wrong code, counts an attempt) or `release` (unexpected error, no
+ * attempt counted) ends the reservation.
+ *
+ * Instances: the MVP runs one API instance (system-overview.md). With several, a challenge only
+ * exists in the instance that created it and fails closed elsewhere (401, sign in again); the
+ * factors themselves stay single-use across instances because TOTP steps and recovery codes are
+ * consumed in PostgreSQL under a row lock. Sticky routing or a shared store is needed to scale.
  */
 export class MfaChallenges {
   private readonly challenges = new Map<string, Challenge>();
@@ -64,6 +74,12 @@ export class MfaChallenges {
     if (!challenge) return;
     challenge.verifying = false;
     if (--challenge.attemptsLeft <= 0) this.challenges.delete(key(token));
+  }
+
+  /** Ends a reservation without counting an attempt (the check itself failed, not the code). */
+  release(token: string): void {
+    const challenge = this.challenges.get(key(token));
+    if (challenge) challenge.verifying = false;
   }
 
   consume(token: string): void {

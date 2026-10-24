@@ -1,5 +1,5 @@
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
-import { MikroORM } from "@mikro-orm/postgresql";
+import { type EntityManager, MikroORM } from "@mikro-orm/postgresql";
 import { ApiError } from "../errors/api-error";
 import type { StaffAccessClaims } from "./access-token";
 import { LoginThrottle } from "./login-throttle";
@@ -126,7 +126,11 @@ export class StaffMfa {
     return this.challenges.peek(mfaToken)?.email ?? "";
   }
 
-  /** Second login step: a TOTP code or a recovery code for the challenge's user. */
+  /**
+   * Second login step: a TOTP code or a recovery code for the challenge's user. The factor is
+   * consumed and the session created in one transaction, so a database error never burns a code
+   * without a session, and the challenge is consumed only after that transaction committed.
+   */
   async completeLogin(
     mfaToken: string,
     factor: SecondFactor,
@@ -139,66 +143,75 @@ export class StaffMfa {
         "MFA_CHALLENGE_INVALID",
         "Sign in again.",
       );
-    let verified: boolean;
+    let tokens: IssuedTokens | null;
     try {
-      verified = await this.verify(challenge.staffUserId, factor);
+      tokens = await this.orm.em
+        .fork()
+        .transactional(async (em) =>
+          (await this.consumeFactor(em, challenge.staffUserId, factor))
+            ? this.auth.startSession(challenge.staffUserId, true, em)
+            : null,
+        );
     } catch (error) {
-      // Release the reservation if the database check fails unexpectedly.
-      this.challenges.recordFailure(mfaToken);
+      // The check failed, not the code: free the challenge without counting an attempt.
+      this.challenges.release(mfaToken);
       throw error;
     }
-    if (!verified) {
+    if (!tokens) {
       this.challenges.recordFailure(mfaToken);
       this.throttle.recordFailure(challenge.email, ip);
       throw invalidCode();
     }
     this.challenges.consume(mfaToken);
     this.throttle.recordSuccess(challenge.email);
-    return this.auth.startSession(challenge.staffUserId, true);
+    return tokens;
   }
 
-  private verify(staffUserId: string, factor: SecondFactor): Promise<boolean> {
-    return this.orm.em.fork().transactional(async (em) => {
-      const [user] = await em.execute<
-        {
-          secret: string | null;
-          lastStep: string | null;
-          recovery: Buffer[];
-          active: boolean;
-        }[]
-      >(
-        `select mfa_secret as secret, mfa_last_used_step as "lastStep",
-                mfa_recovery_code_hashes as recovery, status = 'ACTIVE' as active
-           from staff_users where id = ? for update`,
-        [staffUserId],
-      );
-      if (!user?.secret || !user.active) return false;
+  /** Checks and consumes a factor inside `em`'s transaction, under the user row lock. */
+  private async consumeFactor(
+    em: EntityManager,
+    staffUserId: string,
+    factor: SecondFactor,
+  ): Promise<boolean> {
+    const [user] = await em.execute<
+      {
+        secret: string | null;
+        lastStep: string | null;
+        recovery: Buffer[];
+        active: boolean;
+      }[]
+    >(
+      `select mfa_secret as secret, mfa_last_used_step as "lastStep",
+              mfa_recovery_code_hashes as recovery, status = 'ACTIVE' as active
+         from staff_users where id = ? for update`,
+      [staffUserId],
+    );
+    if (!user?.secret || !user.active) return false;
 
-      if ("code" in factor) {
-        const secret = this.box.open(user.secret, staffUserId);
-        const step = secret
-          ? matchTotp(
-              secret,
-              factor.code,
-              user.lastStep === null ? null : Number(user.lastStep),
-            )
-          : null;
-        if (step === null) return false;
-        await em.execute(
-          "update staff_users set mfa_last_used_step = ? where id = ?",
-          [step, staffUserId],
-        );
-        return true;
-      }
-
-      const hash = recoveryCodeHash(factor.recoveryCode);
-      const remaining = user.recovery.filter((stored) => !stored.equals(hash));
-      if (remaining.length === user.recovery.length) return false;
+    if ("code" in factor) {
+      const secret = this.box.open(user.secret, staffUserId);
+      const step = secret
+        ? matchTotp(
+            secret,
+            factor.code,
+            user.lastStep === null ? null : Number(user.lastStep),
+          )
+        : null;
+      if (step === null) return false;
       await em.execute(
-        "update staff_users set mfa_recovery_code_hashes = ?::bytea[] where id = ?",
-        [byteaArray(remaining), staffUserId],
+        "update staff_users set mfa_last_used_step = ? where id = ?",
+        [step, staffUserId],
       );
       return true;
-    });
+    }
+
+    const hash = recoveryCodeHash(factor.recoveryCode);
+    const remaining = user.recovery.filter((stored) => !stored.equals(hash));
+    if (remaining.length === user.recovery.length) return false;
+    await em.execute(
+      "update staff_users set mfa_recovery_code_hashes = ?::bytea[] where id = ?",
+      [byteaArray(remaining), staffUserId],
+    );
+    return true;
   }
 }
