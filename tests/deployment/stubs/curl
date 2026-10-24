@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+echo "curl $*" >> "$STUB_STATE/log"
+if [[ -f "$STUB_STATE/api-status" ]]; then cat "$STUB_STATE/api-status"; exit 0; fi
+printf 000; exit 7

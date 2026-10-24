@@ -12,8 +12,8 @@ O Pizza Builder deverá permitir a montagem visual de pizzas personalizadas, inc
 
 O público inicial são pizzarias que querem fortalecer o relacionamento direto com seus clientes por meio de canais digitais próprios.
 
-## Estado em M0.1-B
+## Estado em M0.2
 
-Implementado: monorepo, landing comercial pré-renderizada, demonstração de pizza inteira/meio a meio no navegador e formulário real de interesse com validação, SQLite, attribution, consentimento e política de privacidade. A ativação exige configuração válida.
+Implementado: monorepo, landing comercial pré-renderizada, demonstração de pizza inteira/meio a meio no navegador e formulário real de interesse com validação, SQLite, attribution, consentimento e política de privacidade. A ativação exige configuração válida. Empacotamento Docker/Compose, exemplo HTTPS e operação estão preparados; infraestrutura real e publicação continuam pendentes.
 
 Planejado: aplicativos mobile white label, painel administrativo, backend, Pizza Builder integrado a pedidos e os demais recursos da plataforma. Não há analytics externo nem envio automático de mensagens.

@@ -1,5 +1,7 @@
 # M0.1-B — Captação, operação e métricas
 
+> Registro da M0.1-B. A M0.2 prepara imagem, Compose, Caddy de exemplo e saúde/operação; veja o [runbook atual](../operations/landing-deployment.md). As restrições de deploy abaixo descrevem o escopo original.
+
 ## Implementado
 
 Homepage pré-renderizada e visual aprovado preservado; formulário com validação cliente/servidor, plano CTA, consentimento explícito, loading, erro/retry e sucesso após commit. `/api/leads`: GET retorna apenas disponibilidade/versão; POST recebe JSON e retorna ID/data, nunca dados enviados. Outros métodos falham. Nenhuma rota lista dados.

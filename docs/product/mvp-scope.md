@@ -1,6 +1,6 @@
 # Escopo do MVP
 
-Status: especificação M0.3, sem implementação. Os módulos do SaaS ainda não existem; apenas a landing, a demonstração do Pizza Builder e a captação de interesse estão implementadas (M0.1-B). Este documento define o que o primeiro MVP comercial deve entregar, o que fica fora e quais decisões de produto continuam abertas.
+Status: especificação M0.3, sem implementação. Os módulos do SaaS ainda não existem; apenas a landing, a demonstração do Pizza Builder e a captação de interesse estão implementadas (M0.1-B); M0.2 prepara empacotamento e operação da landing, sem deploy real. Este documento define o que o primeiro MVP comercial deve entregar, o que fica fora e quais decisões de produto continuam abertas.
 
 Documentos relacionados: [visão](vision.md), [regras do Pizza Builder](pizza-builder-rules.md), [ciclo de vida do pedido](order-lifecycle.md), [arquitetura do sistema](../architecture/system-overview.md), [modelo de domínio](../architecture/domain-model.md), [isolamento de tenants](../architecture/tenant-isolation.md) e [roadmap](../architecture/mvp-roadmap.md).
 

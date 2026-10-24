@@ -8,3 +8,6 @@ playwright-report
 
 .data
 lead-exports
+
+.ops-state
+backups

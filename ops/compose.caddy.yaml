@@ -1,0 +1,27 @@
+services:
+  caddy:
+    image: caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    environment:
+      WHITEOVEN_DOMAIN: ${WHITEOVEN_DOMAIN:?Set a real domain before publication}
+      WHITEOVEN_UPSTREAM: landing:4321
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      whiteoven:
+        ipv4_address: ${CADDY_INTERNAL_IP:-172.30.87.3}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+volumes:
+  caddy_data:
+  caddy_config:

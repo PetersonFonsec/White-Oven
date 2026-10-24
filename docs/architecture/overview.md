@@ -1,8 +1,10 @@
 # Visão de arquitetura
 
-## Estado atual — M0.1-B
+## Estado atual — M0.2
 
 Monorepo pnpm, Astro/TypeScript strict, homepage pré-renderizada e scripts pequenos para menu, Builder e formulário. `packages/contracts` define o contrato validado no navegador e servidor. Captação usa endpoint Astro Node e SQLite local com transações, idempotência, consentimento auditável e attribution. A política de privacidade é renderizada com configuração runtime. O build contém `dist/client` e `dist/server`; requer processo Node. Analytics é somente um adaptador de eventos locais sem PII, sem fornecedor externo. Veja [ADR 0002](../adr/0002-lead-capture.md) e [operação](m0-1b-lead-capture.md).
+
+M0.2 adiciona imagem Docker multi-stage, Compose de uma instância, exemplo opcional Caddy, endpoints de saúde e operação controlada de dados/imagens. Publicação GHCR é preparada para ocorrer após checks em main; deploy real continua pendente. Veja [ADR 0003](../adr/0003-landing-deployment.md) e [runbook](../operations/landing-deployment.md).
 
 ## Arquitetura planejada
 
