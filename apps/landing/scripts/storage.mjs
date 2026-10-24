@@ -11,6 +11,7 @@ import {
   copyFileSync,
   constants,
   rmSync,
+  readdirSync,
 } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,26 +26,37 @@ const safeId = (id) => {
   return id;
 };
 const ledgerPath = (dir) => join(dir, "deletions.json");
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Each ledger has its own identity. Backups record it, so a ledger recreated after loss
+// can never be paired with older copies that may still hold deleted leads.
 export function initializeLedger(dir) {
   safeDir(dir);
   if (!existsSync(ledgerPath(dir)))
-    writeFileSync(ledgerPath(dir), JSON.stringify({ ids: [] }), {
-      flag: "wx",
-      mode: 0o600,
-    });
+    writeFileSync(
+      ledgerPath(dir),
+      JSON.stringify({
+        version: 1,
+        id: randomUUID(),
+        createdAt: new Date().toISOString(),
+        ids: [],
+      }),
+      { flag: "wx", mode: 0o600 },
+    );
 }
 function ledger(dir) {
   const value = JSON.parse(readFileSync(ledgerPath(dir), "utf8"));
   if (
+    value.version !== 1 ||
+    !UUID.test(value.id ?? "") ||
     !Array.isArray(value.ids) ||
-    !value.ids.every((id) => /^[0-9a-f-]{36}$/i.test(id))
+    !value.ids.every((id) => UUID.test(id))
   )
     throw new Error("INVALID_LEDGER");
   value.ids = value.ids.map((id) => id.toLowerCase());
   return value;
 }
 export function excludeFromRestore(dir, id) {
-  if (!/^[0-9a-f-]{36}$/i.test(id ?? "")) throw new Error("INVALID_ID");
+  if (!UUID.test(id ?? "")) throw new Error("INVALID_ID");
   const value = ledger(dir);
   value.ids = [...new Set([...value.ids, id.toLowerCase()])];
   const temp = join(dir, `.ledger-${randomUUID()}`);
@@ -55,6 +67,7 @@ export function verifyBackup(dir, id) {
   safeId(id);
   const file = join(dir, `${id}.sqlite`);
   const meta = JSON.parse(readFileSync(`${file}.json`, "utf8"));
+  if (meta.ledgerId !== ledger(dir).id) throw new Error("LEDGER_MISMATCH");
   if (
     meta.version !== 1 ||
     !Number.isFinite(Date.parse(meta.expiresAt)) ||
@@ -75,6 +88,8 @@ export function verifyBackup(dir, id) {
 export async function backupDatabase(source, dir, id) {
   safeDir(dir);
   safeId(id);
+  // A copy without a ledger could not have deletions reapplied on restore.
+  const ledgerId = ledger(dir).id;
   const file = join(dir, `${id}.sqlite`);
   if (existsSync(file)) {
     verifyBackup(dir, id);
@@ -88,12 +103,20 @@ export async function backupDatabase(source, dir, id) {
     const expires = Math.min(Date.now() + 30 * 86400000, earliest ?? Infinity);
     if (expires <= Date.now()) throw new Error("PURGE_REQUIRED");
     await db.backup(file);
+    // A self-contained file: no WAL sidecars left beside the copy or carried to external storage.
+    const copy = new Database(file);
+    try {
+      copy.pragma("journal_mode = DELETE");
+    } finally {
+      copy.close();
+    }
     chmodSync(file, 0o600);
     writeFileSync(
       `${file}.json`,
       JSON.stringify({
         version: 1,
         sha256: digest(file),
+        ledgerId,
         createdAt: new Date().toISOString(),
         expiresAt: new Date(expires).toISOString(),
       }),
@@ -107,6 +130,70 @@ export async function backupDatabase(source, dir, id) {
     throw error;
   } finally {
     db.close();
+  }
+}
+// Expired copies are already refused by restore; this removes them from the volume too.
+export function pruneExpiredBackups(dir, now = Date.now()) {
+  let removed = 0;
+  for (const name of readdirSync(dir)) {
+    const match = /^([a-zA-Z0-9_-]{1,80})\.sqlite\.json$/.exec(name);
+    if (!match) continue;
+    const file = join(dir, `${match[1]}.sqlite`);
+    let expiresAt = NaN;
+    try {
+      expiresAt = Date.parse(
+        JSON.parse(readFileSync(join(dir, name), "utf8")).expiresAt,
+      );
+    } catch {
+      /* Unreadable metadata cannot prove a copy is still within retention. */
+    }
+    if (Number.isFinite(expiresAt) && expiresAt > now) continue;
+    for (const suffix of ["", "-wal", "-shm", "-journal"])
+      rmSync(`${file}${suffix}`, { force: true });
+    rmSync(join(dir, name), { force: true });
+    removed++;
+  }
+  return removed;
+}
+// Brings a copy kept outside the host back into the backup volume, unchanged.
+// Content arrives as data (stdin in operations), so host file ownership never matters.
+export function importBackup(sqlite, metadata, dir, id) {
+  safeDir(dir);
+  safeId(id);
+  const file = join(dir, `${id}.sqlite`);
+  if (existsSync(file) || existsSync(`${file}.json`))
+    throw new Error("BACKUP_EXISTS");
+  try {
+    writeFileSync(file, sqlite, { flag: "wx", mode: 0o600 });
+    writeFileSync(`${file}.json`, metadata, { flag: "wx", mode: 0o600 });
+    return verifyBackup(dir, id);
+  } catch (error) {
+    rmSync(file, { force: true });
+    rmSync(`${file}.json`, { force: true });
+    throw error;
+  }
+}
+// Explicit write check on the data filesystem; never touches the leads database.
+export function probeWrite(databasePath) {
+  const probe = join(
+    dirname(databasePath),
+    `.write-probe-${randomUUID()}.sqlite`,
+  );
+  try {
+    const db = new Database(probe);
+    try {
+      db.pragma("journal_mode = DELETE");
+      db.pragma("synchronous = FULL");
+      db.exec("CREATE TABLE probe (value TEXT NOT NULL)");
+      db.prepare("INSERT INTO probe (value) VALUES (?)").run("ok");
+      if (db.prepare("SELECT value FROM probe").get().value !== "ok")
+        throw new Error("WRITE_PROBE");
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(probe, { force: true });
+    rmSync(`${probe}-journal`, { force: true });
   }
 }
 export async function restoreDatabase(target, dir, id) {
@@ -162,6 +249,17 @@ if (
     else if (command === "verify") verifyBackup(dir, id);
     else if (command === "ledger-init") initializeLedger(dir);
     else if (command === "exclude") excludeFromRestore(dir, id);
+    else if (command === "prune") pruneExpiredBackups(dir);
+    else if (command === "import") {
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      importBackup(
+        Buffer.concat(chunks),
+        process.env.STORAGE_IMPORT_META ?? "",
+        dir,
+        id,
+      );
+    } else if (command === "probe-write") probeWrite(source);
     else if (command === "restore" && confirmation === "--confirm-offline")
       await restoreDatabase(source, dir, id);
     else throw new Error("INVALID_OPERATION");

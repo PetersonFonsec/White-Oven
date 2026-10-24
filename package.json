@@ -15,7 +15,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck",
-    "test": "pnpm --filter @whiteoven/landing test",
+    "test": "pnpm --filter @whiteoven/landing test && node --test tests/deployment/ops.test.mjs",
     "test:e2e": "pnpm build && playwright test",
     "start": "pnpm --filter @whiteoven/landing start",
     "leads": "pnpm --filter @whiteoven/landing exec node --env-file-if-exists=.env --experimental-strip-types scripts/leads.mjs",

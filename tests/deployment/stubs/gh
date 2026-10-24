@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+echo "gh $*" >> "$STUB_STATE/log"
+[[ -f "$STUB_STATE/gh-fails" ]] && exit 1
+echo "${STUB_OWNER_TYPE:-User}"

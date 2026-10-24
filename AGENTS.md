@@ -20,7 +20,7 @@ WhiteOven is at M0.2 (deployment preparation; no production environment provisio
 
 - `pnpm dev`: start local Astro with app `.env`.
 - `pnpm build` / `pnpm start`: build and serve through the guarded Node launcher (`pnpm start`), preserving trusted request identity and HTTP limits.
-- `pnpm test`: Node tests for pizza, lead contract, endpoint and persistence.
+- `pnpm test`: Node tests for pizza, lead contract, endpoint, persistence and backups, plus `tests/deployment/ops.test.mjs` (ops and GHCR script decisions against a recording docker/gh/curl double).
 - `pnpm test:e2e`: build and test desktop/mobile with synthetic local capture configuration.
 - `pnpm check`: format, lint, typecheck.
 - `node --experimental-strip-types tests/deployment/containers.mjs`: build and test isolated Docker resources with synthetic data only.

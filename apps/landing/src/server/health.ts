@@ -2,10 +2,12 @@ import { accessSync, constants, statfsSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CaptureConfig } from "./config.ts";
 import type { SqliteLeadStore } from "./lead-store.ts";
+import { writeStatus } from "./persistence-health.ts";
 export interface OperationalHealth {
   ready: boolean;
   capture: "enabled" | "disabled";
   storage: "ready" | "unavailable";
+  writes: "ok" | "unknown" | "failing";
 }
 const key = Symbol.for("whiteoven.operationalHealth");
 const runtime = globalThis as typeof globalThis & {
@@ -34,10 +36,14 @@ export function registerHealth(
     } catch {
       /* No paths, SQL, records or exceptions exposed. */
     }
+    const writes = writeStatus();
     return {
-      ready: !draining && (!requested || (settings.enabled && storage)),
+      ready:
+        !draining &&
+        (!requested || (settings.enabled && storage && writes !== "failing")),
       capture: settings.enabled ? "enabled" : "disabled",
       storage: storage ? "ready" : "unavailable",
+      writes,
     };
   };
   return () => {
@@ -50,6 +56,7 @@ export function operationalHealth(): OperationalHealth {
       ready: false,
       capture: "disabled",
       storage: "unavailable",
+      writes: writeStatus(),
     }
   );
 }

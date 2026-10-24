@@ -69,6 +69,7 @@ jobs:
       group: ghcr-${{ github.sha }}
       cancel-in-progress: false
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: landing-image-${{ github.sha }}
@@ -84,30 +85,4 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' whiteoven:ci)"
-          test "$revision" = "$COMMIT_SHA"
-          owner="${OWNER,,}"
-          image="ghcr.io/$owner/white-oven-landing:sha-$COMMIT_SHA"
-          if docker manifest inspect "$image" >/dev/null 2>manifest-error.txt; then
-            echo "Commit tag already published; preserving its existing digest."
-            exit 0
-          fi
-          if ! grep -Eqi 'no such manifest|manifest unknown|not found' manifest-error.txt; then
-            # A package that does not exist yet may report DENIED at the registry.
-            # Confirm its absence via GitHub; any other error fails closed.
-            kind="$(gh api "repos/$REPOSITORY" --jq '.owner.type')"
-            prefix=users
-            if test "$kind" = Organization; then prefix=orgs; fi
-            status="$(curl --silent --show-error --output package-status.json --write-out '%{http_code}' \
-              --header "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/$prefix/$owner/packages/container/white-oven-landing")"
-            if test "$status" != 404; then
-              echo "Registry verification failed; refusing to overwrite a commit tag."
-              exit 1
-            fi
-          fi
-          docker tag whiteoven:ci "$image"
-          docker push "$image"
+        run: bash ops/ghcr-publish.sh

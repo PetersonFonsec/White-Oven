@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -161,9 +161,11 @@ try {
     ready: true,
     capture: "enabled",
     storage: "ready",
+    writes: "unknown",
   });
   const first = request("/api/leads", fixture());
   assert.equal(first.status, 201);
+  assert.equal(request("/health/ready").body.writes, "ok");
   const submissionLogs = run(["logs", container()]);
   for (const canary of [
     "Synthetic Person",
@@ -219,8 +221,12 @@ try {
   );
   // Image rollback only; a lead committed after the update must survive.
   const newer = { ...fixture(), pizzeriaName: "Synthetic Pizza After Update" };
-  assert.equal(request("/api/leads", newer).status, 201);
+  const later = request("/api/leads", newer);
+  assert.equal(later.status, 201);
   ops("rollback");
+  assert.equal(count(), 2);
+  // The reverted image stays configured in the env file; it must not come back by accident.
+  assert.throws(() => ops("update"), /falhou ou foi revertida/);
   assert.equal(count(), 2);
   console.log("PASS image rollback preserves post-update leads");
   // A deliberately broken image must recover the previous image, never a database snapshot.
@@ -233,7 +239,10 @@ try {
   run(["build", "--quiet", "-f", brokenFile, "-t", broken, temporary]);
   selected = broken;
   configuration();
-  assert.throws(() => ops("update"));
+  assert.throws(
+    () => ops("update"),
+    (error) => error.status === 1 && /recuperada e saudável/.test(error.stderr),
+  );
   assert.equal(request("/health/ready").status, 200);
   assert.equal(count(), 2);
   selected = image;
@@ -307,6 +316,35 @@ try {
   compose("up", "-d", "--no-build", "--wait", "--wait-timeout", "90");
   assert.equal(count(), 2);
   console.log("PASS SIGTERM drains an in-flight lead and exits cleanly");
+  ops("probe-write");
+  assert.equal(
+    inside(
+      `import {readdirSync} from 'node:fs';console.log(readdirSync('/var/lib/whiteoven').filter(name=>name.startsWith('.write-probe')).length);`,
+    ),
+    "0",
+  );
+  ops("delete", later.body.leadId);
+  assert.equal(count(), 1);
+  ops("backup", "offsite");
+  const external = join(temporary, "external");
+  ops("export-backup", "offsite", external);
+  for (const name of [
+    "offsite.sqlite",
+    "offsite.sqlite.json",
+    "offsite.deletions.json",
+  ])
+    assert.equal(statSync(join(external, name)).mode & 0o077, 0);
+  assert.throws(() => ops("export-backup", "offsite", external));
+  inside(
+    `import {rmSync} from 'node:fs';for (const suffix of ['', '.json']) rmSync('/var/backups/whiteoven/offsite.sqlite'+suffix);`,
+  );
+  ops("import-backup", "offsite", external);
+  ops("verify-backup", "offsite");
+  ops("prune-backups");
+  ops("verify-backup", "offsite");
+  console.log(
+    "PASS write probe, ledger-first deletion, external export/import and backup pruning",
+  );
   configuration({
     LEADS_ENABLED: "false",
     LEADS_CONTROLLER_NAME: "",
