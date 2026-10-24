@@ -260,3 +260,18 @@ test("contracts are importable without any server dependency", async () => {
   assert.equal(pkg.default.dependencies, undefined);
   assert.equal(typeof validatePizzaCatalog, "function");
 });
+
+test("pricing policy reads each field once, so a changing value cannot pass the check and differ in the copy", () => {
+  let reads = 0;
+  const shifty = policy();
+  Object.defineProperty(shifty, "halfAndHalfStrategy", {
+    enumerable: true,
+    get: () => (reads++ === 0 ? "HIGHEST" : "LOWEST"),
+  });
+  const result = validatePricingPolicy(shifty);
+  assert.equal(reads, 1);
+  assert.deepEqual(result, {
+    ok: true,
+    value: { ...policy(), halfAndHalfStrategy: "HIGHEST" },
+  });
+});
