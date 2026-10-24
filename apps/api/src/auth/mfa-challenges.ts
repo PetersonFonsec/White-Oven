@@ -10,6 +10,7 @@ interface Challenge {
   email: string;
   expiresAt: number;
   attemptsLeft: number;
+  verifying: boolean;
 }
 
 /**
@@ -30,6 +31,7 @@ export class MfaChallenges {
       email,
       expiresAt: this.now() + MFA_CHALLENGE_TTL_SECONDS * 1000,
       attemptsLeft: MFA_CHALLENGE_ATTEMPTS,
+      verifying: false,
     });
     return token;
   }
@@ -45,9 +47,19 @@ export class MfaChallenges {
     return challenge;
   }
 
+  /** Reserve a challenge synchronously before any asynchronous factor verification. */
+  beginVerification(token: string): Readonly<Challenge> | null {
+    const challenge = this.peek(token);
+    if (!challenge || challenge.verifying) return null;
+    challenge.verifying = true;
+    return { ...challenge };
+  }
+
   recordFailure(token: string): void {
     const challenge = this.challenges.get(key(token));
-    if (challenge && --challenge.attemptsLeft <= 0)
+    if (!challenge) return;
+    challenge.verifying = false;
+    if (--challenge.attemptsLeft <= 0)
       this.challenges.delete(key(token));
   }
 
