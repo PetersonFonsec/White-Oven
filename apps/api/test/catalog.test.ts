@@ -22,13 +22,14 @@ describe("M2.3 tenant catalog API", databaseSuite, () => {
   let server: TestServer;
   let tenantId: string;
   let token: string;
+  let staffUserId: string;
   before(async () => {
     database = await createTestDatabase();
     owner = await database.connect(database.ownerUrl);
     tenantId = await insertTenant(owner, `catalog-${randomUUID().slice(0, 8)}`);
     const email = `catalog-${randomUUID()}@test.invalid`;
-    const userId = await insertStaffUser(owner, email, "catalog-test-password");
-    await insertMembership(owner, tenantId, userId, "OWNER");
+    staffUserId = await insertStaffUser(owner, email, "catalog-test-password");
+    await insertMembership(owner, tenantId, staffUserId, "OWNER");
     server = await startTestServer({
       DATABASE_URL: database.appUrl,
       DATABASE_POOL_MAX: "2",
@@ -109,6 +110,264 @@ describe("M2.3 tenant catalog API", databaseSuite, () => {
           event.changes.to === 4900,
       ),
     );
+  });
+
+  it("serializes concurrent first price writes and preserves archived recipe links", async () => {
+    const category = await json(
+      await call("/categories", "POST", {
+        name: "Concorrência",
+        kind: "PIZZA",
+      }),
+    );
+    const size = await json(
+      await call("/sizes", "POST", {
+        name: "Concorrência",
+        slices: 8,
+        maxFlavors: 2,
+      }),
+    );
+    const ingredient = await json(
+      await call("/ingredients", "POST", { name: "Catupiry" }),
+    );
+    const flavor = await json(
+      await call("/flavors", "POST", {
+        categoryId: category.id,
+        name: "Quatro queijos",
+        ingredientIds: [ingredient.id],
+      }),
+    );
+    const prices = await Promise.all(
+      [5100, 5200].map((priceCents) =>
+        call(`/flavors/${flavor.id}/prices/${size.id}`, "PUT", { priceCents }),
+      ),
+    );
+    assert.deepEqual(
+      prices.map((response) => response.status),
+      [200, 200],
+    );
+    const audit = await json(await call("/audit-events"));
+    const priceEvents = audit.filter(
+      (event: { entityType: string; entityId: string }) =>
+        event.entityType === "flavor_price" && event.entityId === flavor.id,
+    );
+    assert.equal(
+      priceEvents.filter(
+        (event: { action: string }) =>
+          event.action === "catalog.flavor.price_created",
+      ).length,
+      1,
+    );
+    assert.equal(
+      priceEvents.filter(
+        (event: { action: string }) =>
+          event.action === "catalog.flavor.price_changed",
+      ).length,
+      1,
+    );
+    assert.equal(
+      (await call(`/ingredients/${ingredient.id}`, "DELETE")).status,
+      204,
+    );
+    const catalog = await json(await call("/items"));
+    assert.equal(
+      catalog.flavors.find((row: { id: string }) => row.id === flavor.id)
+        .ingredientIds[0],
+      ingredient.id,
+    );
+    assert.equal(
+      catalog.ingredients.find(
+        (row: { id: string }) => row.id === ingredient.id,
+      ).archived,
+      true,
+    );
+  });
+
+  it("archives a category and its linked flavors while retaining their recipe links", async () => {
+    const category = await json(
+      await call("/categories", "POST", {
+        name: "Categoria arquivada",
+        kind: "PIZZA",
+      }),
+    );
+    const ingredient = await json(
+      await call("/ingredients", "POST", { name: "Receita histórica" }),
+    );
+    const flavor = await json(
+      await call("/flavors", "POST", {
+        categoryId: category.id,
+        name: "Receita histórica",
+        ingredientIds: [ingredient.id],
+      }),
+    );
+    assert.equal(
+      (await call(`/categories/${category.id}`, "DELETE")).status,
+      204,
+    );
+    const catalog = await json(await call("/items"));
+    assert.equal(
+      catalog.categories.find((row: { id: string }) => row.id === category.id)
+        .archived,
+      true,
+    );
+    const archivedFlavor = catalog.flavors.find(
+      (row: { id: string }) => row.id === flavor.id,
+    );
+    assert.equal(archivedFlavor.archived, true);
+    assert.deepEqual(archivedFlavor.ingredientIds, [ingredient.id]);
+  });
+
+  it("rejects duplicate names, prices for unavailable sizes, STAFF writes, and suspended tenant writes", async () => {
+    const category = await json(
+      await call("/categories", "POST", { name: "Única", kind: "PIZZA" }),
+    );
+    assert.equal(
+      (await call("/categories", "POST", { name: "Única", kind: "PRODUCT" }))
+        .status,
+      409,
+    );
+    const size = await json(
+      await call("/sizes", "POST", {
+        name: "Indisponível",
+        slices: 8,
+        maxFlavors: 2,
+      }),
+    );
+    const ingredient = await json(
+      await call("/ingredients", "POST", { name: "Ingrediente único" }),
+    );
+    const flavor = await json(
+      await call("/flavors", "POST", {
+        categoryId: category.id,
+        name: "Flavor único",
+        ingredientIds: [ingredient.id],
+      }),
+    );
+    assert.equal(
+      (await call(`/sizes/${size.id}`, "PATCH", { available: false })).status,
+      200,
+    );
+    assert.equal(
+      (
+        await call(`/flavors/${flavor.id}/prices/${size.id}`, "PUT", {
+          priceCents: 5000,
+        })
+      ).status,
+      404,
+    );
+
+    const staffEmail = `catalog-staff-${randomUUID()}@test.invalid`;
+    const staffId = await insertStaffUser(
+      owner,
+      staffEmail,
+      "catalog-test-password",
+    );
+    await insertMembership(owner, tenantId, staffId, "STAFF");
+    const staffLoginResult = await staffLogin(
+      server.baseUrl,
+      staffEmail,
+      "catalog-test-password",
+    );
+    const staffTenant = await json(
+      await switchTenant(
+        server.baseUrl,
+        staffLoginResult.accessToken,
+        tenantId,
+      ),
+    );
+    const staffResponse = await fetch(
+      `${server.baseUrl}/v1/admin/catalog/items`,
+      { headers: { authorization: `Bearer ${staffTenant.accessToken}` } },
+    );
+    assert.equal(staffResponse.status, 403);
+
+    const suspended = await insertTenant(
+      owner,
+      `suspended-${randomUUID().slice(0, 8)}`,
+      "SUSPENDED",
+    );
+    const suspendedEmail = `catalog-suspended-${randomUUID()}@test.invalid`;
+    const suspendedUser = await insertStaffUser(
+      owner,
+      suspendedEmail,
+      "catalog-test-password",
+    );
+    await insertMembership(owner, suspended, suspendedUser, "OWNER");
+    const suspendedLogin = await staffLogin(
+      server.baseUrl,
+      suspendedEmail,
+      "catalog-test-password",
+    );
+    const suspendedTenant = await json(
+      await switchTenant(server.baseUrl, suspendedLogin.accessToken, suspended),
+    );
+    const suspendedResponse = await fetch(
+      `${server.baseUrl}/v1/admin/catalog/categories`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${suspendedTenant.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ name: "Bloqueada", kind: "PIZZA" }),
+      },
+    );
+    assert.equal(suspendedResponse.status, 403);
+    assert.equal(
+      (await json(suspendedResponse)).code,
+      "CATALOG_WRITE_FORBIDDEN",
+    );
+  });
+
+  it("binds SECURITY DEFINER audit writes to the actor's live session", async () => {
+    const app = await database.connect(database.appUrl);
+    try {
+      const [session] = await owner.em
+        .getConnection()
+        .execute<{ id: string }[]>(
+          "select id from staff_sessions where staff_user_id=? and revoked_at is null order by created_at desc limit 1",
+          [staffUserId],
+        );
+      assert.ok(session);
+      for (const [actorId, sessionId] of [
+        [staffUserId, randomUUID()],
+        [randomUUID(), session.id],
+      ]) {
+        const code = await runInTenant(app, tenantId, async (em) => {
+          try {
+            await em.execute(
+              "select whiteoven_catalog_write_audit(?::uuid,?::uuid,'test','category',?::uuid,'{}'::jsonb,?::uuid)",
+              [actorId, sessionId, randomUUID(), randomUUID()],
+            );
+            return undefined;
+          } catch (error) {
+            return (error as { code?: string }).code;
+          }
+        });
+        assert.equal(code, "42501");
+      }
+      const otherTenant = await insertTenant(
+        owner,
+        `catalog-audit-${randomUUID().slice(0, 8)}`,
+      );
+      const mismatchedTenantCode = await runInTenant(
+        app,
+        otherTenant,
+        async (em) => {
+          try {
+            await em.execute(
+              "select whiteoven_catalog_write_audit(?::uuid,?::uuid,'test','category',?::uuid,'{}'::jsonb,?::uuid)",
+              [staffUserId, session.id, randomUUID(), randomUUID()],
+            );
+            return undefined;
+          } catch (error) {
+            return (error as { code?: string }).code;
+          }
+        },
+      );
+      assert.equal(mismatchedTenantCode, "42501");
+    } finally {
+      await app.close();
+    }
   });
 
   it("rejects a cross-tenant ingredient reference and preserves soft-archived items", async () => {

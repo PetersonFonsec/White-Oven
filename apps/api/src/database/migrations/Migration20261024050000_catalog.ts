@@ -88,19 +88,23 @@ export class Migration20261024050000_catalog extends Migration {
         constraint catalog_flavor_prices_positive check (price_cents > 0)
       );
 
-      create function whiteoven_catalog_write_audit(p_actor_id uuid, p_action text, p_entity_type text,
+      create function whiteoven_catalog_write_audit(p_actor_id uuid, p_session_id uuid, p_action text, p_entity_type text,
         p_entity_id uuid, p_changes jsonb, p_request_id uuid)
       returns void language plpgsql security definer set search_path = pg_catalog, public as $$
       declare p_tenant_id uuid := public.whiteoven_current_tenant(); begin
         if p_tenant_id is null or not exists (
-          select 1 from public.memberships where tenant_id=p_tenant_id and staff_user_id=p_actor_id
-            and status='ACTIVE' and role in ('OWNER','MANAGER')
+          select 1 from public.staff_sessions s
+          join public.staff_users u on u.id=s.staff_user_id
+          join public.memberships m on m.staff_user_id=u.id
+          where s.id=p_session_id and s.staff_user_id=p_actor_id and s.revoked_at is null
+            and s.idle_expires_at>now() and u.status='ACTIVE' and m.tenant_id=p_tenant_id
+            and m.status='ACTIVE' and m.role in ('OWNER','MANAGER')
         ) then raise exception using errcode='42501'; end if;
         insert into public.audit_events (tenant_id,actor_type,actor_id,action,entity_type,entity_id,changes,request_id)
         values (p_tenant_id,'STAFF',p_actor_id,p_action,p_entity_type,p_entity_id,p_changes,p_request_id);
       end $$;
-      revoke all on function whiteoven_catalog_write_audit(uuid,text,text,uuid,jsonb,uuid) from public;
-      grant execute on function whiteoven_catalog_write_audit(uuid,text,text,uuid,jsonb,uuid) to whiteoven_app;
+      revoke all on function whiteoven_catalog_write_audit(uuid,uuid,text,text,uuid,jsonb,uuid) from public;
+      grant execute on function whiteoven_catalog_write_audit(uuid,uuid,text,text,uuid,jsonb,uuid) to whiteoven_app;
 
       create function whiteoven_catalog_read_audit(p_actor_id uuid,p_session_id uuid,p_tenant_id uuid)
       returns setof public.audit_events language sql stable security definer set search_path = pg_catalog, public as $$

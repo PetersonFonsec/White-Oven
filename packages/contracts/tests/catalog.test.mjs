@@ -18,8 +18,8 @@ const catalog = () => ({
     },
   ],
   ingredients: [
-    { id: "cebola", name: "Cebola", removable: true },
-    { id: "mussarela", name: "Mussarela", removable: false },
+    { id: "cebola", name: "Cebola", removable: true, archived: false },
+    { id: "mussarela", name: "Mussarela", removable: false, archived: false },
   ],
   flavors: [
     {
@@ -78,9 +78,11 @@ test("validates value ranges per field", () => {
   input.crustPrices[0].priceCents = -1;
   input.flavors[0].name = "  ";
   input.ingredients[0].removable = "yes";
+  input.ingredients[1].archived = "yes";
   assert.deepEqual(paths(input), [
     "sizes[0].maxFlavors",
     "ingredients[0].removable",
+    "ingredients[1].archived",
     "flavors[0].name",
     "flavorPrices[0].priceCents",
     "crustPrices[0].priceCents",

@@ -55,6 +55,10 @@ interface Fixture {
   id: string;
   slug: string;
   flavorId: string;
+  catalogFlavorId: string;
+  categoryId: string;
+  sizeId: string;
+  ingredientId: string;
 }
 
 /** Staff membership cache TTL of this suite's server; production allows at most 60 s. */
@@ -91,7 +95,39 @@ describe("tenant isolation", databaseSuite, () => {
         [id, flavor],
       ),
     );
-    return { id, slug, flavorId: row!.id };
+    const catalog = await runInTenant(owner, id, async (em) => {
+      const [category] = await em.execute<{ id: string }[]>(
+        "insert into catalog_categories (tenant_id,name,kind) values (?,?,'PIZZA') returning id",
+        [id, `${slug} category`],
+      );
+      const [size] = await em.execute<{ id: string }[]>(
+        "insert into pizza_sizes (tenant_id,name,slices,max_flavors) values (?,?,8,2) returning id",
+        [id, `${slug} size`],
+      );
+      const [ingredient] = await em.execute<{ id: string }[]>(
+        "insert into catalog_ingredients (tenant_id,name) values (?,?) returning id",
+        [id, `${slug} ingredient`],
+      );
+      const [flavorRow] = await em.execute<{ id: string }[]>(
+        "insert into catalog_flavors (tenant_id,category_id,name) values (?,?,?) returning id",
+        [id, category!.id, `${slug} flavor`],
+      );
+      await em.execute(
+        "insert into catalog_flavor_ingredients (tenant_id,flavor_id,ingredient_id) values (?,?,?)",
+        [id, flavorRow!.id, ingredient!.id],
+      );
+      await em.execute(
+        "insert into catalog_flavor_prices (tenant_id,flavor_id,size_id,price_cents) values (?,?,?,1000)",
+        [id, flavorRow!.id, size!.id],
+      );
+      return {
+        categoryId: category!.id,
+        sizeId: size!.id,
+        ingredientId: ingredient!.id,
+        catalogFlavorId: flavorRow!.id,
+      };
+    });
+    return { id, slug, flavorId: row!.id, ...catalog };
   };
 
   const appCount = async (sql: string, params: unknown[] = []) => {
@@ -193,64 +229,64 @@ describe("tenant isolation", databaseSuite, () => {
             headers: { "x-test-token-tid": attacker.id },
           },
         ),
-      "PATCH /admin/catalog/categories/:id": (attacker) =>
+      "PATCH /admin/catalog/categories/:id": (attacker, victim) =>
         adminCatalogCall(
           attacker,
-          "/admin/catalog/categories/00000000-0000-4000-8000-000000000001",
+          `/admin/catalog/categories/${victim.categoryId}`,
           "PATCH",
         ),
-      "DELETE /admin/catalog/categories/:id": (attacker) =>
+      "DELETE /admin/catalog/categories/:id": (attacker, victim) =>
         adminCatalogCall(
           attacker,
-          "/admin/catalog/categories/00000000-0000-4000-8000-000000000001",
+          `/admin/catalog/categories/${victim.categoryId}`,
           "DELETE",
         ),
-      "PATCH /admin/catalog/sizes/:id": (attacker) =>
+      "PATCH /admin/catalog/sizes/:id": (attacker, victim) =>
         adminCatalogCall(
           attacker,
-          "/admin/catalog/sizes/00000000-0000-4000-8000-000000000001",
+          `/admin/catalog/sizes/${victim.sizeId}`,
           "PATCH",
         ),
-      "DELETE /admin/catalog/sizes/:id": (attacker) =>
+      "DELETE /admin/catalog/sizes/:id": (attacker, victim) =>
         adminCatalogCall(
           attacker,
-          "/admin/catalog/sizes/00000000-0000-4000-8000-000000000001",
+          `/admin/catalog/sizes/${victim.sizeId}`,
           "DELETE",
         ),
-      "PATCH /admin/catalog/ingredients/:id": (attacker) =>
+      "PATCH /admin/catalog/ingredients/:id": (attacker, victim) =>
         adminCatalogCall(
           attacker,
-          "/admin/catalog/ingredients/00000000-0000-4000-8000-000000000001",
+          `/admin/catalog/ingredients/${victim.ingredientId}`,
           "PATCH",
         ),
-      "DELETE /admin/catalog/ingredients/:id": (attacker) =>
+      "DELETE /admin/catalog/ingredients/:id": (attacker, victim) =>
         adminCatalogCall(
           attacker,
-          "/admin/catalog/ingredients/00000000-0000-4000-8000-000000000001",
+          `/admin/catalog/ingredients/${victim.ingredientId}`,
           "DELETE",
         ),
-      "PATCH /admin/catalog/flavors/:id": (attacker) =>
+      "PATCH /admin/catalog/flavors/:id": (attacker, victim) =>
         adminCatalogCall(
           attacker,
-          "/admin/catalog/flavors/00000000-0000-4000-8000-000000000001",
+          `/admin/catalog/flavors/${victim.catalogFlavorId}`,
           "PATCH",
         ),
-      "DELETE /admin/catalog/flavors/:id": (attacker) =>
+      "DELETE /admin/catalog/flavors/:id": (attacker, victim) =>
         adminCatalogCall(
           attacker,
-          "/admin/catalog/flavors/00000000-0000-4000-8000-000000000001",
+          `/admin/catalog/flavors/${victim.catalogFlavorId}`,
           "DELETE",
         ),
-      "PUT /admin/catalog/flavors/:id/prices/:sizeId": (attacker) =>
+      "PUT /admin/catalog/flavors/:id/prices/:sizeId": (attacker, victim) =>
         adminCatalogCall(
           attacker,
-          "/admin/catalog/flavors/00000000-0000-4000-8000-000000000001/prices/00000000-0000-4000-8000-000000000002",
+          `/admin/catalog/flavors/${victim.catalogFlavorId}/prices/${victim.sizeId}`,
           "PUT",
         ),
-      "DELETE /admin/catalog/flavors/:id/prices/:sizeId": (attacker) =>
+      "DELETE /admin/catalog/flavors/:id/prices/:sizeId": (attacker, victim) =>
         adminCatalogCall(
           attacker,
-          "/admin/catalog/flavors/00000000-0000-4000-8000-000000000001/prices/00000000-0000-4000-8000-000000000002",
+          `/admin/catalog/flavors/${victim.catalogFlavorId}/prices/${victim.sizeId}`,
           "DELETE",
         ),
     };
@@ -315,6 +351,54 @@ describe("tenant isolation", databaseSuite, () => {
             ),
           );
           assert.notEqual(row!.name, "hijacked");
+          const state = await runInTenant(owner, victim.id, async (em) => {
+            const [category] = await em.execute<
+              { name: string; archived_at: Date | null }[]
+            >("select name,archived_at from catalog_categories where id=?", [
+              victim.categoryId,
+            ]);
+            const [size] = await em.execute<
+              { name: string; archived_at: Date | null }[]
+            >("select name,archived_at from pizza_sizes where id=?", [
+              victim.sizeId,
+            ]);
+            const [ingredient] = await em.execute<
+              { name: string; archived_at: Date | null }[]
+            >("select name,archived_at from catalog_ingredients where id=?", [
+              victim.ingredientId,
+            ]);
+            const [flavor] = await em.execute<
+              { name: string; archived_at: Date | null }[]
+            >("select name,archived_at from catalog_flavors where id=?", [
+              victim.catalogFlavorId,
+            ]);
+            const [price] = await em.execute<{ price_cents: number }[]>(
+              "select price_cents from catalog_flavor_prices where flavor_id=? and size_id=?",
+              [victim.catalogFlavorId, victim.sizeId],
+            );
+            const [link] = await em.execute<{ count: number }[]>(
+              "select count(*)::int as count from catalog_flavor_ingredients where flavor_id=? and ingredient_id=?",
+              [victim.catalogFlavorId, victim.ingredientId],
+            );
+            return {
+              category: category!,
+              size: size!,
+              ingredient: ingredient!,
+              flavor: flavor!,
+              price: price!,
+              link: link!,
+            };
+          });
+          assert.equal(state.category.name, `${victim.slug} category`);
+          assert.equal(state.category.archived_at, null);
+          assert.equal(state.size.name, `${victim.slug} size`);
+          assert.equal(state.size.archived_at, null);
+          assert.equal(state.ingredient.name, `${victim.slug} ingredient`);
+          assert.equal(state.ingredient.archived_at, null);
+          assert.equal(state.flavor.name, `${victim.slug} flavor`);
+          assert.equal(state.flavor.archived_at, null);
+          assert.equal(state.price.price_cents, 1000);
+          assert.equal(state.link.count, 1);
         }
       });
     }

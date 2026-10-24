@@ -47,7 +47,7 @@ export class CatalogService {
             `select id, name, slices, max_flavors as "maxFlavors", sort_order as "sortOrder", available, (archived_at is not null) as archived from pizza_sizes order by sort_order, slices`,
           ),
           em.execute(
-            `select id, name, removable from catalog_ingredients where archived_at is null order by name`,
+            `select id, name, removable, (archived_at is not null) as archived from catalog_ingredients order by name`,
           ),
           em.execute(
             `select f.id, f.category_id as "categoryId", f.name, f.description, f.available, (f.archived_at is not null) as archived, coalesce(array_agg(fi.ingredient_id) filter (where fi.ingredient_id is not null), '{}') as "ingredientIds" from catalog_flavors f left join catalog_flavor_ingredients fi on fi.tenant_id = f.tenant_id and fi.flavor_id = f.id group by f.id order by f.name`,
@@ -278,6 +278,12 @@ export class CatalogService {
         [sizeId],
       );
       if (!flavor || !size) throw notFound();
+      // A missing price row cannot be locked with FOR UPDATE. Serialize by pair so
+      // concurrent first writes observe the prior writer's committed price and audit it.
+      await em.execute(
+        `select pg_advisory_xact_lock(hashtextextended(?::text, 0))`,
+        [`${flavorId}:${sizeId}`],
+      );
       const [old] = await em.execute<{ priceCents: number }[]>(
         'select price_cents as "priceCents" from catalog_flavor_prices where flavor_id = ? and size_id = ? for update',
         [flavorId, sizeId],
@@ -342,11 +348,6 @@ export class CatalogService {
             requestId,
           );
       }
-      if (table === "catalog_ingredients")
-        await em.execute(
-          "delete from catalog_flavor_ingredients where ingredient_id=?",
-          [id],
-        );
       await this.audit(
         em,
         `catalog.${entity}.archived`,
@@ -426,9 +427,10 @@ export class CatalogService {
     if (context.actor.type !== "staff")
       throw new Error("catalog writes require a staff actor");
     await em.execute(
-      `select whiteoven_catalog_write_audit(?,?,?,?,?::jsonb,?::uuid)`,
+      `select whiteoven_catalog_write_audit(?,?,?,?,?,?::jsonb,?::uuid)`,
       [
         context.actor.staffUserId,
+        context.actor.sessionId,
         action,
         entity,
         id,

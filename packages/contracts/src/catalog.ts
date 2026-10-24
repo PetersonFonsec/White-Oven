@@ -27,6 +27,7 @@ export interface CatalogIngredient {
   id: string;
   name: string;
   removable: boolean;
+  archived: boolean;
 }
 
 export interface CatalogFlavor {
@@ -118,7 +119,7 @@ const SECTIONS = {
     available: isFlag,
     archived: isFlag,
   },
-  ingredients: { id: isId, name: isName, removable: isFlag },
+  ingredients: { id: isId, name: isName, removable: isFlag, archived: isFlag },
   flavors: {
     id: isId,
     categoryId: isId,
