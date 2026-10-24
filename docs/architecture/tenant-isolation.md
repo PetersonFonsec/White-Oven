@@ -1,6 +1,6 @@
 # Isolamento de tenants
 
-Status: especificação M0.3, sem implementação. Define como a API garante que uma pizzaria nunca leia nem altere dados de outra. Esta estratégia é pré-requisito de qualquer fluxo de negócio (M1.3 no [roadmap](mvp-roadmap.md)).
+Status: especificação M0.3, implementada em M1.3 ([ADR 0006](../adr/0006-tenant-isolation.md)): `tenants`, `TenantContext`, guard por slug, `set_config(..., true)` por transação, RLS forçado, filtro global e testes 1–6. O teste 7 (revogação) depende de `Membership` e entra em M1.4. Define como a API garante que uma pizzaria nunca leia nem altere dados de outra. Esta estratégia é pré-requisito de qualquer fluxo de negócio (M1.3 no [roadmap](mvp-roadmap.md)).
 
 ## Decisão
 
@@ -59,16 +59,19 @@ Tabelas globais (sem `tenant_id`): `tenants`, `staff_users`, `staff_sessions`, `
 ### Políticas
 
 ```sql
--- Exemplo ilustrativo; a implementação definitiva fica na migration de M1.3.
+-- Gerado por tenantIsolationSql('flavors') (apps/api/src/database/tenant-isolation-sql.ts).
 alter table flavors enable row level security;
 alter table flavors force row level security;
 
 create policy tenant_isolation on flavors
-  using (tenant_id = current_setting('app.tenant_id', true)::uuid)
-  with check (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  using (tenant_id = whiteoven_current_tenant())
+  with check (tenant_id = whiteoven_current_tenant());
+
+-- Migration20261024010000_tenants:
+-- whiteoven_current_tenant() = nullif(current_setting('app.tenant_id', true), '')::uuid
 ```
 
-- `current_setting(..., true)` retorna nulo sem contexto, e a comparação com nulo nega tudo: ausência de contexto falha fechada.
+- `current_setting(..., true)` retorna nulo sem contexto (ou `''` numa conexão que já usou a variável, convertido em nulo pelo `nullif`), e a comparação com nulo nega tudo: ausência de contexto falha fechada.
 - `FORCE ROW LEVEL SECURITY` aplica a política inclusive ao dono da tabela.
 - A aplicação conecta como `whiteoven_app`, sem `BYPASSRLS`, sem superusuário, sem DDL. Migrations usam `whiteoven_owner`, nunca disponível ao processo da API em runtime.
 

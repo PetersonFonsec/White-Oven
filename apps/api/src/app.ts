@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import type { INestApplication, Type } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import type { EntitySchema } from "@mikro-orm/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import {
   DocumentBuilder,
@@ -9,7 +10,7 @@ import {
 } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
 import type { ApiConfig } from "./config/config";
-import { createOrm } from "./database/orm";
+import { ENTITIES, createOrm } from "./database/orm";
 import { ApiErrorBody } from "./errors/api-error";
 import { ApiExceptionFilter } from "./errors/api-exception.filter";
 import { JsonLogger } from "./logging/json-logger";
@@ -22,6 +23,8 @@ export interface CreateAppOptions {
   logger?: JsonLogger;
   /** Extra modules, used by tests to mount probe routes. */
   imports?: Type[];
+  /** Extra entities for those probe routes; checked by `assertTenantFilters` like any other. */
+  entities?: EntitySchema[];
 }
 
 export async function createApp(
@@ -30,7 +33,12 @@ export async function createApp(
 ): Promise<NestExpressApplication> {
   const logger = options.logger ?? new JsonLogger(config.logLevel);
   // Lazy pool: building the app never touches the database; main.ts verifies the role.
-  const orm = await createOrm(config.database);
+  const orm = await createOrm(
+    config.database,
+    options.entities?.length
+      ? { entities: [...ENTITIES, ...options.entities] }
+      : {},
+  );
   const appModule = AppModule.forRoot(config, orm);
   const root = options.imports?.length
     ? {
