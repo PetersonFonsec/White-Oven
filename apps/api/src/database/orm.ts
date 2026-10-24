@@ -3,6 +3,14 @@ import { Membership, StaffSession, StaffUser } from "../auth/staff.entity";
 import { assertTenantFilters } from "../tenancy/tenant-filter";
 import { Tenant } from "../tenancy/tenant.entity";
 import { Order, OwnerInvite } from "../platform/platform.entity";
+import {
+  CatalogCategory,
+  CatalogFlavor,
+  CatalogFlavorIngredient,
+  CatalogFlavorPrice,
+  CatalogIngredient,
+  PizzaSize,
+} from "../catalog/catalog.entity";
 
 /** Every runtime entity. Tenant entities must declare `filters: tenantFilters`. */
 export const ENTITIES = [
@@ -12,6 +20,12 @@ export const ENTITIES = [
   Membership,
   Order,
   OwnerInvite,
+  CatalogCategory,
+  PizzaSize,
+  CatalogIngredient,
+  CatalogFlavor,
+  CatalogFlavorIngredient,
+  CatalogFlavorPrice,
 ];
 
 export interface OrmConnection {
