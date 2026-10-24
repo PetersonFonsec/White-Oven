@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  statSync,
+  readdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -323,27 +329,40 @@ try {
     ),
     "0",
   );
-  ops("delete", later.body.leadId);
-  assert.equal(count(), 1);
   ops("backup", "offsite");
   const external = join(temporary, "external");
   ops("export-backup", "offsite", external);
-  for (const name of [
-    "offsite.sqlite",
-    "offsite.sqlite.json",
-    "offsite.deletions.json",
-  ])
-    assert.equal(statSync(join(external, name)).mode & 0o077, 0);
+  assert.deepEqual(readdirSync(external), ["offsite.bundle.json"]);
+  assert.equal(statSync(join(external, "offsite.bundle.json")).mode & 0o077, 0);
   assert.throws(() => ops("export-backup", "offsite", external));
-  inside(
-    `import {rmSync} from 'node:fs';for (const suffix of ['', '.json']) rmSync('/var/backups/whiteoven/offsite.sqlite'+suffix);`,
+  // A deletion after the export reaches the external copy only through a later ledger export.
+  ops("delete", later.body.leadId);
+  assert.equal(count(), 1);
+  ops("export-ledger", external);
+  const ledgerCopy = readdirSync(external).find((name) =>
+    name.startsWith("deletions-"),
   );
+  // New host: empty backup volume, and the habitual ledger-init before importing.
+  inside(
+    `import {readdirSync,rmSync} from 'node:fs';for (const name of readdirSync('/var/backups/whiteoven')) rmSync('/var/backups/whiteoven/'+name);`,
+  );
+  ops("ledger-init");
   ops("import-backup", "offsite", external);
   ops("verify-backup", "offsite");
+  ops("import-ledger", join(external, ledgerCopy));
   ops("prune-backups");
   ops("verify-backup", "offsite");
+  ops("restore", "offsite", "--confirm-offline");
+  compose("up", "-d", "--no-build", "--wait", "--wait-timeout", "90");
+  assert.equal(count(), 1);
+  assert.equal(
+    inside(
+      `import Database from 'better-sqlite3';const db=new Database(process.env.LEADS_DB_PATH,{readonly:true});console.log(db.prepare('SELECT COUNT(*) AS n FROM leads WHERE id = ?').get('${later.body.leadId}').n);db.close();`,
+    ),
+    "0",
+  );
   console.log(
-    "PASS write probe, ledger-first deletion, external export/import and backup pruning",
+    "PASS write probe, ledger-first deletion, bundle export/import on a new volume with later exclusions, pruning",
   );
   configuration({
     LEADS_ENABLED: "false",

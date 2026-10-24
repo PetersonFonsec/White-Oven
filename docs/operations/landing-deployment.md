@@ -117,7 +117,7 @@ Backup usa API online SQLite, incluindo WAL; não copiar apenas `leads.sqlite` c
 
 Volume no mesmo host **não é backup externo** e arquivo não é cifrado pela ferramenta. Antes de captar dados reais: definir cópia externa cifrada, acesso mínimo, chave fora do host, retenção e monitoramento de execução. Nenhum fornecedor foi escolhido. Operador deve agendar backup/purge e expiração; não há cron de produção instalado nesta PR. Backups expiram em até 30 dias ou antes pela expiração mais próxima dos leads; verify recusa vencidos. Remover arquivos vencidos e todas as cópias externas conforme inventário. O app não remove automaticamente cópias externas.
 
-Restauração exige o **mesmo** diário de exclusões com o qual a cópia foi criada. Cada diário tem identidade própria; um diário recriado com `ledger-init` depois de perdido tem outra identidade, e `verify-backup`, `restore` e `import-backup` recusam toda cópia anterior a ele (`LEDGER_MISMATCH`). Isso impede que uma cópia antiga traga de volta leads excluídos só porque o diário se perdeu. Para recuperar, trazer de volta a cópia externa mais recente do diário (abaixo); se ela também se perdeu, as cópias antigas não são restauráveis e devem ser eliminadas.
+Restauração exige o **mesmo** diário de exclusões com o qual a cópia foi criada. Cada diário tem identidade própria; um diário recriado com `ledger-init` depois de perdido tem outra identidade, e `verify-backup`, `restore` e `import-backup` recusam toda cópia anterior a ele (`LEDGER_MISMATCH`). Isso impede que uma cópia antiga traga de volta leads excluídos só porque o diário se perdeu. Para recuperar, importar o pacote exportado e a cópia externa mais recente do diário (abaixo); se nenhuma cópia do diário sobreviveu, as cópias antigas não são restauráveis e devem ser eliminadas.
 
 ```sh
 # Exclusão por titular: registra no diário e só depois remove do banco ativo.
@@ -141,21 +141,35 @@ Processo com ferramentas já disponíveis no host e na estação do operador (Ba
    bash ops/whiteoven.sh backup backup_YYYYMMDD_HHMMSS
    bash ops/whiteoven.sh export-backup backup_YYYYMMDD_HHMMSS /root/whiteoven-export
    ```
-   Saem três arquivos 0600 num diretório 0700: a cópia, seus metadados (hash, expiração, identidade do diário) e o diário de exclusões daquele momento. Nada é sobrescrito. A exportação **não é cifrada**.
-2. **Cifrar no host**, para uma chave pública cuja chave privada **não** fica no host (ex.: guardada pelo controlador): `gpg --encrypt --recipient CHAVE_DO_CONTROLADOR --output ARQUIVO.gpg ARQUIVO` para cada um dos três. Registrar `sha256sum` dos `.gpg` no inventário.
-3. **Transferir** os `.gpg` ao destino externo com `rsync`/`scp` e acesso mínimo; conferir o `sha256sum` no destino.
+   Sai **um único arquivo** `backup_YYYYMMDD_HHMMSS.bundle.json` (0600, diretório criado 0700) com a cópia, seus metadados e o diário de exclusões, todos lidos num só instante dentro do container. A exportação **não é cifrada**.
+2. **Cifrar no host**, para uma chave pública cuja chave privada **não** fica no host (ex.: guardada pelo controlador): `gpg --encrypt --recipient CHAVE_DO_CONTROLADOR --output ARQUIVO.gpg ARQUIVO`. Registrar `sha256sum` do `.gpg` no inventário.
+3. **Transferir** o `.gpg` ao destino externo com `rsync`/`scp` e acesso mínimo; conferir o `sha256sum` no destino.
 4. **Apagar a exportação em claro** do host (`shred -u` ou `rm` em filesystem cifrado) e registrar no inventário: ID, destino, responsável, data, expiração (a dos metadados) e identidade do diário.
-5. **Manter o diário externo atualizado.** Após cada `delete`/`exclude`, exportar de novo e substituir a cópia externa do diário. Uma cópia externa só é restaurável com o diário de mesma identidade e conteúdo atual.
+5. **Manter o diário externo atualizado.** O diário dentro do pacote é o do momento da exportação. Após cada `delete`/`exclude`, rodar `bash ops/whiteoven.sh export-ledger /root/whiteoven-export`, cifrar e substituir a cópia externa do diário (arquivo `deletions-AAAAMMDDTHHMMSSZ.json`). É esse arquivo que leva ao novo host as exclusões feitas depois do pacote.
 6. **Eliminar cópias externas vencidas** na data de expiração registrada; o app não alcança o destino externo. Pedido de exclusão de titular segue o [runbook de exclusão](../architecture/lead-deletion-runbook.md) também para essas cópias.
+
+**Consistência da exportação.** `export-backup` e `export-ledger` usam o mesmo lock de `delete`, `exclude`, `prune-backups`, `backup` e `restore`, então não correm ao mesmo tempo que uma exclusão feita pelo script. Mesmo uma exclusão feita por fora do script não corrompe o pacote: o diário é sempre gravado por arquivo temporário renomeado e lido uma única vez, e o pacote só sai se o diário lido tem a identidade registrada na cópia. A saída vai para um arquivo oculto `.NOME.partial-PID` e só é renomeada para o nome final quando completa; se o container, a rede ou o disco falharem no meio, o arquivo parcial é apagado e nada fica com o nome final. Um destino existente nunca é sobrescrito. A suíte cobre exportações repetidas com exclusões concorrentes e a falha no meio da exportação.
 
 Recuperação após perda do host ou do volume de backups:
 
-1. Preparar host novo pela seção 3, sem ativar captação. Recriar o volume de backups trazendo **primeiro** o diário: decifrar a cópia externa mais recente do diário e colocá-la como `/var/backups/whiteoven/deletions.json` com um container one-off do mesmo projeto Compose (usuário 1000, modo 0600). Não usar `ledger-init` nesse caso.
-2. Decifrar a cópia escolhida e seus metadados num diretório 0700 e importar: `bash ops/whiteoven.sh import-backup backup_YYYYMMDD_HHMMSS /root/whiteoven-import`. O conteúdo é enviado por stdin ao container; hash, prazo, integridade e identidade do diário são verificados, e uma cópia inválida é removida.
-3. Seguir o restore offline acima: ele reaplica o diário e o purge. Depois `update`, `verify` e um cadastro sintético controlado.
-4. Apagar os arquivos decifrados e registrar o ensaio ou a recuperação (tempo total = RTO medido).
+1. Preparar host novo pela seção 3, sem ativar captação.
+2. Decifrar o pacote escolhido e a cópia externa **mais recente** do diário num diretório 0700.
+3. Importar o pacote: `bash ops/whiteoven.sh import-backup backup_YYYYMMDD_HHMMSS /root/whiteoven-import`. O pacote vai por stdin ao container. Antes de gravar qualquer coisa são conferidos formato, hash, integridade SQLite, prazo e a correspondência entre diário e cópia. O diário do pacote é então reconciliado com o do volume:
 
-O ensaio completo (exportar, cifrar, transferir, apagar o host de teste, importar, restaurar) com dados sintéticos é pré-requisito da captação real; a suíte de containers cobre exportação e importação, não a cifra nem a transferência.
+   | Diário no volume                                                                   | Resultado                                                               |
+   | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+   | Nenhum                                                                             | Adota o diário do pacote.                                               |
+   | Mesma identidade                                                                   | União das exclusões; nenhuma exclusão local é perdida.                  |
+   | Outra identidade, vazio e sem cópia vinculada (ex.: `ledger-init` recém-executado) | Arquivado como `deletions.superseded-ID.json` e substituído.            |
+   | Outra identidade com exclusões ou com cópias vinculadas                            | Recusa (`LEDGER_CONFLICT`); volume intacto. Investigar antes de seguir. |
+
+   Cópia ou metadados já existentes com o mesmo ID nunca são sobrescritos.
+
+4. Importar o diário mais recente: `bash ops/whiteoven.sh import-ledger /root/whiteoven-import/deletions-AAAAMMDDTHHMMSSZ.json`. Mesmas regras de reconciliação; com a mesma identidade, apenas acrescenta exclusões.
+5. Seguir o restore offline acima: ele reaplica o diário reconciliado e o purge. Depois `update`, `verify` e um cadastro sintético controlado.
+6. Apagar os arquivos decifrados e registrar o ensaio ou a recuperação (tempo total = RTO medido).
+
+O ensaio completo (exportar, cifrar, transferir, apagar o host de teste, importar, restaurar) com dados sintéticos é pré-requisito da captação real; a suíte de containers cobre exportação, exclusão posterior, volume novo com `ledger-init`, importação do pacote e do diário e o restore, não a cifra nem a transferência. Gravar o diário somente pelos comandos do script, que serializam as escritas.
 
 ## 7. Retenção e direitos
 
@@ -178,6 +192,7 @@ Agendar purge diariamente e backup na frequência compatível com perda aceitáv
 | Falha de imagem/native addon | Conferir arquitetura/Node e imagem CI correta; não copiar node_modules do macOS.                                     |
 | Restore recusado             | Diário ausente, cópia vencida/corrompida ou impossibilidade de backup atual; não sobrescrever à força.               |
 | `LEDGER_MISMATCH`            | Diário atual não é o da cópia; trazer a cópia externa do diário correto. Sem ela, a cópia não é restaurável.         |
+| `LEDGER_CONFLICT`            | Import encontrou outro diário com exclusões ou cópias vinculadas; nada foi alterado. Não apagar o diário local.      |
 | `writes=failing`             | Cadastros reais falhando ao gravar: rodar `probe-write`, conferir espaço, permissões e integridade em cópia.         |
 | Update/rollback sai com 2    | Serviço indisponível; não restaurar banco. Conferir `.env`, imagem e logs; usar imagem saudável conhecida.           |
 | Imagem recusada como falha   | `WHITEOVEN_IMAGE` aponta para imagem marcada em `.ops-state/failed-image`; fixar a imagem em execução ou nova.       |

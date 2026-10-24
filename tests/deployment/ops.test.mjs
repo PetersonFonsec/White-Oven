@@ -5,8 +5,11 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   mkdtempSync,
+  mkdirSync,
   writeFileSync,
   readFileSync,
+  readdirSync,
+  statSync,
   existsSync,
   rmSync,
 } from "node:fs";
@@ -154,6 +157,78 @@ test("delete records the exclusion before removing the lead", () => {
     const remove = log.indexOf(`leads.mjs delete ${id}`);
     assert.ok(exclude >= 0 && remove > exclude);
     assert.notEqual(h.ops("delete", "not-a-uuid").status, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+test("export writes one complete bundle atomically and never leaves partial plaintext", () => {
+  const h = harness();
+  try {
+    h.configure("app:v1");
+    const out = join(h.state, "external");
+    h.mark("export-fails", "");
+    assert.notEqual(h.ops("export-backup", "offsite", out).status, 0);
+    assert.deepEqual(readdirSync(out), []);
+    rmSync(join(h.state, "export-fails"));
+    assert.equal(h.ops("export-backup", "offsite", out).status, 0);
+    assert.deepEqual(readdirSync(out), ["offsite.bundle.json"]);
+    const bundle = join(out, "offsite.bundle.json");
+    assert.equal(readFileSync(bundle, "utf8"), '{"partial":false}');
+    assert.equal(statSync(bundle).mode & 0o077, 0);
+    assert.equal(statSync(out).mode & 0o077, 0);
+    assert.notEqual(h.ops("export-backup", "offsite", out).status, 0);
+    assert.equal(readFileSync(bundle, "utf8"), '{"partial":false}');
+    assert.equal(h.ops("export-ledger", out).status, 0);
+    assert.ok(
+      readdirSync(out).some((name) =>
+        /^deletions-\d{8}T\d{6}Z\.json$/.test(name),
+      ),
+    );
+  } finally {
+    h.cleanup();
+  }
+});
+test("export waits for no other operation: it shares the lock with delete, prune and restore", () => {
+  const h = harness();
+  try {
+    h.configure("app:v1");
+    mkdirSync(join(h.state, "ops-state", "update.lock"), { recursive: true });
+    const out = join(h.state, "external");
+    for (const args of [
+      ["export-backup", "offsite", out],
+      ["export-ledger", out],
+      ["delete", "0b1f6a5e-6f2d-4c4b-9a43-2b8f5b9d6c11"],
+    ]) {
+      const result = h.ops(...args);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /Outra operação está em andamento/);
+    }
+    assert.ok(!existsSync(out));
+  } finally {
+    h.cleanup();
+  }
+});
+test("import sends the whole bundle through stdin; ledger import is explicit", () => {
+  const h = harness();
+  try {
+    h.configure("app:v1");
+    const source = join(h.state, "external");
+    mkdirSync(source);
+    writeFileSync(join(source, "offsite.bundle.json"), "BUNDLE");
+    writeFileSync(join(source, "deletions.json"), "LEDGER");
+    assert.equal(h.ops("import-backup", "offsite", source).status, 0);
+    assert.equal(
+      h.ops("import-ledger", join(source, "deletions.json")).status,
+      0,
+    );
+    const received = readdirSync(h.state)
+      .filter((name) => name.startsWith("stdin-"))
+      .sort()
+      .map((name) => readFileSync(join(h.state, name), "utf8"));
+    assert.deepEqual(received, ["BUNDLE", "LEDGER"]);
+    assert.match(h.ops("status").log(), /storage\.mjs import offsite/);
+    assert.match(h.ops("status").log(), /storage\.mjs ledger-merge/);
+    assert.notEqual(h.ops("import-backup", "missing", source).status, 0);
   } finally {
     h.cleanup();
   }

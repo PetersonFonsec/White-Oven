@@ -44,7 +44,10 @@ export function initializeLedger(dir) {
     );
 }
 function ledger(dir) {
-  const value = JSON.parse(readFileSync(ledgerPath(dir), "utf8"));
+  return parseLedger(readFileSync(ledgerPath(dir), "utf8"));
+}
+function parseLedger(text) {
+  const value = typeof text === "string" ? JSON.parse(text) : { ...text };
   if (
     value.version !== 1 ||
     !UUID.test(value.id ?? "") ||
@@ -59,10 +62,54 @@ export function excludeFromRestore(dir, id) {
   if (!UUID.test(id ?? "")) throw new Error("INVALID_ID");
   const value = ledger(dir);
   value.ids = [...new Set([...value.ids, id.toLowerCase()])];
+  writeLedger(dir, value);
+}
+// Readers always see a whole ledger: writes go to a temporary file renamed over the old one.
+function writeLedger(dir, value) {
   const temp = join(dir, `.ledger-${randomUUID()}`);
   writeFileSync(temp, JSON.stringify(value), { flag: "wx", mode: 0o600 });
   renameSync(temp, ledgerPath(dir));
 }
+const referencedLedgers = (dir) =>
+  new Set(
+    readdirSync(dir)
+      .filter((name) => name.endsWith(".sqlite.json"))
+      .map((name) => {
+        try {
+          return JSON.parse(readFileSync(join(dir, name), "utf8")).ledgerId;
+        } catch {
+          return undefined;
+        }
+      }),
+  );
+// Reconciles an external copy of the ledger without ever dropping a local exclusion.
+// Same identity: union. No local ledger: adopt it. A different local ledger is only
+// replaced when it provably carries nothing (no exclusions, no backup bound to it),
+// and it is archived rather than deleted.
+export function mergeLedger(dir, incoming) {
+  safeDir(dir);
+  const external = parseLedger(incoming);
+  if (!existsSync(ledgerPath(dir))) {
+    writeLedger(dir, external);
+    return "adopted";
+  }
+  const local = ledger(dir);
+  if (local.id === external.id) {
+    const ids = [...new Set([...local.ids, ...external.ids])];
+    if (ids.length === local.ids.length) return "unchanged";
+    writeLedger(dir, { ...local, ids });
+    return "merged";
+  }
+  if (local.ids.length > 0 || referencedLedgers(dir).has(local.id))
+    throw new Error("LEDGER_CONFLICT");
+  renameSync(
+    ledgerPath(dir),
+    join(dir, `deletions.superseded-${local.id}.json`),
+  );
+  writeLedger(dir, external);
+  return "replaced-empty";
+}
+export const dumpLedger = (dir) => JSON.stringify(ledger(dir));
 export function verifyBackup(dir, id) {
   safeId(id);
   const file = join(dir, `${id}.sqlite`);
@@ -155,21 +202,81 @@ export function pruneExpiredBackups(dir, now = Date.now()) {
   }
   return removed;
 }
-// Brings a copy kept outside the host back into the backup volume, unchanged.
-// Content arrives as data (stdin in operations), so host file ownership never matters.
-export function importBackup(sqlite, metadata, dir, id) {
+// One self-contained, hash-checked bundle per export: backup, its metadata and a single
+// read of the ledger. Separate copies could pair a ledger with the wrong backup or be
+// left half-written; the bundle is either complete or rejected.
+const BUNDLE = "whiteoven-backup-bundle";
+export function exportBundle(dir, id) {
+  const file = verifyBackup(dir, id);
+  const sqlite = readFileSync(file);
+  const metadata = readFileSync(`${file}.json`, "utf8");
+  const snapshot = ledger(dir);
+  if (JSON.parse(metadata).ledgerId !== snapshot.id)
+    throw new Error("LEDGER_MISMATCH");
+  return JSON.stringify({
+    format: BUNDLE,
+    version: 1,
+    id,
+    exportedAt: new Date().toISOString(),
+    sqlite: sqlite.toString("base64"),
+    metadata,
+    ledger: snapshot,
+  });
+}
+// Brings an exported bundle back into the backup volume: the backup files are never
+// overwritten, and the ledger is reconciled with mergeLedger before the copy is usable.
+export function importBundle(text, dir, expectedId) {
   safeDir(dir);
-  safeId(id);
+  const bundle = JSON.parse(text);
+  if (bundle.format !== BUNDLE || bundle.version !== 1)
+    throw new Error("INVALID_BUNDLE");
+  const id = safeId(bundle.id);
+  if (expectedId !== undefined && expectedId !== id)
+    throw new Error("INVALID_BUNDLE");
+  const sqlite = Buffer.from(bundle.sqlite, "base64");
+  const metadata = JSON.parse(bundle.metadata);
+  const external = parseLedger(bundle.ledger);
+  if (
+    metadata.sha256 !== createHash("sha256").update(sqlite).digest("hex") ||
+    metadata.ledgerId !== external.id ||
+    !(Date.parse(metadata.expiresAt) > Date.now())
+  )
+    throw new Error("INVALID_BUNDLE");
   const file = join(dir, `${id}.sqlite`);
   if (existsSync(file) || existsSync(`${file}.json`))
     throw new Error("BACKUP_EXISTS");
+  // Decide on the ledger before writing anything, so a conflict leaves the volume untouched.
+  if (existsSync(ledgerPath(dir))) {
+    const local = ledger(dir);
+    if (
+      local.id !== external.id &&
+      (local.ids.length > 0 || referencedLedgers(dir).has(local.id))
+    )
+      throw new Error("LEDGER_CONFLICT");
+  }
+  const staged = join(dir, `.import-${randomUUID()}.sqlite`);
+  let placed = false;
   try {
-    writeFileSync(file, sqlite, { flag: "wx", mode: 0o600 });
-    writeFileSync(`${file}.json`, metadata, { flag: "wx", mode: 0o600 });
-    return verifyBackup(dir, id);
+    writeFileSync(staged, sqlite, { flag: "wx", mode: 0o600 });
+    const db = new Database(staged, { readonly: true, fileMustExist: true });
+    try {
+      if (db.pragma("quick_check", { simple: true }) !== "ok")
+        throw new Error("INVALID_BUNDLE");
+    } finally {
+      db.close();
+    }
+    const result = mergeLedger(dir, external);
+    writeFileSync(`${file}.json`, bundle.metadata, { flag: "wx", mode: 0o600 });
+    placed = true;
+    renameSync(staged, file);
+    verifyBackup(dir, id);
+    return result;
   } catch (error) {
-    rmSync(file, { force: true });
-    rmSync(`${file}.json`, { force: true });
+    rmSync(staged, { force: true });
+    if (placed) {
+      rmSync(file, { force: true });
+      rmSync(`${file}.json`, { force: true });
+    }
     throw error;
   }
 }
@@ -240,6 +347,12 @@ if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
+  const stdin = async () => {
+    const chunks = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    return Buffer.concat(chunks).toString("utf8");
+  };
+  let stream;
   try {
     const [command, id, confirmation] = process.argv.slice(2);
     const source = process.env.LEADS_DB_PATH;
@@ -250,20 +363,17 @@ if (
     else if (command === "ledger-init") initializeLedger(dir);
     else if (command === "exclude") excludeFromRestore(dir, id);
     else if (command === "prune") pruneExpiredBackups(dir);
-    else if (command === "import") {
-      const chunks = [];
-      for await (const chunk of process.stdin) chunks.push(chunk);
-      importBackup(
-        Buffer.concat(chunks),
-        process.env.STORAGE_IMPORT_META ?? "",
-        dir,
-        id,
-      );
-    } else if (command === "probe-write") probeWrite(source);
+    else if (command === "import") importBundle(await stdin(), dir, id);
+    else if (command === "ledger-merge") mergeLedger(dir, await stdin());
+    else if (command === "export") stream = exportBundle(dir, id);
+    else if (command === "ledger-dump") stream = dumpLedger(dir);
+    else if (command === "probe-write") probeWrite(source);
     else if (command === "restore" && confirmation === "--confirm-offline")
       await restoreDatabase(source, dir, id);
     else throw new Error("INVALID_OPERATION");
-    console.log(
+    // Exports own stdout; the confirmation goes to stderr so it never mixes with data.
+    if (stream !== undefined) process.stdout.write(stream);
+    (stream === undefined ? console.log : console.error)(
       "Operação de armazenamento concluída. Registre a evidência no inventário restrito.",
     );
   } catch {

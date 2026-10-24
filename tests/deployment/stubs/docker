@@ -20,8 +20,15 @@ if [[ "$1" == compose ]]; then
   stop) rm -f "$s/running"; exit 0 ;;
   ps) [[ -f "$s/running" ]] && echo "c-$(cat "$s/running")"; exit 0 ;;
   exec)
+   # Simulates storage.mjs streaming an export, optionally dying halfway.
+   if [[ "$*" == *"storage.mjs export"* || "$*" == *"storage.mjs ledger-dump"* ]]; then
+    printf '{"partial":'
+    [[ -f "$s/export-fails" ]] && exit 1
+    printf 'false}'; exit 0
+   fi
    if [[ "$*" == *healthcheck.mjs* ]]; then [[ -f "$s/running" && "$(cat "$s/health")" == ok ]]; exit; fi
    exit 0 ;;
+  run) [[ "$*" == *storage.mjs* ]] && cat > "$s/stdin-$(date +%s%N)"; exit 0 ;;
   *) exit 0 ;;
  esac
 fi

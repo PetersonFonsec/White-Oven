@@ -7,11 +7,10 @@ import {
   statSync,
   writeFileSync,
   readdirSync,
-  mkdirSync,
-  copyFileSync,
   existsSync,
 } from "node:fs";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { SqliteLeadStore } from "../src/server/lead-store.ts";
@@ -25,7 +24,10 @@ import {
   excludeFromRestore,
   verifyBackup,
   pruneExpiredBackups,
-  importBackup,
+  importBundle,
+  exportBundle,
+  mergeLedger,
+  dumpLedger,
   probeWrite,
 } from "../scripts/storage.mjs";
 import {
@@ -321,57 +323,201 @@ test("expired backups are removed from the volume, valid ones kept", async () =>
     rmSync(dir, { recursive: true, force: true });
   }
 });
-test("external copy is imported unchanged, verified, never overwrites and still reapplies deletions", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "whiteoven-import-"));
+// Simulates the new host: an empty backup volume, optionally with a fresh empty ledger.
+async function exportedHost(prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
   const path = join(dir, "leads.sqlite");
   const backups = join(dir, "backups");
-  const external = join(dir, "external");
   const store = new SqliteLeadStore(path);
   const { policy } = config(path);
-  try {
-    const saved = store.save(
-      submission(policy),
+  const lead = (name) =>
+    store.save(
+      { ...submission(policy), pizzeriaName: name },
       crypto.randomUUID(),
       policy,
       Date.now(),
-    );
-    initializeLedger(backups);
-    await backupDatabase(path, backups, "offsite");
-    mkdirSync(external, { mode: 0o700 });
-    for (const suffix of ["", ".json"])
-      copyFileSync(
-        join(backups, `offsite.sqlite${suffix}`),
-        join(external, `offsite.sqlite${suffix}`),
-      );
-    // Simulate loss of the host copy, then a deletion request before recovery.
-    rmSync(join(backups, "offsite.sqlite"));
-    rmSync(join(backups, "offsite.sqlite.json"));
-    excludeFromRestore(backups, saved.lead.id);
-    store.deleteLead(saved.lead.id);
-    store.close();
-    const fromExternal = (id, name = id) =>
-      importBackup(
-        readFileSync(join(external, `${name}.sqlite`)),
-        readFileSync(join(external, `${name}.sqlite.json`), "utf8"),
-        backups,
-        id,
-      );
-    fromExternal("offsite");
-    assert.equal(statSync(join(backups, "offsite.sqlite")).mode & 0o077, 0);
-    assert.throws(() => fromExternal("offsite"), /BACKUP_EXISTS/);
-    await restoreDatabase(path, backups, "offsite");
-    const db = new Database(path, { readonly: true });
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM leads").get().n, 0);
-    db.close();
-    // A tampered external copy is rejected and leaves nothing behind.
-    writeFileSync(join(external, "tampered.sqlite"), "x");
-    writeFileSync(
-      join(external, "tampered.sqlite.json"),
-      readFileSync(join(external, "offsite.sqlite.json")),
-    );
-    assert.throws(() => fromExternal("tampered"));
-    assert.ok(!existsSync(join(backups, "tampered.sqlite")));
+    ).lead.id;
+  const kept = lead("Kept");
+  const removed = lead("Removed later");
+  initializeLedger(backups);
+  await backupDatabase(path, backups, "offsite");
+  const bundle = exportBundle(backups, "offsite");
+  return { dir, path, backups, store, bundle, kept, removed };
+}
+const leadIds = (path) => {
+  const db = new Database(path, { readonly: true });
+  try {
+    return db
+      .prepare("SELECT id FROM leads ORDER BY id")
+      .all()
+      .map((row) => row.id);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    db.close();
+  }
+};
+test("bundle restores backup, metadata and ledger on a new host, including newer exclusions", async () => {
+  const old = await exportedHost("whiteoven-dr-old-");
+  const fresh = mkdtempSync(join(tmpdir(), "whiteoven-dr-new-"));
+  try {
+    // Deletion after the export: only a later ledger copy carries it.
+    excludeFromRestore(old.backups, old.removed);
+    old.store.deleteLead(old.removed);
+    old.store.close();
+    const laterLedger = dumpLedger(old.backups);
+    const backups = join(fresh, "backups");
+    const path = join(fresh, "leads.sqlite");
+    // An operator who ran ledger-init first: empty, unused, so it is archived, not merged.
+    initializeLedger(backups);
+    const empty = JSON.parse(
+      readFileSync(join(backups, "deletions.json"), "utf8"),
+    );
+    assert.equal(
+      importBundle(old.bundle, backups, "offsite"),
+      "replaced-empty",
+    );
+    assert.ok(
+      existsSync(join(backups, `deletions.superseded-${empty.id}.json`)),
+    );
+    verifyBackup(backups, "offsite");
+    assert.equal(statSync(join(backups, "offsite.sqlite")).mode & 0o077, 0);
+    assert.equal(mergeLedger(backups, laterLedger), "merged");
+    assert.equal(mergeLedger(backups, laterLedger), "unchanged");
+    await restoreDatabase(path, backups, "offsite");
+    assert.deepEqual(leadIds(path), [old.kept]);
+    assert.throws(() => importBundle(old.bundle, backups), /BACKUP_EXISTS/);
+  } finally {
+    rmSync(old.dir, { recursive: true, force: true });
+    rmSync(fresh, { recursive: true, force: true });
+  }
+});
+test("importing an older bundle never drops exclusions already in the local ledger", async () => {
+  const host = await exportedHost("whiteoven-dr-same-");
+  try {
+    excludeFromRestore(host.backups, host.removed);
+    host.store.deleteLead(host.removed);
+    host.store.close();
+    for (const suffix of ["", ".json"])
+      rmSync(join(host.backups, `offsite.sqlite${suffix}`));
+    assert.equal(importBundle(host.bundle, host.backups), "unchanged");
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(host.backups, "deletions.json"), "utf8"))
+        .ids,
+      [host.removed],
+    );
+    await restoreDatabase(host.path, host.backups, "offsite");
+    assert.deepEqual(leadIds(host.path), [host.kept]);
+  } finally {
+    rmSync(host.dir, { recursive: true, force: true });
+  }
+});
+test("a different ledger with exclusions or bound backups is never overwritten", async () => {
+  const old = await exportedHost("whiteoven-dr-conflict-");
+  const other = mkdtempSync(join(tmpdir(), "whiteoven-dr-other-"));
+  try {
+    old.store.close();
+    const backups = join(other, "backups");
+    const ledgerFile = join(backups, "deletions.json");
+    initializeLedger(backups);
+    excludeFromRestore(backups, crypto.randomUUID());
+    const before = readFileSync(ledgerFile, "utf8");
+    assert.throws(() => importBundle(old.bundle, backups), /LEDGER_CONFLICT/);
+    assert.throws(
+      () => mergeLedger(backups, dumpLedger(old.backups)),
+      /LEDGER_CONFLICT/,
+    );
+    assert.equal(readFileSync(ledgerFile, "utf8"), before);
+    assert.deepEqual(readdirSync(backups), ["deletions.json"]);
+    // Empty but already protecting a backup: also kept.
+    rmSync(backups, { recursive: true });
+    const store = new SqliteLeadStore(join(other, "leads.sqlite"));
+    store.close();
+    initializeLedger(backups);
+    await backupDatabase(join(other, "leads.sqlite"), backups, "local");
+    assert.throws(() => importBundle(old.bundle, backups), /LEDGER_CONFLICT/);
+    verifyBackup(backups, "local");
+  } finally {
+    rmSync(old.dir, { recursive: true, force: true });
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+test("tampered, inconsistent or expired bundles are rejected without touching the volume", async () => {
+  const old = await exportedHost("whiteoven-dr-tamper-");
+  const fresh = mkdtempSync(join(tmpdir(), "whiteoven-dr-reject-"));
+  try {
+    old.store.close();
+    const backups = join(fresh, "backups");
+    const bundle = JSON.parse(old.bundle);
+    const variants = [
+      { ...bundle, sqlite: Buffer.from("x").toString("base64") },
+      { ...bundle, ledger: { ...bundle.ledger, id: crypto.randomUUID() } },
+      {
+        ...bundle,
+        metadata: JSON.stringify({
+          ...JSON.parse(bundle.metadata),
+          expiresAt: "2000-01-01T00:00:00.000Z",
+        }),
+      },
+      { ...bundle, format: "other" },
+    ];
+    for (const variant of variants) {
+      assert.throws(() => importBundle(JSON.stringify(variant), backups));
+      assert.deepEqual(readdirSync(backups), []);
+    }
+    assert.throws(() => importBundle(old.bundle, backups, "another-id"));
+    assert.throws(() => importBundle(old.bundle.slice(0, 200), backups));
+    assert.deepEqual(readdirSync(backups), []);
+  } finally {
+    rmSync(old.dir, { recursive: true, force: true });
+    rmSync(fresh, { recursive: true, force: true });
+  }
+});
+test("exports taken while exclusions run concurrently are always internally consistent", async () => {
+  const host = await exportedHost("whiteoven-dr-race-");
+  try {
+    host.store.close();
+    const ids = Array.from({ length: 300 }, () => crypto.randomUUID());
+    const storage = new URL("../scripts/storage.mjs", import.meta.url).href;
+    const worker = new Worker(
+      `const { workerData } = require("node:worker_threads");
+       import(workerData.storage).then(({ excludeFromRestore }) => {
+         for (const id of workerData.ids) excludeFromRestore(workerData.dir, id);
+       });`,
+      { eval: true, workerData: { storage, ids, dir: host.backups } },
+    );
+    const done = new Promise((resolve, reject) => {
+      worker.on("exit", resolve);
+      worker.on("error", reject);
+    });
+    const snapshots = [];
+    let finished = false;
+    done.then(() => (finished = true));
+    while (!finished) {
+      snapshots.push(exportBundle(host.backups, "offsite"));
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await done;
+    snapshots.push(exportBundle(host.backups, "offsite"));
+    assert.ok(snapshots.length > 1);
+    let previous = -1;
+    for (const text of snapshots) {
+      const bundle = JSON.parse(text);
+      // Each snapshot is a prefix of the exclusion sequence: never torn, never reordered.
+      assert.deepEqual(
+        bundle.ledger.ids,
+        ids.slice(0, bundle.ledger.ids.length),
+      );
+      assert.ok(bundle.ledger.ids.length >= previous);
+      previous = bundle.ledger.ids.length;
+      const target = mkdtempSync(join(tmpdir(), "whiteoven-dr-race-import-"));
+      try {
+        importBundle(text, join(target, "backups"));
+        verifyBackup(join(target, "backups"), "offsite");
+      } finally {
+        rmSync(target, { recursive: true, force: true });
+      }
+    }
+    assert.equal(previous, ids.length);
+  } finally {
+    rmSync(host.dir, { recursive: true, force: true });
   }
 });

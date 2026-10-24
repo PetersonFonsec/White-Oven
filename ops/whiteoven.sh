@@ -9,7 +9,7 @@ command="${1:-help}"
 shift || true
 compose=(docker compose --env-file "$env_file" -f compose.yaml)
 usage() {
- echo 'Uso: bash ops/whiteoven.sh validate|build|update|verify|status|backup ID|verify-backup ID|export-backup ID DIR|import-backup ID DIR|prune-backups|ledger-init|exclude UUID|delete UUID|purge|probe-write|restore ID --confirm-offline|rollback' >&2
+ echo 'Uso: bash ops/whiteoven.sh validate|build|update|verify|status|backup ID|verify-backup ID|export-backup ID DIR|export-ledger DIR|import-backup ID DIR|import-ledger FILE|prune-backups|ledger-init|exclude UUID|delete UUID|purge|probe-write|restore ID --confirm-offline|rollback' >&2
  exit 1
 }
 # Resolve without printing private environment values.
@@ -49,11 +49,25 @@ recover() {
  exit 2
 }
 case "$command" in
- update|rollback|restore|backup|purge|exclude|delete|ledger-init|import-backup|prune-backups)
+ update|rollback|restore|backup|purge|exclude|delete|ledger-init|import-backup|import-ledger|export-backup|export-ledger|prune-backups)
   mkdir -p "$state_dir"
   if ! mkdir "$state_dir/update.lock" 2>/dev/null; then echo 'Outra operação está em andamento.' >&2; exit 1; fi
-  trap 'rmdir "$state_dir/update.lock"' EXIT ;;
+  trap 'rm -f -- ${partial:+"$partial"}; rmdir "$state_dir/update.lock"' EXIT ;;
 esac
+partial=""
+# Writes exported personal data to a hidden temporary file and renames it only when complete,
+# so an interrupted export never leaves a partial plaintext copy under the final name.
+export_to() {
+ local target="$1"; shift
+ [[ ! -e "$target" ]] || { echo 'Destino já contém esse arquivo; nada foi sobrescrito.' >&2; exit 1; }
+ mkdir -p "$(dirname "$target")"  # umask 077: a new directory is 0700, files 0600
+ partial="$(dirname "$target")/.$(basename "$target").partial-$$"
+ "${compose[@]}" exec -T landing node scripts/storage.mjs "$@" > "$partial"
+ [[ -s "$partial" ]] || { echo 'Exportação vazia; nada foi gravado.' >&2; exit 1; }
+ mv -n -- "$partial" "$target"
+ [[ ! -e "$partial" ]] || { echo 'Destino criado por outro processo; nada foi sobrescrito.' >&2; exit 1; }
+ partial=""
+}
 case "$command" in
  validate) validate ;;
  build) "${compose[@]}" config --quiet; "${compose[@]}" build --pull landing; validate ;;
@@ -111,20 +125,21 @@ case "$command" in
  export-backup)
   id="${1:-}"; destination="${2:-}"
   [[ "$id" =~ ^[a-zA-Z0-9_-]{1,80}$ && -n "$destination" ]] || usage
-  for suffix in .sqlite .sqlite.json .deletions.json; do
-   [[ ! -e "$destination/$id$suffix" ]] || { echo 'Destino já contém essa cópia; nada foi sobrescrito.' >&2; exit 1; }
-  done
-  "${compose[@]}" exec -T landing node scripts/storage.mjs verify "$id"
-  mkdir -p "$destination"; chmod 700 "$destination"
-  for pair in "$id.sqlite:$id.sqlite" "$id.sqlite.json:$id.sqlite.json" "deletions.json:$id.deletions.json"; do
-   "${compose[@]}" exec -T landing cat "/var/backups/whiteoven/${pair%%:*}" > "$destination/${pair##*:}"
-  done
-  echo 'Cópia exportada SEM cifra. Cifre, envie ao destino externo e apague esta cópia local conforme o runbook.' ;;
+  export_to "$destination/$id.bundle.json" export "$id"
+  echo 'Pacote (cópia + metadados + diário) exportado SEM cifra. Cifre, envie ao destino externo e apague esta cópia local conforme o runbook.' ;;
+ export-ledger)
+  [[ -n "${1:-}" ]] || usage
+  export_to "$1/deletions-$(date -u +%Y%m%dT%H%M%SZ).json" ledger-dump
+  echo 'Diário exportado. Substitua a cópia externa do diário conforme o runbook.' ;;
  import-backup)
   id="${1:-}"; source_dir="${2:-}"
-  [[ "$id" =~ ^[a-zA-Z0-9_-]{1,80}$ && -f "$source_dir/$id.sqlite" && -f "$source_dir/$id.sqlite.json" ]] || usage
+  [[ "$id" =~ ^[a-zA-Z0-9_-]{1,80}$ && -f "$source_dir/$id.bundle.json" ]] || usage
   refuse_failed "$(image_id "$(image)")"
-  "${compose[@]}" run --rm --no-deps -T -e "STORAGE_IMPORT_META=$(cat "$source_dir/$id.sqlite.json")" --entrypoint node landing scripts/storage.mjs import "$id" < "$source_dir/$id.sqlite" ;;
+  "${compose[@]}" run --rm --no-deps -T --entrypoint node landing scripts/storage.mjs import "$id" < "$source_dir/$id.bundle.json" ;;
+ import-ledger)
+  [[ -f "${1:-}" ]] || usage
+  refuse_failed "$(image_id "$(image)")"
+  "${compose[@]}" run --rm --no-deps -T --entrypoint node landing scripts/storage.mjs ledger-merge < "$1" ;;
  purge) "${compose[@]}" exec -T landing node --experimental-strip-types scripts/leads.mjs purge ;;
  restore)
   validate
