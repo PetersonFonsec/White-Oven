@@ -1,3 +1,5 @@
+import { type KeyObject, createPrivateKey } from "node:crypto";
+
 export const NODE_ENVS = ["development", "test", "production"] as const;
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
 
@@ -11,6 +13,19 @@ export interface ApiConfig {
   logLevel: LogLevel;
   openApiEnabled: boolean;
   database: DatabaseConfig;
+  auth: AuthConfig;
+}
+
+export interface AuthConfig {
+  /**
+   * Ed25519 key that signs staff access tokens. Required in production; elsewhere `null` means
+   * the process generates an ephemeral key at boot (tokens die with the process). Secret.
+   */
+  accessTokenPrivateKey: KeyObject | null;
+  /** How long a verified (session, tenant) membership may be reused before re-checking: 0-60 s. */
+  membershipCacheSeconds: number;
+  /** Browser origins allowed to call the cookie-based refresh and logout endpoints. */
+  adminOrigins: readonly string[];
 }
 
 export interface DatabaseConfig {
@@ -109,6 +124,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
       problems.push("DATABASE_POOL_MAX must be an integer between 1 and 100");
   }
 
+  const auth = loadAuthConfig(env, nodeEnv, problems);
+
   if (problems.length > 0) throw new ConfigError(problems);
   return Object.freeze({
     nodeEnv,
@@ -117,7 +134,80 @@ export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
     logLevel,
     openApiEnabled,
     database: Object.freeze({ url: databaseUrl, poolMax }),
+    auth: Object.freeze(auth),
   });
+}
+
+function loadAuthConfig(
+  env: NodeJS.ProcessEnv,
+  nodeEnv: NodeEnv,
+  problems: string[],
+): AuthConfig {
+  let accessTokenPrivateKey: KeyObject | null = null;
+  const rawKey = env.AUTH_ACCESS_TOKEN_PRIVATE_KEY;
+  if (rawKey === undefined || rawKey === "") {
+    if (nodeEnv === "production")
+      problems.push("AUTH_ACCESS_TOKEN_PRIVATE_KEY is required in production");
+  } else {
+    accessTokenPrivateKey = ed25519PrivateKey(rawKey);
+    if (!accessTokenPrivateKey)
+      problems.push(
+        "AUTH_ACCESS_TOKEN_PRIVATE_KEY must be a base64 PKCS#8 DER Ed25519 private key",
+      );
+  }
+
+  let membershipCacheSeconds = 30;
+  const rawTtl = env.AUTH_MEMBERSHIP_CACHE_SECONDS;
+  if (rawTtl !== undefined && rawTtl !== "") {
+    membershipCacheSeconds = /^\d{1,2}$/.test(rawTtl)
+      ? Number(rawTtl)
+      : Number.NaN;
+    if (!(membershipCacheSeconds >= 0 && membershipCacheSeconds <= 60))
+      problems.push(
+        "AUTH_MEMBERSHIP_CACHE_SECONDS must be an integer between 0 and 60",
+      );
+  }
+
+  const adminOrigins = (env.API_ADMIN_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin !== "");
+  if (adminOrigins.some((origin) => !isOrigin(origin)))
+    problems.push(
+      "API_ADMIN_ORIGINS must be a comma-separated list of http(s) origins",
+    );
+
+  return {
+    accessTokenPrivateKey,
+    membershipCacheSeconds,
+    adminOrigins: Object.freeze(adminOrigins),
+  };
+}
+
+function ed25519PrivateKey(raw: string): KeyObject | null {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) return null;
+  try {
+    const key = createPrivateKey({
+      key: Buffer.from(raw, "base64"),
+      format: "der",
+      type: "pkcs8",
+    });
+    return key.asymmetricKeyType === "ed25519" ? key : null;
+  } catch {
+    return null;
+  }
+}
+
+function isOrigin(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") &&
+      url.origin === raw
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Returns why `raw` is not a usable PostgreSQL URL, without echoing any part of it. */

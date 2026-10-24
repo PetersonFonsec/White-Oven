@@ -7,6 +7,7 @@ import {
   ApiTags,
 } from "@nestjs/swagger";
 import { MikroORM } from "@mikro-orm/postgresql";
+import { PublicRoute } from "../auth/route-access";
 import { ApiError, ApiErrorBody } from "../errors/api-error";
 
 export class HealthBody {
@@ -21,6 +22,7 @@ export const READINESS_TIMEOUT_MS = 2_000;
  * requires a database round trip. Neither reveals version, environment or dependency detail.
  */
 @ApiTags("health")
+@PublicRoute()
 @Controller("health")
 export class HealthController {
   constructor(@Inject(MikroORM) private readonly orm: MikroORM) {}

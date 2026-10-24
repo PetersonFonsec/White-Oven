@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { Controller, Get, HttpStatus, Logger, Module } from "@nestjs/common";
+import { PublicRoute } from "../src/auth/route-access";
 import { ApiError } from "../src/errors/api-error";
 import { json, nextTick, startTestServer, type TestServer } from "./helpers";
 
+@PublicRoute()
 @Controller("probe")
 class ProbeController {
   @Get("crash")
@@ -38,7 +40,16 @@ class ProbeController {
   }
 }
 
-@Module({ controllers: [ProbeController] })
+/** Deliberately without an access declaration: the global guard must refuse it. */
+@Controller("undeclared-probe")
+class UndeclaredProbeController {
+  @Get()
+  open() {
+    return { leaked: true };
+  }
+}
+
+@Module({ controllers: [ProbeController, UndeclaredProbeController] })
 class ProbeModule {}
 
 describe("API application", () => {
@@ -47,6 +58,20 @@ describe("API application", () => {
     server = await startTestServer({}, { imports: [ProbeModule] });
   });
   after(() => server.close());
+
+  it("refuses a route without an access declaration and logs it", async () => {
+    const response = await fetch(`${server.baseUrl}/v1/undeclared-probe`);
+    assert.equal(response.status, 403);
+    assert.equal((await json(response)).code, "FORBIDDEN");
+    await nextTick();
+    assert.ok(
+      server.logs.some(
+        (log) =>
+          log.msg === "route without access declaration" &&
+          log.handler === "UndeclaredProbeController.open",
+      ),
+    );
+  });
 
   it("GET /health answers ok without caching or version details", async () => {
     const response = await fetch(`${server.baseUrl}/health`);

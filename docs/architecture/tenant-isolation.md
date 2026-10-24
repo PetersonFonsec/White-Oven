@@ -1,6 +1,6 @@
 # Isolamento de tenants
 
-Status: especificação M0.3, implementada em M1.3 ([ADR 0006](../adr/0006-tenant-isolation.md)): `tenants`, `TenantContext`, guard por slug, `set_config(..., true)` por transação, RLS forçado, filtro global e testes 1–6. O teste 7 (revogação) depende de `Membership` e entra em M1.4. Define como a API garante que uma pizzaria nunca leia nem altere dados de outra. Esta estratégia é pré-requisito de qualquer fluxo de negócio (M1.3 no [roadmap](mvp-roadmap.md)).
+Status: especificação M0.3, implementada em M1.3 ([ADR 0006](../adr/0006-tenant-isolation.md)): `tenants`, `TenantContext`, guard por slug, `set_config(..., true)` por transação, RLS forçado, filtro global e testes 1–6. O teste 7 (revogação) foi implementado em M1.4 com `Membership` e tokens de equipe ([ADR 0007](../adr/0007-staff-authentication.md)). Define como a API garante que uma pizzaria nunca leia nem altere dados de outra. Esta estratégia é pré-requisito de qualquer fluxo de negócio (M1.3 no [roadmap](mvp-roadmap.md)).
 
 ## Decisão
 
@@ -54,7 +54,7 @@ Regras:
 - Unicidades de negócio incluem o tenant: `unique (tenant_id, email)` em clientes, `unique (tenant_id, number)` em pedidos.
 - Índices de consulta começam por `tenant_id`.
 
-Tabelas globais (sem `tenant_id`): `tenants`, `staff_users`, `staff_sessions`, `plans`. `memberships` tem `tenant_id` e RLS, mas o login precisa listar vínculos do usuário; essa consulta usa função `security definer` restrita ao `sub` autenticado.
+Tabelas globais (sem `tenant_id`): `tenants`, `staff_users`, `staff_sessions`, `plans`. `memberships` tem `tenant_id` e RLS, mas o login precisa listar vínculos do usuário; essa consulta usa a função `security definer` `whiteoven_staff_memberships(sub)`, que não contorna o RLS forçado: define o tenant de cada loja em sequência e lê só os vínculos daquele usuário ([ADR 0007](../adr/0007-staff-authentication.md)).
 
 ### Políticas
 

@@ -39,7 +39,7 @@ export async function createApp(
       ? { entities: [...ENTITIES, ...options.entities] }
       : {},
   );
-  const appModule = AppModule.forRoot(config, orm);
+  const appModule = AppModule.forRoot(config, orm, logger);
   const root = options.imports?.length
     ? {
         module: class RootModule {},
