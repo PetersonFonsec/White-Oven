@@ -23,6 +23,7 @@
     "api:dev": "pnpm --filter @whiteoven/api dev",
     "api:build": "pnpm --filter @whiteoven/api build",
     "api:migrate": "pnpm --filter @whiteoven/api migrate",
+    "api:create-operator": "pnpm --filter @whiteoven/api create-operator",
     "db:up": "docker compose -f compose.dev.yaml up -d --wait postgres"
   },
   "devDependencies": {

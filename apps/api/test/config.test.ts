@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { describe, it } from "node:test";
 import { ConfigError, loadConfig } from "../src/config/config";
 
@@ -8,10 +8,11 @@ const base = { DATABASE_URL };
 const ACCESS_KEY = generateKeyPairSync("ed25519")
   .privateKey.export({ format: "der", type: "pkcs8" })
   .toString("base64");
-/** Production requires the access token key; everything else about production is tested here. */
+/** Production requires both auth keys; everything else about production is tested here. */
 const production = {
   NODE_ENV: "production",
   AUTH_ACCESS_TOKEN_PRIVATE_KEY: ACCESS_KEY,
+  AUTH_MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
 };
 
 const problemsOf = (env: NodeJS.ProcessEnv): string[] => {
@@ -35,6 +36,7 @@ describe("loadConfig", () => {
       database: { url: DATABASE_URL, poolMax: 10 },
       auth: {
         accessTokenPrivateKey: null,
+        mfaEncryptionKey: null,
         adminOrigins: [],
       },
     });
@@ -96,6 +98,8 @@ describe("loadConfig", () => {
         .privateKey.export({ format: "der", type: "pkcs8" })
         .toString("base64"),
     ],
+    ["AUTH_MFA_ENCRYPTION_KEY", randomBytes(16).toString("base64")],
+    ["AUTH_MFA_ENCRYPTION_KEY", "not-base64-at-all"],
     ["API_ADMIN_ORIGINS", "https://admin.example.com/"],
     ["API_ADMIN_ORIGINS", "https://ok.example.com,ftp://x.example.com"],
   ] as const) {
@@ -106,9 +110,10 @@ describe("loadConfig", () => {
     });
   }
 
-  it("requires the access token key in production only", () => {
+  it("requires the access token and MFA keys in production only", () => {
     assert.deepEqual(problemsOf({ NODE_ENV: "production" }), [
       "AUTH_ACCESS_TOKEN_PRIVATE_KEY is required in production",
+      "AUTH_MFA_ENCRYPTION_KEY is required in production",
     ]);
     const config = loadConfig({
       ...base,
@@ -120,6 +125,7 @@ describe("loadConfig", () => {
       config.auth.accessTokenPrivateKey?.asymmetricKeyType,
       "ed25519",
     );
+    assert.equal(config.auth.mfaEncryptionKey?.length, 32);
     assert.deepEqual(config.auth.adminOrigins, [
       "https://admin.whiteoven.com.br",
       "http://localhost:4200",

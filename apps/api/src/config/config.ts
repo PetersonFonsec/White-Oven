@@ -22,6 +22,11 @@ export interface AuthConfig {
    * the process generates an ephemeral key at boot (tokens die with the process). Secret.
    */
   accessTokenPrivateKey: KeyObject | null;
+  /**
+   * 32-byte AES-256-GCM key for TOTP secrets at rest, kept outside the database. Required in
+   * production; elsewhere `null` means an ephemeral key (enrollments do not survive a restart).
+   */
+  mfaEncryptionKey: Buffer | null;
   /** Browser origins allowed to call the cookie-based refresh and logout endpoints. */
   adminOrigins: readonly string[];
 }
@@ -154,6 +159,22 @@ function loadAuthConfig(
       );
   }
 
+  let mfaEncryptionKey: Buffer | null = null;
+  const rawMfaKey = env.AUTH_MFA_ENCRYPTION_KEY;
+  if (rawMfaKey === undefined || rawMfaKey === "") {
+    if (nodeEnv === "production")
+      problems.push("AUTH_MFA_ENCRYPTION_KEY is required in production");
+  } else {
+    const bytes = /^[A-Za-z0-9+/]{43}=$/.test(rawMfaKey)
+      ? Buffer.from(rawMfaKey, "base64")
+      : null;
+    if (bytes?.length === 32) mfaEncryptionKey = bytes;
+    else
+      problems.push(
+        "AUTH_MFA_ENCRYPTION_KEY must be 32 bytes encoded in base64",
+      );
+  }
+
   const adminOrigins = (env.API_ADMIN_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())
@@ -165,6 +186,7 @@ function loadAuthConfig(
 
   return {
     accessTokenPrivateKey,
+    mfaEncryptionKey,
     adminOrigins: Object.freeze(adminOrigins),
   };
 }

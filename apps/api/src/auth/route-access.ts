@@ -17,6 +17,7 @@ import { JsonLogger } from "../logging/json-logger";
  * - `store`: `@StoreTenant()`, tenant from the URL slug.
  * - `staff`: staff access token, no tenant needed (`@StaffRoute()`).
  * - `admin`: staff access token with an ACTIVE membership in the token's tenant (`@AdminRoute()`).
+ * - `platform`: operator with a second-factor session (`@PlatformRoute()`).
  */
 export const ROUTE_ACCESS = "whiteoven:route-access";
 export const ROUTE_ACCESS_VALUES = [
@@ -24,6 +25,7 @@ export const ROUTE_ACCESS_VALUES = [
   "store",
   "staff",
   "admin",
+  "platform",
 ] as const;
 export type RouteAccess = (typeof ROUTE_ACCESS_VALUES)[number];
 
