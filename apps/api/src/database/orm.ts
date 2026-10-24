@@ -2,9 +2,17 @@ import { MikroORM, type Options } from "@mikro-orm/postgresql";
 import { Membership, StaffSession, StaffUser } from "../auth/staff.entity";
 import { assertTenantFilters } from "../tenancy/tenant-filter";
 import { Tenant } from "../tenancy/tenant.entity";
+import { Order, OwnerInvite } from "../platform/platform.entity";
 
 /** Every runtime entity. Tenant entities must declare `filters: tenantFilters`. */
-export const ENTITIES = [Tenant, StaffUser, StaffSession, Membership];
+export const ENTITIES = [
+  Tenant,
+  StaffUser,
+  StaffSession,
+  Membership,
+  Order,
+  OwnerInvite,
+];
 
 export interface OrmConnection {
   url: string;

@@ -8,11 +8,12 @@ const base = { DATABASE_URL };
 const ACCESS_KEY = generateKeyPairSync("ed25519")
   .privateKey.export({ format: "der", type: "pkcs8" })
   .toString("base64");
-/** Production requires both auth keys; everything else about production is tested here. */
+/** Production requires persistent auth/invitation keys; other settings are tested here. */
 const production = {
   NODE_ENV: "production",
   AUTH_ACCESS_TOKEN_PRIVATE_KEY: ACCESS_KEY,
   AUTH_MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+  OWNER_INVITE_SECRET: randomBytes(32).toString("base64"),
 };
 
 const problemsOf = (env: NodeJS.ProcessEnv): string[] => {
@@ -37,6 +38,7 @@ describe("loadConfig", () => {
       auth: {
         accessTokenPrivateKey: null,
         mfaEncryptionKey: null,
+        ownerInviteSecret: null,
         adminOrigins: [],
       },
     });
@@ -100,6 +102,8 @@ describe("loadConfig", () => {
     ],
     ["AUTH_MFA_ENCRYPTION_KEY", randomBytes(16).toString("base64")],
     ["AUTH_MFA_ENCRYPTION_KEY", "not-base64-at-all"],
+    ["OWNER_INVITE_SECRET", randomBytes(16).toString("base64")],
+    ["OWNER_INVITE_SECRET", "not-base64-at-all"],
     ["API_ADMIN_ORIGINS", "https://admin.example.com/"],
     ["API_ADMIN_ORIGINS", "https://ok.example.com,ftp://x.example.com"],
   ] as const) {
@@ -110,10 +114,11 @@ describe("loadConfig", () => {
     });
   }
 
-  it("requires the access token and MFA keys in production only", () => {
+  it("requires persistent authentication and invitation keys in production only", () => {
     assert.deepEqual(problemsOf({ NODE_ENV: "production" }), [
       "AUTH_ACCESS_TOKEN_PRIVATE_KEY is required in production",
       "AUTH_MFA_ENCRYPTION_KEY is required in production",
+      "OWNER_INVITE_SECRET is required in production",
     ]);
     const config = loadConfig({
       ...base,
@@ -126,6 +131,7 @@ describe("loadConfig", () => {
       "ed25519",
     );
     assert.equal(config.auth.mfaEncryptionKey?.length, 32);
+    assert.equal(config.auth.ownerInviteSecret?.length, 32);
     assert.deepEqual(config.auth.adminOrigins, [
       "https://admin.whiteoven.com.br",
       "http://localhost:4200",

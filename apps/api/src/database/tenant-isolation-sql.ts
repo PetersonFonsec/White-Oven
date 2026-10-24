@@ -43,6 +43,7 @@ interface TableFacts {
   rowSecurity: boolean;
   forceRowSecurity: boolean;
   tenantIdNotNull: boolean;
+  appAuditPrivilege: boolean;
 }
 
 interface PolicyFacts {
@@ -99,7 +100,13 @@ export async function findUnprotectedTenantTables(
       select c.relname as "table",
              c.relrowsecurity as "rowSecurity",
              c.relforcerowsecurity as "forceRowSecurity",
-             a.attnotnull as "tenantIdNotNull"
+             a.attnotnull as "tenantIdNotNull",
+             (c.relname = 'audit_events' and (
+               has_table_privilege('whiteoven_app', c.oid, 'SELECT') or
+               has_table_privilege('whiteoven_app', c.oid, 'INSERT') or
+               has_table_privilege('whiteoven_app', c.oid, 'UPDATE') or
+               has_table_privilege('whiteoven_app', c.oid, 'DELETE')
+             )) as "appAuditPrivilege"
         from pg_class c
         join pg_attribute a
           on a.attrelid = c.oid and a.attname = 'tenant_id' and not a.attisdropped
@@ -123,6 +130,18 @@ export async function findUnprotectedTenantTables(
 
     const result: UnprotectedTenantTable[] = [];
     for (const table of tables) {
+      // Platform AuditEvent uses nullable tenant_id by contract. It is global and intentionally
+      // has no direct app-role grants; narrowly scoped SECURITY DEFINER operations append rows.
+      if (table.table === "audit_events") {
+        if (table.appAuditPrivilege)
+          result.push({
+            table: table.table,
+            problems: [
+              "whiteoven_app has direct privileges on global audit table",
+            ],
+          });
+        continue;
+      }
       const own = policies.filter(
         (p) => p.table === table.table && p.permissive,
       );

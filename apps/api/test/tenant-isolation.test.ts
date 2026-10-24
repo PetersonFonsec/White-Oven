@@ -61,7 +61,7 @@ const STAFF_PASSWORD = "isolamento-2026";
 
 /**
  * Required tests of docs/architecture/tenant-isolation.md, against a real PostgreSQL. Tables
- * are the test-only probes of `tenant-probes.ts` plus `memberships` (M1.4), the first real one.
+ * are the test-only probes of `tenant-probes.ts` plus memberships, orders and owner_invites.
  */
 describe("tenant isolation", databaseSuite, () => {
   let database: TestDatabase;
@@ -270,7 +270,7 @@ describe("tenant isolation", databaseSuite, () => {
       assert.deepEqual(await findUnprotectedTenantTables(owner), []);
     });
 
-    it("covers the production tenant tables (memberships, M1.4)", async () => {
+    it("covers every production tenant table", async () => {
       const rows = await owner.em
         .getConnection()
         .execute<{ table: string; forced: boolean }[]>(
@@ -278,9 +278,30 @@ describe("tenant isolation", databaseSuite, () => {
            from pg_class c join pg_attribute a on a.attrelid = c.oid and a.attname = 'tenant_id'
           where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
             and c.relname not like 'isolation_probe_%'
+            and c.relname <> 'audit_events'
           order by 1`,
         );
-      assert.deepEqual(rows, [{ table: "memberships", forced: true }]);
+      assert.deepEqual(rows, [
+        { table: "memberships", forced: true },
+        { table: "orders", forced: true },
+        { table: "owner_invites", forced: true },
+      ]);
+    });
+
+    it("keeps the global append-only audit table inaccessible to the app role", async () => {
+      for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE"])
+        assert.equal(
+          await owner.em
+            .getConnection()
+            .execute<{ allowed: boolean }[]>(
+              "select has_table_privilege('whiteoven_app', 'audit_events', ?) as allowed",
+              [privilege],
+            )
+            .then(([row]) => row!.allowed),
+          false,
+          privilege,
+        );
+      assert.deepEqual(await findUnprotectedTenantTables(owner), []);
     });
 
     /** Problems reported for `table`, or [] when it is considered protected. */

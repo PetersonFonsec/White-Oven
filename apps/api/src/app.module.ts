@@ -8,6 +8,7 @@ import { DatabaseModule } from "./database/database.module";
 import { HealthController } from "./health/health.controller";
 import { JsonLogger } from "./logging/json-logger";
 import { TenancyModule } from "./tenancy/tenancy.module";
+import { PlatformModule } from "./platform/platform.module";
 
 @Module({})
 export class AppModule {
@@ -19,7 +20,12 @@ export class AppModule {
     return {
       module: AppModule,
       global: true,
-      imports: [DatabaseModule.forRoot(orm), TenancyModule, AuthModule],
+      imports: [
+        DatabaseModule.forRoot(orm),
+        TenancyModule,
+        AuthModule,
+        PlatformModule,
+      ],
       controllers: [HealthController],
       providers: [
         { provide: API_CONFIG, useValue: config },
