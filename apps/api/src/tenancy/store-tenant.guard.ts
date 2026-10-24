@@ -1,0 +1,96 @@
+import {
+  type CallHandler,
+  type CanActivate,
+  type ExecutionContext,
+  HttpStatus,
+  Inject,
+  Injectable,
+  type NestInterceptor,
+  SetMetadata,
+  UseGuards,
+  UseInterceptors,
+  applyDecorators,
+} from "@nestjs/common";
+import { MikroORM } from "@mikro-orm/postgresql";
+import type { Request } from "express";
+import { Observable } from "rxjs";
+import { ApiError } from "../errors/api-error";
+import { setRequestTenant } from "../logging/request-context";
+import { runWithTenantContext } from "./tenant-context";
+import { TENANT_SLUG, Tenant } from "./tenant.entity";
+
+/** Route metadata marking a tenant surface; the isolation matrix test lists every such route. */
+export const TENANT_SURFACE = "whiteoven:tenant-surface";
+export const STORE_SLUG_PARAM = "storeSlug";
+
+const resolvedTenants = new WeakMap<Request, string>();
+const claimedTenants = new WeakMap<Request, string>();
+
+/**
+ * Called by authentication guards (customer token `tid`, M1.4+) before `StoreTenantGuard`. The
+ * slug's tenant must match, otherwise the route answers 404 (T-03).
+ */
+export function claimTenant(req: Request, tenantId: string): void {
+  claimedTenants.set(req, tenantId);
+}
+
+const storeNotFound = () =>
+  new ApiError(HttpStatus.NOT_FOUND, "NOT_FOUND", "Store not found.");
+
+/**
+ * Layer 1 of tenant-isolation.md for `/v1/public/stores/{storeSlug}` (and, with a claimed tenant,
+ * `/v1/customer/stores/{storeSlug}`): the tenant comes only from the slug in the URL. Unknown or
+ * malformed slugs and a claimed tenant from another store answer the same 404. A store that is
+ * not ACTIVE answers 403 `TENANT_NOT_ACTIVE` without its status; M1.5 moves this check into
+ * `TenantStatusPolicy`.
+ */
+@Injectable()
+export class StoreTenantGuard implements CanActivate {
+  constructor(@Inject(MikroORM) private readonly orm: MikroORM) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const req = context.switchToHttp().getRequest<Request>();
+    const slug = req.params[STORE_SLUG_PARAM];
+    if (typeof slug !== "string" || !TENANT_SLUG.test(slug))
+      throw storeNotFound();
+    const tenant = await this.orm.em
+      .fork()
+      .findOne(Tenant, { slug }, { fields: ["id", "status"] });
+    if (!tenant) throw storeNotFound();
+    const claimed = claimedTenants.get(req);
+    if (claimed !== undefined && claimed !== tenant.id) throw storeNotFound();
+    if (tenant.status !== "ACTIVE")
+      throw new ApiError(
+        HttpStatus.FORBIDDEN,
+        "TENANT_NOT_ACTIVE",
+        "Store unavailable.",
+      );
+    resolvedTenants.set(req, tenant.id);
+    setRequestTenant(req, tenant.id);
+    return true;
+  }
+}
+
+/** Runs the handler inside the immutable `TenantContext` the guard resolved (layer 2). */
+@Injectable()
+export class TenantContextInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    const req = context.switchToHttp().getRequest<Request>();
+    const tenantId = resolvedTenants.get(req);
+    // Unreachable behind StoreTenantGuard; fail closed if the decorators are ever split.
+    if (!tenantId) throw storeNotFound();
+    return new Observable((subscriber) =>
+      runWithTenantContext({ tenantId, actor: { type: "anonymous" } }, () =>
+        next.handle().subscribe(subscriber),
+      ),
+    );
+  }
+}
+
+/** Store surface: resolves the tenant from `:storeSlug` and runs the handler in its context. */
+export const StoreTenant = () =>
+  applyDecorators(
+    SetMetadata(TENANT_SURFACE, "store"),
+    UseGuards(StoreTenantGuard),
+    UseInterceptors(TenantContextInterceptor),
+  );

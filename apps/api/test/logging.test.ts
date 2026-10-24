@@ -84,6 +84,14 @@ describe("JsonLogger security", () => {
     );
   });
 
+  it("keeps the tenantId resolved by the API verbatim, even when it ends in digits", () => {
+    const { logger, entries } = capture();
+    logger.write("info", "event", {
+      tenantId: "ce660541-9772-4dfd-96ce-428610097648",
+    });
+    assert.equal(entries()[0].tenantId, "ce660541-9772-4dfd-96ce-428610097648");
+  });
+
   it("logs an Error passed as message by type and frames, without its text", () => {
     const { logger, entries } = capture();
     logger.log(

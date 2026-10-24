@@ -1,6 +1,6 @@
 # Isolamento de tenants
 
-Status: especificação M0.3, sem implementação. Define como a API garante que uma pizzaria nunca leia nem altere dados de outra. Esta estratégia é pré-requisito de qualquer fluxo de negócio (M1.3 no [roadmap](mvp-roadmap.md)).
+Status: especificação M0.3, implementada em M1.3 ([ADR 0006](../adr/0006-tenant-isolation.md)): `tenants`, `TenantContext`, guard por slug, `set_config(..., true)` por transação, RLS forçado, filtro global e testes 1–6. O teste 7 (revogação) depende de `Membership` e entra em M1.4. Define como a API garante que uma pizzaria nunca leia nem altere dados de outra. Esta estratégia é pré-requisito de qualquer fluxo de negócio (M1.3 no [roadmap](mvp-roadmap.md)).
 
 ## Decisão
 
@@ -59,16 +59,19 @@ Tabelas globais (sem `tenant_id`): `tenants`, `staff_users`, `staff_sessions`, `
 ### Políticas
 
 ```sql
--- Exemplo ilustrativo; a implementação definitiva fica na migration de M1.3.
+-- Gerado por tenantIsolationSql('flavors') (apps/api/src/database/tenant-isolation-sql.ts).
 alter table flavors enable row level security;
 alter table flavors force row level security;
 
 create policy tenant_isolation on flavors
-  using (tenant_id = current_setting('app.tenant_id', true)::uuid)
-  with check (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  using (tenant_id = whiteoven_current_tenant())
+  with check (tenant_id = whiteoven_current_tenant());
+
+-- Migration20261024010000_tenants:
+-- whiteoven_current_tenant() = nullif(current_setting('app.tenant_id', true), '')::uuid
 ```
 
-- `current_setting(..., true)` retorna nulo sem contexto, e a comparação com nulo nega tudo: ausência de contexto falha fechada.
+- `current_setting(..., true)` retorna nulo sem contexto (ou `''` numa conexão que já usou a variável, convertido em nulo pelo `nullif`), e a comparação com nulo nega tudo: ausência de contexto falha fechada.
 - `FORCE ROW LEVEL SECURITY` aplica a política inclusive ao dono da tabela.
 - A aplicação conecta como `whiteoven_app`, sem `BYPASSRLS`, sem superusuário, sem DDL. Migrations usam `whiteoven_owner`, nunca disponível ao processo da API em runtime.
 
@@ -94,27 +97,27 @@ Recusa automática por tempo, limpeza e relatórios iteram tenants explicitament
 
 ## Ameaças e mitigações
 
-| #    | Ameaça                                                     | Mitigação                                                                                                                               |
-| ---- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| T-01 | Consulta sem filtro de tenant (bug)                        | RLS forçado; filtro global do ORM; teste de isolamento por tabela.                                                                      |
-| T-02 | IDOR: ID de recurso de outro tenant na URL ou corpo        | Carga dentro do contexto; FK compostas; 404 uniforme.                                                                                   |
-| T-03 | Token de cliente do tenant A usado na URL do tenant B      | `tid` precisa bater com o slug; teste dedicado.                                                                                         |
-| T-04 | Membro removido continua com token válido                  | Verificação de vínculo a cada requisição (cache curto invalidado na revogação); refresh revogado.                                       |
-| T-05 | Conexão do pool reaproveitada com tenant anterior          | `set_config(..., true)` só dentro de transação; teste que reutiliza conexão.                                                            |
-| T-06 | Cache compartilhado servindo cardápio de outra pizzaria    | `tenantId` na chave; teste com dois tenants.                                                                                            |
-| T-07 | Arquivo/imagem acessível por URL adivinhável               | Nomes aleatórios, prefixo por tenant; imagens de cardápio são públicas por natureza, documentos privados não são servidos diretamente.  |
-| T-08 | Operador da plataforma acessando dados sem necessidade     | Endpoints de plataforma mínimos, auditoria, sem impersonação no MVP.                                                                    |
-| T-09 | Migration ou script operacional que desativa RLS           | Papel separado; checklist de review; teste de CI verifica `relrowsecurity` e `relforcerowsecurity` em todas as tabelas com `tenant_id`. |
-| T-10 | Enumeração de slugs/tenants                                | Slugs são públicos por design (estão no app); respostas não expõem dados além do cardápio.                                              |
-| T-11 | Relatório de cobrança agregando dados pessoais de clientes | Ledger sem dados pessoais; relatórios usam apenas valores e IDs.                                                                        |
-| T-12 | Vazamento por logs/erros                                   | Logs sem corpo e sem PII; erros sem SQL ou stack.                                                                                       |
+| #    | Ameaça                                                     | Mitigação                                                                                                                                                                                |
+| ---- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T-01 | Consulta sem filtro de tenant (bug)                        | RLS forçado; filtro global do ORM; teste de isolamento por tabela.                                                                                                                       |
+| T-02 | IDOR: ID de recurso de outro tenant na URL ou corpo        | Carga dentro do contexto; FK compostas; 404 uniforme.                                                                                                                                    |
+| T-03 | Token de cliente do tenant A usado na URL do tenant B      | `tid` precisa bater com o slug; teste dedicado.                                                                                                                                          |
+| T-04 | Membro removido continua com token válido                  | Verificação de vínculo a cada requisição (cache curto invalidado na revogação); refresh revogado.                                                                                        |
+| T-05 | Conexão do pool reaproveitada com tenant anterior          | `set_config(..., true)` só dentro de transação; teste que reutiliza conexão.                                                                                                             |
+| T-06 | Cache compartilhado servindo cardápio de outra pizzaria    | `tenantId` na chave; teste com dois tenants.                                                                                                                                             |
+| T-07 | Arquivo/imagem acessível por URL adivinhável               | Nomes aleatórios, prefixo por tenant; imagens de cardápio são públicas por natureza, documentos privados não são servidos diretamente.                                                   |
+| T-08 | Operador da plataforma acessando dados sem necessidade     | Endpoints de plataforma mínimos, auditoria, sem impersonação no MVP.                                                                                                                     |
+| T-09 | Migration ou script operacional que desativa RLS           | Papel separado; checklist de review; teste de CI verifica `relrowsecurity`, `relforcerowsecurity` e as expressões de todas as políticas permissivas em todas as tabelas com `tenant_id`. |
+| T-10 | Enumeração de slugs/tenants                                | Slugs são públicos por design (estão no app); respostas não expõem dados além do cardápio.                                                                                               |
+| T-11 | Relatório de cobrança agregando dados pessoais de clientes | Ledger sem dados pessoais; relatórios usam apenas valores e IDs.                                                                                                                         |
+| T-12 | Vazamento por logs/erros                                   | Logs sem corpo e sem PII; erros sem SQL ou stack.                                                                                                                                        |
 
 ## Testes obrigatórios
 
 Executados em CI contra PostgreSQL real (container), não contra mocks:
 
 1. **Matriz de isolamento:** fixture com tenants A e B; para cada rota autenticada, usuário de A tenta ler/alterar recurso de B e recebe 404 sem efeito colateral.
-2. **Cobertura de RLS:** consulta ao catálogo do PostgreSQL falha se alguma tabela com coluna `tenant_id` não tiver RLS habilitado e forçado.
+2. **Cobertura de RLS:** consulta ao catálogo do PostgreSQL falha se alguma tabela com coluna `tenant_id` não tiver RLS habilitado e forçado, ou se qualquer política permissiva tiver `USING` ou `WITH CHECK` diferente da checagem de tenant (uma política extra `using (true)` basta para vazar todos os tenants).
 3. **Falha fechada:** consulta no papel da aplicação sem `app.tenant_id` retorna zero linhas e inserção falha.
 4. **Pool:** duas requisições sequenciais de tenants diferentes na mesma conexão não compartilham contexto.
 5. **FK compostas:** inserir item de pedido do tenant A com sabor do tenant B falha no banco.

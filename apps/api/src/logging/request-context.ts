@@ -6,9 +6,15 @@ export const REQUEST_ID_HEADER = "x-request-id";
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._-]{8,128}$/;
 
 const requestIds = new WeakMap<Request, string>();
+const requestTenants = new WeakMap<Request, string>();
 
 export const requestIdOf = (req: Request): string =>
   requestIds.get(req) ?? "unknown";
+
+/** Set by tenant surface guards; the access log line then carries `tenantId`. */
+export const setRequestTenant = (req: Request, tenantId: string): void => {
+  requestTenants.set(req, tenantId);
+};
 
 /**
  * Assigns a request id (reusing a well-formed upstream one) and writes one access log line
@@ -37,6 +43,9 @@ export function requestContext(logger: JsonLogger) {
             typeof routePath === "string"
               ? `${req.baseUrl}${routePath}`
               : "<unmatched>",
+          ...(requestTenants.has(req)
+            ? { tenantId: requestTenants.get(req) }
+            : {}),
           statusCode: res.statusCode,
           durationMs: Math.round(durationMs * 10) / 10,
         },
