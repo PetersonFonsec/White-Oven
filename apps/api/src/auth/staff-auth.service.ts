@@ -12,6 +12,7 @@ import type { TenantStatus } from "../tenancy/tenant.entity";
 import { runInTenant } from "../tenancy/tenant-transaction";
 import { AccessTokens, type StaffAccessClaims } from "./access-token";
 import { LoginThrottle } from "./login-throttle";
+import { MFA_CHALLENGE_TTL_SECONDS, MfaChallenges } from "./mfa-challenges";
 import { verifyPassword } from "./password";
 import type { MembershipRole, SessionRevokedReason } from "./staff.entity";
 
@@ -29,6 +30,13 @@ export interface IssuedTokens {
   activeTenantId: string | null;
 }
 
+/** Password accepted, second factor pending: answer with `POST /admin/auth/login/mfa`. */
+export interface MfaChallenge {
+  mfaRequired: true;
+  mfaToken: string;
+  expiresIn: number;
+}
+
 export interface TenantChoice {
   tenantId: string;
   slug: string;
@@ -43,6 +51,11 @@ export interface StaffAccess {
   /** Role in `tenantId`; null when the token has no active tenant. */
   role: MembershipRole | null;
   tenantId: string | null;
+  platformRole: "NONE" | "OPERATOR";
+  /** The user has an enabled second factor. */
+  mfaEnrolled: boolean;
+  /** This session was authenticated (or upgraded) with the second factor. */
+  sessionMfa: boolean;
 }
 
 /** Login matrix of domain-model.md ("Capacidades por status do tenant"). */
@@ -87,6 +100,7 @@ export class StaffAuth {
     @Inject(API_CONFIG) private readonly config: ApiConfig,
     @Inject(AccessTokens) private readonly tokens: AccessTokens,
     @Inject(LoginThrottle) private readonly throttle: LoginThrottle,
+    @Inject(MfaChallenges) private readonly challenges: MfaChallenges,
   ) {}
 
   /** Seconds to wait before this e-mail or IP may try again; 0 when allowed. */
@@ -98,13 +112,15 @@ export class StaffAuth {
     email: string,
     password: string,
     ip: string,
-  ): Promise<IssuedTokens> {
+  ): Promise<IssuedTokens | MfaChallenge> {
     const [user] = await this.sql<{
       id: string;
       passwordHash: string;
       status: string;
+      mfaEnrolled: boolean;
     }>(
-      `select id, password_hash as "passwordHash", status
+      `select id, password_hash as "passwordHash", status,
+              mfa_enabled_at is not null as "mfaEnrolled"
          from staff_users where email = ?`,
       [email],
     );
@@ -116,23 +132,39 @@ export class StaffAuth {
       this.throttle.recordFailure(email, ip);
       throw invalidCredentials();
     }
+    if (user.mfaEnrolled)
+      return {
+        mfaRequired: true,
+        mfaToken: this.challenges.create(user.id, email),
+        expiresIn: MFA_CHALLENGE_TTL_SECONDS,
+      };
     this.throttle.recordSuccess(email);
+    return this.startSession(user.id, false);
+  }
 
+  /** Creates a session after every required factor was checked by the caller. */
+  async startSession(staffUserId: string, mfa: boolean): Promise<IssuedTokens> {
     const sessionId = randomUUID();
     const secret = randomBytes(32).toString("base64url");
     await this.orm.em.fork().transactional(async (em) => {
       await em.execute(
-        `insert into staff_sessions (id, staff_user_id, refresh_token_hash, idle_expires_at)
-         values (?, ?, ?, now() + make_interval(secs => ?))`,
-        [sessionId, user.id, sha256(secret), STAFF_SESSION_IDLE_MS / 1000],
+        `insert into staff_sessions (id, staff_user_id, mfa, refresh_token_hash, idle_expires_at)
+         values (?, ?, ?, ?, now() + make_interval(secs => ?))`,
+        [
+          sessionId,
+          staffUserId,
+          mfa,
+          sha256(secret),
+          STAFF_SESSION_IDLE_MS / 1000,
+        ],
       );
       await em.execute(
         "update staff_users set last_login_at = now() where id = ?",
-        [user.id],
+        [staffUserId],
       );
     });
     return this.issue(
-      { sub: user.id, sid: sessionId, tid: null, mfa: false },
+      { sub: staffUserId, sid: sessionId, tid: null, mfa },
       `${sessionId}.${secret}`,
     );
   }
@@ -282,9 +314,17 @@ export class StaffAuth {
       return cached.access;
     this.accessCache.delete(key);
 
-    const [session] = await this.sql<{ ok: boolean }>(
+    const [session] = await this.sql<{
+      ok: boolean;
+      platformRole: StaffAccess["platformRole"];
+      mfaEnrolled: boolean;
+      sessionMfa: boolean;
+    }>(
       `select (s.revoked_at is null and s.idle_expires_at > now()
-               and u.status = 'ACTIVE') as ok
+               and u.status = 'ACTIVE') as ok,
+              u.platform_role as "platformRole",
+              u.mfa_enabled_at is not null as "mfaEnrolled",
+              s.mfa as "sessionMfa"
          from staff_sessions s join staff_users u on u.id = s.staff_user_id
         where s.id = ? and s.staff_user_id = ?`,
       [claims.sid, claims.sub],
@@ -300,6 +340,9 @@ export class StaffAuth {
       sessionId: claims.sid,
       role,
       tenantId: claims.tid,
+      platformRole: session.platformRole,
+      mfaEnrolled: session.mfaEnrolled,
+      sessionMfa: session.sessionMfa,
     };
     const ttl = this.config.auth.membershipCacheSeconds * 1000;
     if (ttl > 0) {
@@ -325,7 +368,7 @@ export class StaffAuth {
     return row && staffMayEnter(row.role, row.status) ? row.role : null;
   }
 
-  private issue(
+  issue(
     claims: Omit<StaffAccessClaims, "typ">,
     refreshToken?: string,
   ): IssuedTokens {
@@ -350,7 +393,8 @@ export class StaffAuth {
     );
   }
 
-  private forgetSession(sessionId: string): void {
+  /** Drops cached access of a session whose state changed (logout, reuse, MFA upgrade). */
+  forgetSession(sessionId: string): void {
     for (const key of this.accessCache.keys())
       if (key.startsWith(`${sessionId}|`)) this.accessCache.delete(key);
   }

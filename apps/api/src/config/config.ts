@@ -22,6 +22,11 @@ export interface AuthConfig {
    * the process generates an ephemeral key at boot (tokens die with the process). Secret.
    */
   accessTokenPrivateKey: KeyObject | null;
+  /**
+   * 32-byte AES-256-GCM key for TOTP secrets at rest, kept outside the database. Required in
+   * production; elsewhere `null` means an ephemeral key (enrollments do not survive a restart).
+   */
+  mfaEncryptionKey: Buffer | null;
   /** How long a verified (session, tenant) membership may be reused before re-checking: 0-60 s. */
   membershipCacheSeconds: number;
   /** Browser origins allowed to call the cookie-based refresh and logout endpoints. */
@@ -156,6 +161,22 @@ function loadAuthConfig(
       );
   }
 
+  let mfaEncryptionKey: Buffer | null = null;
+  const rawMfaKey = env.AUTH_MFA_ENCRYPTION_KEY;
+  if (rawMfaKey === undefined || rawMfaKey === "") {
+    if (nodeEnv === "production")
+      problems.push("AUTH_MFA_ENCRYPTION_KEY is required in production");
+  } else {
+    const bytes = /^[A-Za-z0-9+/]{43}=$/.test(rawMfaKey)
+      ? Buffer.from(rawMfaKey, "base64")
+      : null;
+    if (bytes?.length === 32) mfaEncryptionKey = bytes;
+    else
+      problems.push(
+        "AUTH_MFA_ENCRYPTION_KEY must be 32 bytes encoded in base64",
+      );
+  }
+
   let membershipCacheSeconds = 30;
   const rawTtl = env.AUTH_MEMBERSHIP_CACHE_SECONDS;
   if (rawTtl !== undefined && rawTtl !== "") {
@@ -179,6 +200,7 @@ function loadAuthConfig(
 
   return {
     accessTokenPrivateKey,
+    mfaEncryptionKey,
     membershipCacheSeconds,
     adminOrigins: Object.freeze(adminOrigins),
   };

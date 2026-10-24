@@ -18,6 +18,11 @@ async function main(): Promise<void> {
       "warn",
       "AUTH_ACCESS_TOKEN_PRIVATE_KEY not set: using an ephemeral key (development only)",
     );
+  if (!config.auth.mfaEncryptionKey)
+    logger.write(
+      "warn",
+      "AUTH_MFA_ENCRYPTION_KEY not set: using an ephemeral key (development only)",
+    );
   await app.listen(config.port, config.host);
   logger.write("info", "api listening", {
     host: config.host,

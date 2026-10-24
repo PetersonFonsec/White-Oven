@@ -30,6 +30,8 @@ import {
 } from "./staff-auth.service";
 
 const ROLES = "whiteoven:roles";
+/** Routes an operator without MFA may still reach: only the second factor enrollment. */
+const ALLOW_WITHOUT_MFA = "whiteoven:allow-without-mfa";
 
 export interface StaffPrincipal {
   claims: StaffAccessClaims;
@@ -116,16 +118,69 @@ export class StaffGuard implements CanActivate {
         },
       });
     }
+    // An operator acts only from a session authenticated with the second factor; before
+    // enrolling, the only reachable routes are the enrollment ones (system-overview.md).
+    const allowWithoutMfa = this.reflector.getAllAndOverride<
+      boolean | undefined
+    >(ALLOW_WITHOUT_MFA, [context.getHandler(), context.getClass()]);
+    if (
+      access.platformRole === "OPERATOR" &&
+      !access.sessionMfa &&
+      !allowWithoutMfa
+    )
+      throw mfaRequired();
+
     principals.set(req, { claims, access });
     return true;
   }
 }
 
+const mfaRequired = () =>
+  new ApiError(
+    HttpStatus.FORBIDDEN,
+    "MFA_REQUIRED",
+    "Two-factor authentication is required.",
+  );
+
+/**
+ * `PlatformGuard`, after `StaffGuard`: platform role OPERATOR and a session with `mfa = true`,
+ * both in the token and in the database. Anything else is 403, so no platform route works
+ * without the second factor (M1.4 acceptance criterion).
+ */
+@Injectable()
+export class PlatformGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const principal = principals.get(
+      context.switchToHttp().getRequest<Request>(),
+    );
+    if (!principal) throw authenticationRequired();
+    const { claims, access } = principal;
+    if (access.platformRole !== "OPERATOR")
+      throw new ApiError(
+        HttpStatus.FORBIDDEN,
+        "PLATFORM_FORBIDDEN",
+        "Platform access only.",
+      );
+    if (!claims.mfa || !access.sessionMfa || !access.mfaEnrolled)
+      throw mfaRequired();
+    return true;
+  }
+}
+
 /** Staff token required, no tenant: tenant picker, switching tenant, own session. */
-export const StaffRoute = () =>
+export const StaffRoute = (options: { allowWithoutMfa?: boolean } = {}) =>
   applyDecorators(
     SetMetadata(ROUTE_ACCESS, "staff"),
+    SetMetadata(ALLOW_WITHOUT_MFA, options.allowWithoutMfa === true),
     UseGuards(StaffGuard),
+    ApiBearerAuth(),
+  );
+
+/** `/v1/platform`: WhiteOven operators with a second-factor session (`PlatformGuard`). */
+export const PlatformRoute = () =>
+  applyDecorators(
+    SetMetadata(ROUTE_ACCESS, "platform"),
+    UseGuards(StaffGuard, PlatformGuard),
     ApiBearerAuth(),
   );
 
@@ -144,7 +199,7 @@ export const AdminRoute = (...roles: MembershipRole[]) =>
     ApiBearerAuth(),
   );
 
-/** The authenticated staff member of a `@StaffRoute()`/`@AdminRoute()` handler. */
+/** The authenticated staff member of a `@StaffRoute()`, `@AdminRoute()` or `@PlatformRoute()`. */
 export const CurrentStaff = createParamDecorator(
   (_: unknown, context: ExecutionContext): StaffPrincipal => {
     const principal = principals.get(
