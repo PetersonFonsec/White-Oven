@@ -17,6 +17,6 @@ M0.2 adiciona imagem Docker multi-stage, Compose de uma instância, exemplo opci
 
 ## Limites importantes
 
-Somente a captação temporária está implementada no servidor. Não há API principal do SaaS, autenticação, pagamentos ou deploy de produção. A infraestrutura Orbia não faz parte deste projeto. Logística, frete, roteirização, entregadores e rastreamento estão excluídos.
+Além da captação temporária, M1.1 adiciona a fundação da API NestJS em `apps/api` ([ADR 0004](../adr/0004-api-foundation.md)): `/health`, configuração validada, logs estruturados, erro padronizado e OpenAPI, sem banco nem rotas de negócio. Não há tenants, autenticação, pagamentos ou deploy de produção. A infraestrutura Orbia não faz parte deste projeto. Logística, frete, roteirização, entregadores e rastreamento estão excluídos.
 
 Detalhes de isolamento de tenant, autenticação, pagamentos, observabilidade, segurança e deploy serão decididos em ADRs quando as milestones correspondentes tiverem requisitos concretos.

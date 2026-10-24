@@ -1,0 +1,33 @@
+# Development stack. Production keeps using compose.yaml (landing) until the API has its
+# own deployment review. PostgreSQL joins this file in M1.2.
+#   docker compose -f compose.dev.yaml up --build api
+name: whiteoven-dev
+services:
+  api:
+    image: ${WHITEOVEN_API_IMAGE:-whiteoven-api:dev}
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      args:
+        VCS_REF: ${WHITEOVEN_REVISION:-local}
+    environment:
+      NODE_ENV: development
+      API_HOST: 0.0.0.0
+      API_PORT: "3000"
+      API_LOG_LEVEL: ${API_LOG_LEVEL:-info}
+      API_OPENAPI_ENABLED: "true"
+    ports:
+      - "127.0.0.1:${WHITEOVEN_API_PORT:-3000}:3000"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    pids_limit: 128
+    stop_grace_period: 15s
+    healthcheck:
+      test: [CMD, node, scripts/healthcheck.mjs]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

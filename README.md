@@ -1,6 +1,6 @@
 # WhiteOven
 
-SaaS white label planejado para pizzarias. **M0.2** prepara empacotamento Docker, Compose e operação para a landing Astro, Pizza Builder demonstrativo e captação real de interesse com SQLite local. Nenhum deploy real foi feito. Angular, React Native/Expo, API principal NestJS, pagamentos e onboarding continuam planejados.
+SaaS white label planejado para pizzarias. **M0** entregou a landing Astro, o Pizza Builder demonstrativo, a captação real de interesse com SQLite local e o empacotamento Docker/Compose. **M1.1** inicia a API NestJS em `apps/api` (configuração validada, `/health`, logs estruturados, erro padronizado e OpenAPI), ainda sem banco, tenants ou autenticação. Nenhum deploy real foi feito. Angular, React Native/Expo, pagamentos e onboarding continuam planejados.
 
 ## Requisitos e início local
 
@@ -22,8 +22,9 @@ Abra `http://localhost:4321`. Sem configuração completa, o formulário permane
 | `pnpm dev`                                        | Servidor Astro de desenvolvimento.                                                 |
 | `pnpm build`                                      | Landing pré-renderizada em `apps/landing/dist/client` e servidor em `dist/server`. |
 | `pnpm start`                                      | Inicia o build Astro pelo inicializador Node com limites de conexão, após build.   |
-| `pnpm check`                                      | Formatação, ESLint e tipos strict.                                                 |
-| `pnpm test`                                       | Testes de pizza, contrato, endpoint e SQLite real com Node.                        |
+| `pnpm check`                                      | Formatação, ESLint e tipos strict de todos os pacotes.                             |
+| `pnpm test`                                       | Testes de todos os pacotes (landing, API) e dos scripts de operação.               |
+| `pnpm api:dev`                                    | Compila e sobe a API em `http://127.0.0.1:3000`.                                   |
 | `pnpm test:e2e`                                   | Build + Playwright desktop/mobile com servidor e banco sintéticos.                 |
 | `pnpm leads inspect`                              | Lista IDs, datas, plano e volume, sem nome ou WhatsApp.                            |
 | `pnpm leads export .data/lead-exports/leads.json` | Exportação JSON restrita, sem sobrescrever arquivo existente.                      |
@@ -36,6 +37,7 @@ Instale Chromium com `pnpm exec playwright install chromium`. Alternativamente, 
 ## Estrutura e operação
 
 - `apps/landing`: interface, endpoint Astro `/api/leads`, política `/privacidade` e persistência temporária.
+- `apps/api`: API NestJS. Configuração em `apps/api/.env.example`; OpenAPI em `/v1/openapi.json` fora de produção. Decisões no [ADR 0004](docs/adr/0004-api-foundation.md).
 - `packages/contracts`: contrato e validação isomórfica do lead, sem dependências de servidor.
 - `packages/design-tokens`: identidade visual reutilizável.
 - `docs/product`, `docs/architecture`, `docs/adr`: estado do produto e decisões.
@@ -53,3 +55,13 @@ Consulte o [runbook](docs/operations/landing-deployment.md) antes de executar co
 `/health/live` verifica HTTP; `/health/ready` distingue prontidão, captação e armazenamento sem gravar no banco. Scripts de atualização/rollback preservam o banco atual; restauração é offline e explícita. Backup usa a API online do SQLite, com integridade, prazo e diário de exclusões.
 
 Teste de containers (Docker obrigatório): `node --experimental-strip-types tests/deployment/containers.mjs`. Cria e remove somente recursos sintéticos identificados por projeto aleatório. CI executa essa suíte e os checks existentes; após merge em main, publica a imagem testada no GHCR com tag SHA, sem deploy automático. GHCR/HTTPS público e o destino real só serão verificados após configuração futura autorizada.
+
+## API em desenvolvimento — M1.1
+
+```sh
+pnpm api:dev                                    # local, porta 3000
+docker compose -f compose.dev.yaml up --build api   # container, loopback 127.0.0.1:3000
+curl http://127.0.0.1:3000/health               # {"status":"ok"}
+```
+
+Configuração inválida (por exemplo `API_PORT=abc`) encerra o processo com código 1 antes de abrir a porta. `compose.dev.yaml` é só para desenvolvimento; PostgreSQL entra nele em M1.2. O `compose.yaml` de produção continua servindo apenas a landing.
