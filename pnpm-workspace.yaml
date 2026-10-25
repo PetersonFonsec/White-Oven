@@ -7,3 +7,6 @@ allowBuilds:
   sharp: true
   better-sqlite3: true
   "@scarf/scarf": false
+  "@parcel/watcher": false
+  lmdb: false
+  msgpackr-extract: false

@@ -24,7 +24,10 @@
     "api:build": "pnpm --filter @whiteoven/api build",
     "api:migrate": "pnpm --filter @whiteoven/api migrate",
     "api:create-operator": "pnpm --filter @whiteoven/api create-operator",
-    "db:up": "docker compose -f compose.dev.yaml up -d --wait postgres"
+    "admin:dev": "pnpm --filter @whiteoven/admin dev",
+    "admin:build": "pnpm --filter @whiteoven/admin build",
+    "db:up": "docker compose -f compose.dev.yaml up -d --wait postgres",
+    "test:e2e:admin": "playwright test -c apps/admin/e2e/playwright.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

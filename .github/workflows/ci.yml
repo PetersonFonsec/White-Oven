@@ -33,6 +33,10 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - name: Build and browser tests with synthetic capture configuration
         run: pnpm test:e2e
+      - name: Admin panel browser tests against the API and PostgreSQL
+        run: pnpm test:e2e:admin
+        env:
+          TEST_DATABASE_OWNER_URL: postgres://whiteoven_owner:whiteoven-dev-owner-password@127.0.0.1:5432/whiteoven
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

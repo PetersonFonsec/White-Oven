@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "tsc -p tsconfig.test.json && node --enable-source-maps --test \"dist/tests/test/**/*.test.js\"",
     "migrate": "tsc -p tsconfig.build.json && node --env-file-if-exists=.env.migrate --enable-source-maps dist/database/migrate.js",
-    "create-operator": "tsc -p tsconfig.build.json && node --env-file-if-exists=.env --enable-source-maps dist/auth/create-operator.js"
+    "create-operator": "tsc -p tsconfig.build.json && node --env-file-if-exists=.env --enable-source-maps dist/auth/create-operator.js",
+    "e2e-server": "tsc -p tsconfig.test.json && node --enable-source-maps dist/tests/test/e2e-server.js"
   },
   "dependencies": {
     "@mikro-orm/core": "7.2.5",

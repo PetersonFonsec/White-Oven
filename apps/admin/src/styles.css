@@ -1,0 +1,174 @@
+/* Custom properties come from packages/design-tokens (src/app/core/design-tokens.ts). */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--wo-fontFamily-web);
+  font-size: var(--wo-fontSize-body);
+  line-height: var(--wo-lineHeight-body);
+  color: var(--wo-color-text);
+  background: var(--wo-color-cream);
+}
+
+h1,
+h2 {
+  margin: 0 0 var(--wo-spacing-4);
+  line-height: var(--wo-lineHeight-heading);
+  font-weight: var(--wo-fontWeight-heavy);
+}
+
+h1 {
+  font-size: var(--wo-fontSize-title);
+}
+
+p {
+  margin: 0 0 var(--wo-spacing-4);
+}
+
+a {
+  color: var(--wo-color-accentText);
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+:focus-visible {
+  outline: var(--wo-interaction-focusWidth) solid var(--wo-color-focus);
+  outline-offset: var(--wo-interaction-focusOffset);
+}
+
+[tabindex="-1"]:focus {
+  outline: none;
+}
+
+.skip-link {
+  position: absolute;
+  left: var(--wo-spacing-4);
+  top: -100px;
+  z-index: 10;
+  padding: var(--wo-spacing-3) var(--wo-spacing-4);
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-surface);
+}
+
+.skip-link:focus {
+  top: var(--wo-spacing-4);
+}
+
+.card {
+  max-width: 440px;
+  margin: var(--wo-spacing-8) auto;
+  padding: var(--wo-spacing-6);
+  border-radius: var(--wo-radius-card);
+  background: var(--wo-color-surface);
+  box-shadow: var(--wo-shadow-card);
+}
+
+.brand {
+  color: var(--wo-color-accentText);
+  font-weight: var(--wo-fontWeight-heavy);
+  letter-spacing: 0.02em;
+}
+
+.muted {
+  color: var(--wo-color-muted);
+}
+
+.field {
+  display: grid;
+  gap: var(--wo-spacing-2);
+  margin-bottom: var(--wo-spacing-4);
+}
+
+.field label {
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+.field input {
+  min-height: var(--wo-interaction-minimumTarget);
+  padding: var(--wo-spacing-2) var(--wo-spacing-3);
+  border: 1px solid var(--wo-color-inputBorder);
+  border-radius: var(--wo-radius-small);
+  font: inherit;
+  background: var(--wo-color-surface);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--wo-interaction-minimumTarget);
+  padding: var(--wo-spacing-2) var(--wo-spacing-5);
+  border: 1px solid transparent;
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-primary);
+  color: var(--wo-color-onPrimary);
+  font: inherit;
+  font-weight: var(--wo-fontWeight-bold);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--wo-interaction-durationMs) ease;
+}
+
+.button:hover {
+  background: var(--wo-color-primaryHover);
+}
+
+.button:active {
+  background: var(--wo-color-primaryPressed);
+}
+
+.button--secondary {
+  background: var(--wo-color-surface);
+  border-color: var(--wo-color-inputBorder);
+}
+
+.button--secondary:hover {
+  background: var(--wo-color-cream);
+}
+
+.button--link {
+  min-height: var(--wo-interaction-minimumTarget);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--wo-color-accentText);
+  font: inherit;
+  font-weight: var(--wo-fontWeight-bold);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.button[disabled] {
+  background: var(--wo-color-disabled);
+  color: var(--wo-color-onDisabled);
+  cursor: not-allowed;
+}
+
+.status--warning {
+  padding: var(--wo-spacing-3) var(--wo-spacing-4);
+  border-radius: var(--wo-radius-small);
+  border: 1px solid var(--wo-color-border);
+  background: var(--wo-color-orangeSoft);
+  color: var(--wo-color-text);
+}
+
+.status--error {
+  padding: var(--wo-spacing-3) var(--wo-spacing-4);
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-errorSurface);
+  color: var(--wo-color-error);
+}
+
+.code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
