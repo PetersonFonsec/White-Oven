@@ -7,6 +7,12 @@ import {
   signal,
 } from "@angular/core";
 import { FormsModule } from "@angular/forms";
+import { evaluatePizza } from "@whiteoven/pizza-pricing";
+import type {
+  PizzaCatalog,
+  PizzaConfiguration,
+  PricingPolicy,
+} from "@whiteoven/contracts";
 import { errorMessage } from "../core/api";
 import { CatalogApi, type CatalogSnapshot } from "./catalog-api";
 
@@ -212,25 +218,25 @@ export class MenuPage implements OnDestroy {
     const left = this.previewFlavorLeft();
     if (!data || !sizeId || !left) return null;
     const mode = this.previewMode();
-    const flavorLeft = data.flavors.find((item) => item.id === left);
-    const flavorRight = mode === "HALVES"
-      ? data.flavors.find((item) => item.id === (this.previewFlavorRight() || left))
-      : flavorLeft;
-    const leftPrice = data.flavorPrices.find((item) => item.flavorId === left && item.sizeId === sizeId)?.priceCents;
-    const rightPrice = flavorRight ? data.flavorPrices.find((item) => item.flavorId === flavorRight.id && item.sizeId === sizeId)?.priceCents : undefined;
-    const crustPrice = this.previewCrustId()
-      ? data.crustPrices.find((item) => item.crustId === this.previewCrustId() && item.sizeId === sizeId)?.priceCents
-      : 0;
-    if (!flavorLeft || leftPrice === undefined || rightPrice === undefined || crustPrice === undefined) {
-      return { ok: false as const, errors: [{ code: "PIZZA_FLAVOR_UNAVAILABLE" }] };
-    }
-    const basePrice = mode === "HALVES"
-      ? data.pricingPolicy?.halfAndHalfStrategy === "AVERAGE"
-        ? Math.ceil((leftPrice + rightPrice) / 2)
-        : Math.max(leftPrice, rightPrice)
-      : leftPrice;
-    const surcharge = mode === "HALVES" ? data.pricingPolicy?.halfAndHalfSurchargeCents ?? 0 : 0;
-    return { ok: true as const, price: { unitPriceCents: basePrice + surcharge + crustPrice } };
+    const configuration: PizzaConfiguration = {
+      sizeId,
+      mode,
+      flavors:
+        mode === "HALVES"
+          ? { LEFT: left, RIGHT: this.previewFlavorRight() || left }
+          : { LEFT: left },
+      crustId: this.previewCrustId() || null,
+      extras: [],
+      removals: [],
+      quantity: 1,
+    };
+    const temporaryPolicy: PricingPolicy = {
+      halfAndHalfStrategy: data.pricingPolicy?.halfAndHalfStrategy ?? "HIGHEST",
+      halfAndHalfSurchargeCents:
+        data.pricingPolicy?.halfAndHalfSurchargeCents ?? 0,
+      maxExtrasPerHalf: data.pricingPolicy?.maxExtrasPerHalf ?? 4,
+    };
+    return evaluatePizza(configuration, this.pricingCatalog(data), temporaryPolicy);
   });
 
   protected newCategory = { name: "", kind: "PIZZA" as "PIZZA" | "PRODUCT" };
@@ -520,6 +526,19 @@ export class MenuPage implements OnDestroy {
     if (!this.previewSizeId() && size) this.previewSizeId.set(size.id);
     if (!this.previewFlavorLeft() && flavor) this.previewFlavorLeft.set(flavor.id);
     if (!this.previewFlavorRight() && flavor) this.previewFlavorRight.set(flavor.id);
+  }
+  private pricingCatalog(data: CatalogSnapshot): PizzaCatalog {
+    return {
+      categories: data.categories.map(({ id, kind, archived }) => ({ id, kind, archived })),
+      sizes: data.sizes.map(({ id, name, slices, maxFlavors, available, archived }) => ({ id, name, slices, maxFlavors, available, archived })),
+      ingredients: data.ingredients.map(({ id, name, removable, archived }) => ({ id, name, removable, archived })),
+      flavors: data.flavors.map(({ id, categoryId, name, ingredientIds, available, archived }) => ({ id, categoryId, name, ingredientIds, available, archived })),
+      flavorPrices: data.flavorPrices,
+      crusts: data.crusts.map(({ id, name, available, archived }) => ({ id, name, available, archived })),
+      crustPrices: data.crustPrices,
+      extras: data.extras.map(({ id, name, available, archived }) => ({ id, name, available, archived })),
+      extraPrices: data.extraPrices,
+    };
   }
   private async mutate(action: () => Promise<void>, reload = true): Promise<void> {
     this.error.set("");

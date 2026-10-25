@@ -65,9 +65,15 @@ importers:
       '@angular/router':
         specifier: 21.2.25
         version: 21.2.25(@angular/common@21.2.25(@angular/core@21.2.25(@angular/compiler@21.2.25)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@21.2.25(@angular/compiler@21.2.25)(rxjs@7.8.2))(@angular/platform-browser@21.2.25(@angular/common@21.2.25(@angular/core@21.2.25(@angular/compiler@21.2.25)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@21.2.25(@angular/compiler@21.2.25)(rxjs@7.8.2)))(rxjs@7.8.2)
+      '@whiteoven/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@whiteoven/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@whiteoven/pizza-pricing':
+        specifier: workspace:*
+        version: link:../../packages/pizza-pricing
       rxjs:
         specifier: ^7.8.2
         version: 7.8.2
@@ -10226,7 +10232,7 @@ snapshots:
 
   vite@7.3.7(@types/node@22.20.5)(sass@1.97.3)(yaml@2.9.1):
     dependencies:
-      esbuild: 0.27.7
+      esbuild: 0.28.1
       fdir: 6.5.0(picomatch@4.0.7)
       picomatch: 4.0.7
       postcss: 8.5.31
