@@ -136,9 +136,12 @@ export class CatalogApi {
     available: boolean,
   ): Promise<unknown> {
     return firstValueFrom(
-      this.http.patch(`${CATALOG}/availability/${kind}/${encodeURIComponent(id)}`, {
-        available,
-      }),
+      this.http.patch(
+        `${CATALOG}/availability/${kind}/${encodeURIComponent(id)}`,
+        {
+          available,
+        },
+      ),
     );
   }
 
@@ -214,7 +217,10 @@ export class CatalogApi {
     );
   }
 
-  readImage(id: string, variant: "thumbnail" | "menu" = "thumbnail"): Promise<Blob> {
+  readImage(
+    id: string,
+    variant: "thumbnail" | "menu" = "thumbnail",
+  ): Promise<Blob> {
     return firstValueFrom(
       this.http.get(`${IMAGES}/${encodeURIComponent(id)}/${variant}`, {
         responseType: "blob",

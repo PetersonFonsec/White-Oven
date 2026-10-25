@@ -5,7 +5,11 @@
   "compilerOptions": {
     "strict": true,
     "noImplicitOverride": true,
-    "noPropertyAccessFromIndexSignature": true,
+    /* The shared workspace packages (@whiteoven/contracts, @whiteoven/pizza-pricing) are consumed as
+       TypeScript source: they import with `.ts` extensions and read `Record<string, unknown>` with
+       dot access, so the app compiles them with their own conventions. */
+    "noPropertyAccessFromIndexSignature": false,
+    "rewriteRelativeImportExtensions": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,

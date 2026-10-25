@@ -6,6 +6,7 @@ wo-menu-page {
 }
 
 wo-menu-page .menu-heading,
+wo-menu-page .menu-heading-actions,
 wo-menu-page .menu-tabs,
 wo-menu-page .create-form,
 wo-menu-page .menu-row,
@@ -165,13 +166,39 @@ wo-menu-page .preview-result strong {
 }
 
 @media (max-width: 700px) {
-  wo-menu-page { padding: var(--wo-spacing-3); }
-  wo-menu-page .menu-heading { align-items: flex-start; }
+  wo-menu-page {
+    padding: var(--wo-spacing-3);
+  }
+  wo-menu-page .menu-heading {
+    align-items: flex-start;
+  }
   wo-menu-page .create-form,
   wo-menu-page .menu-row,
   wo-menu-page .price-row,
-  wo-menu-page .preview-form { align-items: stretch; flex-direction: column; }
+  wo-menu-page .preview-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
   wo-menu-page .create-form > *,
   wo-menu-page .menu-row > *,
-  wo-menu-page .price-row > * { width: 100%; }
+  wo-menu-page .price-row > * {
+    width: 100%;
+  }
+}
+
+wo-menu-page .dirty-label,
+wo-menu-page .field-error {
+  margin: 0;
+  color: var(--wo-color-error);
+  font-size: var(--wo-fontSize-small);
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+wo-menu-page [aria-invalid="true"] {
+  border-color: var(--wo-color-error);
+}
+
+wo-menu-page .image-pending {
+  padding: var(--wo-spacing-3);
+  background: var(--wo-color-errorSurface);
 }
