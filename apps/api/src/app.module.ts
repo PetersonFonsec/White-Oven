@@ -10,6 +10,7 @@ import { JsonLogger } from "./logging/json-logger";
 import { TenancyModule } from "./tenancy/tenancy.module";
 import { PlatformModule } from "./platform/platform.module";
 import { CatalogModule } from "./catalog/catalog.module";
+import { ImageModule } from "./images/image.module";
 
 @Module({})
 export class AppModule {
@@ -27,6 +28,7 @@ export class AppModule {
         AuthModule,
         PlatformModule,
         CatalogModule,
+        ImageModule,
       ],
       controllers: [HealthController],
       providers: [

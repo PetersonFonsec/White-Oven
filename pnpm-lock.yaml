@@ -77,6 +77,9 @@ importers:
       rxjs:
         specifier: ^7.8.2
         version: 7.8.2
+      sharp:
+        specifier: 0.34.5
+        version: 0.34.5
     devDependencies:
       '@types/express':
         specifier: ^5.0.6

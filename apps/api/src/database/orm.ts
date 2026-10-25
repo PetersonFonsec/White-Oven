@@ -17,6 +17,7 @@ import {
   CatalogIngredient,
   PizzaSize,
 } from "../catalog/catalog.entity";
+import { ImageAsset } from "../images/image.entity";
 
 /** Every runtime entity. Tenant entities must declare `filters: tenantFilters`. */
 export const ENTITIES = [
@@ -38,6 +39,7 @@ export const ENTITIES = [
   CatalogExtraPrice,
   CatalogSimpleProduct,
   CatalogPricingPolicy,
+  ImageAsset,
 ];
 
 export interface OrmConnection {

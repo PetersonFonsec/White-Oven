@@ -27,6 +27,7 @@ COPY --from=production-dependencies /workspace/apps/api/node_modules ./node_modu
 COPY --from=build /workspace/apps/api/dist ./dist
 COPY apps/api/package.json ./package.json
 COPY apps/api/scripts ./scripts
+RUN mkdir -p /var/lib/whiteoven/images && chown node:node /var/lib/whiteoven/images
 USER node
 EXPOSE 3000
 STOPSIGNAL SIGTERM

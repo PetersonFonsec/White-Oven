@@ -48,6 +48,7 @@ describe("M1.5 platform operations", databaseSuite, () => {
       port: 3000,
       logLevel: "error",
       openApiEnabled: false,
+      imageStorageDirectory: ".data/images",
       database: { url: database.appUrl, poolMax: 2 },
       auth: {
         accessTokenPrivateKey: null,
