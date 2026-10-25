@@ -473,6 +473,8 @@ describe("tenant isolation", databaseSuite, () => {
         "GET /admin/store/settings",
         "PUT /admin/store/settings",
         "PUT /admin/store/opening-hours",
+        "GET /admin/store/brand",
+        "PUT /admin/store/brand",
         "GET /admin/store/pause",
         "PUT /admin/store/pause",
         "DELETE /admin/store/pause",
@@ -706,6 +708,7 @@ describe("tenant isolation", databaseSuite, () => {
           order by 1`,
         );
       assert.deepEqual(rows, [
+        { table: "brand_themes", forced: true },
         { table: "catalog_categories", forced: true },
         { table: "catalog_crust_prices", forced: true },
         { table: "catalog_crusts", forced: true },

@@ -10,6 +10,7 @@ import { Migration20261024070000_image_assets } from "./Migration20261024070000_
 import { Migration20261024080000_catalog_versions } from "./Migration20261024080000_catalog_versions";
 import { Migration20261024090000_catalog_images } from "./Migration20261024090000_catalog_images";
 import { Migration20261025000000_store_settings } from "./Migration20261025000000_store_settings";
+import { Migration20261026000000_brand_themes } from "./Migration20261026000000_brand_themes";
 
 /**
  * Explicit, ordered list: no folder discovery at runtime. Names are stored in
@@ -59,5 +60,9 @@ export const MIGRATIONS: MigrationObject[] = [
   {
     name: "Migration20261025000000_store_settings",
     class: Migration20261025000000_store_settings,
+  },
+  {
+    name: "Migration20261026000000_brand_themes",
+    class: Migration20261026000000_brand_themes,
   },
 ];

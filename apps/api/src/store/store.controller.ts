@@ -19,6 +19,7 @@ import type { Request } from "express";
 import { AdminRoute } from "../auth/staff.guard";
 import { ApiError } from "../errors/api-error";
 import { requestIdOf } from "../logging/request-context";
+import { BRAND_COLOR_TOKENS, validateBrandTheme } from "./brand-rules";
 import {
   FULFILLMENT_MODES,
   PAYMENT_METHODS,
@@ -74,6 +75,16 @@ class PauseBody {
   minutes!: PauseMinutes | null;
 }
 
+class BrandThemeBody {
+  @ApiProperty({
+    description: `Overrides of ${BRAND_COLOR_TOKENS.join(", ")} only, as #RRGGBB`,
+    example: { primary: "#B3261E", onPrimary: "#FFFFFF" },
+  })
+  colorOverrides!: Record<string, string>;
+  @ApiProperty({ nullable: true, format: "uuid" }) logoAssetId!: string | null;
+  @ApiProperty({ nullable: true, format: "uuid" }) iconAssetId!: string | null;
+}
+
 const invalid = (code: string, errors: { code: string; path: string }[]) =>
   new ApiError(HttpStatus.UNPROCESSABLE_ENTITY, code, "Invalid request body.", {
     errors,
@@ -112,6 +123,29 @@ export class StoreController {
     const result = validateOpeningHours(body);
     if (!result.ok) throw invalid("OPENING_HOURS_INVALID", result.errors);
     return this.store.updateOpeningHours(result.value, requestIdOf(req));
+  }
+
+  @Get("brand")
+  @AdminRoute("OWNER", "MANAGER")
+  @ApiOperation({
+    summary: "Get the brand theme, its resolved colors and the contrast rules",
+  })
+  getBrand() {
+    return this.store.getBrand();
+  }
+
+  @Put("brand")
+  @AdminRoute("OWNER")
+  @ApiBody({ type: BrandThemeBody })
+  @ApiOperation({
+    summary: "Publish the brand theme",
+    description:
+      "Refused with 422 BRAND_THEME_INVALID when a locked token is sent, a color fails a contrast rule (details carry ratio and minimum), or an image is missing, too small or, for the icon, not square.",
+  })
+  updateBrand(@Body() body: unknown, @Req() req: Request) {
+    const result = validateBrandTheme(body);
+    if (!result.ok) throw invalid("BRAND_THEME_INVALID", result.errors);
+    return this.store.updateBrand(result.value, requestIdOf(req));
   }
 
   @Get("pause")

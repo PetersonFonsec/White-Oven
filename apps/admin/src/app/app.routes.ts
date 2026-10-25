@@ -20,6 +20,7 @@ import { StoreHomePage } from "./shell/store-home.page";
 import { StoreShell } from "./shell/store-shell";
 import { UpcomingPage } from "./shell/upcoming.page";
 import { StoreSelectPage } from "./stores/store-select.page";
+import { BrandPage } from "./settings/brand.page";
 import { SettingsPage } from "./settings/settings.page";
 import { MenuPage } from "./catalog/menu.page";
 
@@ -94,6 +95,12 @@ export const routes: Routes = [
         title: "Configurações · WhiteOven",
         data: { roles: rolesOf("configuracoes"), title: "Configurações" },
         component: SettingsPage,
+      },
+      {
+        path: "marca",
+        title: "Marca · WhiteOven",
+        data: { roles: rolesOf("marca"), title: "Marca" },
+        component: BrandPage,
       },
       {
         path: "equipe",

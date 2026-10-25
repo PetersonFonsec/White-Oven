@@ -57,6 +57,44 @@ export interface StoreState {
 
 export type PauseMinutes = 15 | 30 | 60;
 
+export const BRAND_COLOR_TOKENS = [
+  "primary",
+  "primaryHover",
+  "primaryPressed",
+  "onPrimary",
+  "accentText",
+] as const;
+export type BrandColorToken = (typeof BRAND_COLOR_TOKENS)[number];
+export type BrandColors = Record<BrandColorToken, string>;
+export type FixedColorToken = "surface" | "cream";
+
+export interface ContrastRule {
+  foreground: BrandColorToken | FixedColorToken;
+  background: BrandColorToken | FixedColorToken;
+  minimum: number;
+  usage: string;
+}
+
+export interface BrandThemeInput {
+  colorOverrides: Partial<BrandColors>;
+  logoAssetId: string | null;
+  iconAssetId: string | null;
+}
+export interface BrandTheme extends BrandThemeInput {
+  version: number;
+}
+
+/** The brand as the API keeps it, with the rules the editor previews against. */
+export interface BrandState {
+  saved: boolean;
+  theme: BrandTheme;
+  colors: BrandColors;
+  defaults: BrandColors;
+  fixedColors: Record<FixedColorToken, string>;
+  contrastRules: ContrastRule[];
+  imageRules: { logoMinSide: number; iconMinSide: number };
+}
+
 @Injectable({ providedIn: "root" })
 export class StoreApi {
   private readonly http = inject(HttpClient);
@@ -75,6 +113,14 @@ export class StoreApi {
     return firstValueFrom(
       this.http.put<OpeningHours>(`${STORE}/opening-hours`, hours),
     );
+  }
+
+  brand(): Promise<BrandState> {
+    return firstValueFrom(this.http.get<BrandState>(`${STORE}/brand`));
+  }
+
+  updateBrand(theme: BrandThemeInput): Promise<BrandState> {
+    return firstValueFrom(this.http.put<BrandState>(`${STORE}/brand`, theme));
   }
 
   updatePricingPolicy(policy: CatalogPolicy): Promise<CatalogPolicy> {

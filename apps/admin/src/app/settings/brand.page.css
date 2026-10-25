@@ -1,0 +1,243 @@
+wo-brand-page {
+  display: block;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--wo-spacing-6);
+}
+
+wo-brand-page .brand-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--wo-spacing-5);
+  align-items: start;
+}
+
+@media (max-width: 768px) {
+  wo-brand-page {
+    padding: var(--wo-spacing-4);
+  }
+
+  wo-brand-page .brand-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+wo-brand-page .brand-form {
+  display: grid;
+  gap: var(--wo-spacing-4);
+}
+
+wo-brand-page fieldset {
+  display: grid;
+  gap: var(--wo-spacing-3);
+  margin: 0;
+  padding: var(--wo-spacing-4);
+  border: 1px solid var(--wo-color-border);
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-surface);
+}
+
+wo-brand-page legend,
+wo-brand-page label {
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+wo-brand-page .brand-color,
+wo-brand-page .brand-image {
+  display: grid;
+  gap: var(--wo-spacing-1);
+}
+
+wo-brand-page .brand-color-inputs,
+wo-brand-page .brand-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wo-spacing-2);
+}
+
+wo-brand-page input[type="color"] {
+  width: var(--wo-interaction-minimumTarget);
+  height: var(--wo-interaction-minimumTarget);
+  padding: 2px;
+  border: 1px solid var(--wo-color-inputBorder);
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-surface);
+}
+
+wo-brand-page .brand-color-inputs input:not([type="color"]) {
+  width: 9ch;
+  min-height: var(--wo-interaction-minimumTarget);
+  padding: 0 var(--wo-spacing-2);
+  border: 1px solid var(--wo-color-inputBorder);
+  border-radius: var(--wo-radius-small);
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  text-transform: uppercase;
+}
+
+wo-brand-page [aria-invalid="true"] {
+  border-color: var(--wo-color-error);
+}
+
+wo-brand-page .field-error {
+  margin: 0;
+  color: var(--wo-color-error);
+}
+
+wo-brand-page .brand-contrast ul {
+  display: grid;
+  gap: var(--wo-spacing-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+wo-brand-page .brand-contrast li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wo-spacing-2);
+  padding: var(--wo-spacing-2);
+  border: 1px solid var(--wo-color-border);
+  border-radius: var(--wo-radius-small);
+}
+
+wo-brand-page .brand-contrast li.contrast--fail {
+  border-color: var(--wo-color-error);
+  background: var(--wo-color-errorSurface);
+  color: var(--wo-color-error);
+}
+
+wo-brand-page .contrast-swatch {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 32px;
+  border: 1px solid var(--wo-color-border);
+  border-radius: 8px;
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+wo-brand-page .contrast-usage {
+  flex: 1 1 200px;
+}
+
+wo-brand-page .brand-image-preview {
+  max-width: 240px;
+  max-height: 96px;
+  object-fit: contain;
+}
+
+wo-brand-page .brand-image-preview--icon {
+  width: 96px;
+  height: 96px;
+  border-radius: 22px;
+  object-fit: cover;
+}
+
+wo-brand-page .brand-preview {
+  position: sticky;
+  top: var(--wo-spacing-4);
+  display: grid;
+  gap: var(--wo-spacing-4);
+}
+
+wo-brand-page .phone {
+  display: grid;
+  gap: var(--wo-spacing-3);
+  padding: var(--wo-spacing-4);
+  border: 8px solid #252525;
+  border-radius: 32px;
+  background: #ffffff;
+  color: #252525;
+}
+
+wo-brand-page .phone-header {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: var(--wo-spacing-2) var(--wo-spacing-3);
+  border-radius: 16px;
+  background: var(--brand-primary);
+  color: var(--brand-on-primary);
+}
+
+wo-brand-page .phone-logo {
+  max-width: 160px;
+  max-height: 40px;
+  object-fit: contain;
+}
+
+wo-brand-page .phone-card {
+  display: grid;
+  gap: var(--wo-spacing-2);
+  padding: var(--wo-spacing-3);
+  border: 1px solid #e9e5df;
+  border-radius: 16px;
+}
+
+wo-brand-page .phone-tag,
+wo-brand-page .phone-price {
+  color: var(--brand-accent);
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+wo-brand-page .phone-button {
+  display: block;
+  padding: var(--wo-spacing-2) var(--wo-spacing-3);
+  border-radius: 999px;
+  background: var(--brand-primary);
+  color: var(--brand-on-primary);
+  font-weight: var(--wo-fontWeight-bold);
+  text-align: center;
+}
+
+wo-brand-page .phone-states {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--wo-spacing-2);
+}
+
+wo-brand-page .phone-button--hover {
+  background: var(--brand-primary-hover);
+}
+
+wo-brand-page .phone-button--pressed {
+  background: var(--brand-primary-pressed);
+}
+
+wo-brand-page .phone-cream {
+  padding: var(--wo-spacing-3);
+  border-radius: 16px;
+  background: var(--brand-cream);
+}
+
+wo-brand-page .app-icon-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--wo-spacing-3);
+}
+
+wo-brand-page .app-icon {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: var(--brand-primary);
+  color: var(--brand-on-primary);
+  font-size: 28px;
+  font-weight: var(--wo-fontWeight-heavy);
+}
+
+wo-brand-page .app-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+wo-brand-page .brand-notice {
+  color: var(--wo-color-success);
+}
