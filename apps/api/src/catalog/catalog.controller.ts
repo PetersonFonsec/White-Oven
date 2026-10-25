@@ -56,6 +56,40 @@ class PriceBody {
   @ApiProperty({ format: "uuid" }) sizeId!: string;
   @ApiProperty({ minimum: 1 }) priceCents!: number;
 }
+class AddonPriceBody {
+  @ApiProperty({ minimum: 0 }) priceCents!: number;
+}
+class ExtraPriceBody {
+  @ApiProperty({ minimum: 0 }) wholePriceCents!: number;
+  @ApiProperty({ minimum: 0 }) halfPriceCents!: number;
+}
+class SimpleProductBody {
+  @ApiProperty({ format: "uuid" }) categoryId!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ minimum: 0 }) priceCents!: number;
+}
+class CatalogAvailabilityBody {
+  @ApiProperty() available!: boolean;
+}
+class CatalogNamedItemBody {
+  @ApiProperty() name!: string;
+}
+class CatalogNamedItemPatchBody {
+  @ApiPropertyOptional() name?: string;
+  @ApiPropertyOptional() available?: boolean;
+}
+class SimpleProductPatchBody {
+  @ApiPropertyOptional({ format: "uuid" }) categoryId?: string;
+  @ApiPropertyOptional() name?: string;
+  @ApiPropertyOptional({ minimum: 0 }) priceCents?: number;
+  @ApiPropertyOptional() available?: boolean;
+}
+class PricingPolicyBody {
+  @ApiProperty({ enum: ["HIGHEST", "AVERAGE"] })
+  halfAndHalfStrategy!: "HIGHEST" | "AVERAGE";
+  @ApiProperty({ minimum: 0 }) halfAndHalfSurchargeCents!: number;
+  @ApiProperty({ minimum: 0, maximum: 10 }) maxExtrasPerHalf!: number;
+}
 
 @ApiTags("catalog")
 @Controller("admin/catalog")
@@ -318,6 +352,250 @@ export class CatalogController {
     return this.catalog.removeFlavorPrice(id, sizeId, requestIdOf(req));
   }
 
+  @Post("crusts")
+  @AdminRoute("OWNER", "MANAGER")
+  @ApiBody({ type: CatalogNamedItemBody })
+  createCrust(@Body() body: unknown, @Req() req: Request) {
+    if (!isObject(body) || !only(body, ["name"]) || !name(body.name))
+      throw bodyError();
+    return this.catalog.createCrust(body as { name: string }, requestIdOf(req));
+  }
+  @Patch("crusts/:id")
+  @AdminRoute("OWNER", "MANAGER")
+  @ApiBody({ type: CatalogNamedItemPatchBody })
+  updateCrust(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() req: Request,
+  ) {
+    if (
+      !UUID.test(id) ||
+      !isObject(body) ||
+      !Object.keys(body).length ||
+      !only(body, ["name", "available"]) ||
+      ("name" in body && !name(body.name)) ||
+      ("available" in body && typeof body.available !== "boolean")
+    )
+      throw bodyError();
+    return this.catalog.updateSimple(
+      "catalog_crusts",
+      "crust",
+      id,
+      body,
+      requestIdOf(req),
+    );
+  }
+  @Delete("crusts/:id")
+  @AdminRoute("OWNER", "MANAGER")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  archiveCrust(@Param("id") id: string, @Req() req: Request) {
+    return this.archive("catalog_crusts", "crust", id, req);
+  }
+  @Put("crusts/:id/prices/:sizeId")
+  @AdminRoute("OWNER", "MANAGER")
+  @ApiBody({ type: AddonPriceBody })
+  setCrustPrice(
+    @Param("id") id: string,
+    @Param("sizeId") sizeId: string,
+    @Body() body: unknown,
+    @Req() req: Request,
+  ) {
+    if (
+      !UUID.test(id) ||
+      !UUID.test(sizeId) ||
+      !isObject(body) ||
+      !only(body, ["priceCents"]) ||
+      !nonnegativeInt(body.priceCents)
+    )
+      throw bodyError();
+    return this.catalog.setCrustPrice(
+      id,
+      sizeId,
+      body.priceCents as number,
+      requestIdOf(req),
+    );
+  }
+  @Delete("crusts/:id/prices/:sizeId")
+  @AdminRoute("OWNER", "MANAGER")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  removeCrustPrice(
+    @Param("id") id: string,
+    @Param("sizeId") sizeId: string,
+    @Req() req: Request,
+  ) {
+    if (!UUID.test(id) || !UUID.test(sizeId)) throw bodyError();
+    return this.catalog.removeCrustPrice(id, sizeId, requestIdOf(req));
+  }
+
+  @Post("extras")
+  @AdminRoute("OWNER", "MANAGER")
+  @ApiBody({ type: CatalogNamedItemBody })
+  createExtra(@Body() body: unknown, @Req() req: Request) {
+    if (!isObject(body) || !only(body, ["name"]) || !name(body.name))
+      throw bodyError();
+    return this.catalog.createExtra(body as { name: string }, requestIdOf(req));
+  }
+  @Patch("extras/:id")
+  @AdminRoute("OWNER", "MANAGER")
+  @ApiBody({ type: CatalogNamedItemPatchBody })
+  updateExtra(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() req: Request,
+  ) {
+    if (
+      !UUID.test(id) ||
+      !isObject(body) ||
+      !Object.keys(body).length ||
+      !only(body, ["name", "available"]) ||
+      ("name" in body && !name(body.name)) ||
+      ("available" in body && typeof body.available !== "boolean")
+    )
+      throw bodyError();
+    return this.catalog.updateSimple(
+      "catalog_extras",
+      "extra",
+      id,
+      body,
+      requestIdOf(req),
+    );
+  }
+  @Delete("extras/:id")
+  @AdminRoute("OWNER", "MANAGER")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  archiveExtra(@Param("id") id: string, @Req() req: Request) {
+    return this.archive("catalog_extras", "extra", id, req);
+  }
+  @Put("extras/:id/prices/:sizeId")
+  @AdminRoute("OWNER", "MANAGER")
+  @ApiBody({ type: ExtraPriceBody })
+  setExtraPrice(
+    @Param("id") id: string,
+    @Param("sizeId") sizeId: string,
+    @Body() body: unknown,
+    @Req() req: Request,
+  ) {
+    if (
+      !UUID.test(id) ||
+      !UUID.test(sizeId) ||
+      !isObject(body) ||
+      !only(body, ["wholePriceCents", "halfPriceCents"]) ||
+      !nonnegativeInt(body.wholePriceCents) ||
+      !nonnegativeInt(body.halfPriceCents) ||
+      Number(body.halfPriceCents) > Number(body.wholePriceCents) ||
+      Number(body.wholePriceCents) > 2 * Number(body.halfPriceCents)
+    )
+      throw bodyError();
+    return this.catalog.setExtraPrice(
+      id,
+      sizeId,
+      body.wholePriceCents as number,
+      body.halfPriceCents as number,
+      requestIdOf(req),
+    );
+  }
+  @Delete("extras/:id/prices/:sizeId")
+  @AdminRoute("OWNER", "MANAGER")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  removeExtraPrice(
+    @Param("id") id: string,
+    @Param("sizeId") sizeId: string,
+    @Req() req: Request,
+  ) {
+    if (!UUID.test(id) || !UUID.test(sizeId)) throw bodyError();
+    return this.catalog.removeExtraPrice(id, sizeId, requestIdOf(req));
+  }
+
+  @Post("products")
+  @AdminRoute("OWNER", "MANAGER")
+  @ApiBody({ type: SimpleProductBody })
+  createProduct(@Body() body: unknown, @Req() req: Request) {
+    if (
+      !isObject(body) ||
+      !only(body, ["categoryId", "name", "priceCents"]) ||
+      !UUID.test(String(body.categoryId)) ||
+      !name(body.name) ||
+      !nonnegativeInt(body.priceCents)
+    )
+      throw bodyError();
+    return this.catalog.createSimpleProduct(
+      body as { categoryId: string; name: string; priceCents: number },
+      requestIdOf(req),
+    );
+  }
+  @Patch("products/:id")
+  @AdminRoute("OWNER", "MANAGER")
+  @ApiBody({ type: SimpleProductPatchBody })
+  updateProduct(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() req: Request,
+  ) {
+    if (
+      !UUID.test(id) ||
+      !isObject(body) ||
+      !Object.keys(body).length ||
+      !only(body, ["categoryId", "name", "priceCents", "available"]) ||
+      ("categoryId" in body && !UUID.test(String(body.categoryId))) ||
+      ("name" in body && !name(body.name)) ||
+      ("priceCents" in body && !nonnegativeInt(body.priceCents)) ||
+      ("available" in body && typeof body.available !== "boolean")
+    )
+      throw bodyError();
+    return this.catalog.updateSimple(
+      "catalog_simple_products",
+      "product",
+      id,
+      body,
+      requestIdOf(req),
+    );
+  }
+  @Delete("products/:id")
+  @AdminRoute("OWNER", "MANAGER")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  archiveProduct(@Param("id") id: string, @Req() req: Request) {
+    return this.archive("catalog_simple_products", "product", id, req);
+  }
+
+  @Patch("availability/:itemType/:id")
+  @AdminRoute("OWNER", "MANAGER", "STAFF")
+  @ApiBody({ type: CatalogAvailabilityBody })
+  updateAvailability(
+    @Param("itemType") itemType: string,
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() req: Request,
+  ) {
+    const tables: Record<string, string> = {
+      flavors: "catalog_flavors",
+      crusts: "catalog_crusts",
+      extras: "catalog_extras",
+      products: "catalog_simple_products",
+    };
+    if (
+      !UUID.test(id) ||
+      !tables[itemType] ||
+      !isObject(body) ||
+      !only(body, ["available"]) ||
+      typeof body.available !== "boolean"
+    )
+      throw bodyError();
+    return this.catalog.updateAvailability(
+      tables[itemType]!,
+      id,
+      body.available,
+      requestIdOf(req),
+    );
+  }
+
+  @Put("pricing-policy")
+  @AdminRoute("OWNER")
+  @ApiBody({ type: PricingPolicyBody })
+  updatePricingPolicy(@Body() body: unknown, @Req() req: Request) {
+    if (!pricingPolicy(body)) throw bodyError();
+    return this.catalog.updatePricingPolicy(body, requestIdOf(req));
+  }
+
   private archive(table: string, entity: string, id: string, req: Request) {
     if (!UUID.test(id)) throw bodyError();
     return this.catalog.archive(table, entity, id, requestIdOf(req));
@@ -336,6 +614,10 @@ const name = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0 && value.length <= 120;
 const posInt = (value: unknown) =>
   Number.isSafeInteger(value) && Number(value) >= 1;
+const nonnegativeInt = (value: unknown) =>
+  Number.isSafeInteger(value) &&
+  Number(value) >= 0 &&
+  Number(value) <= 2_147_483_647;
 const optionalNonnegativeInteger = (value: unknown) =>
   value === undefined || (Number.isSafeInteger(value) && Number(value) >= 0);
 const optionalText = (value: unknown, max: number) =>
@@ -348,3 +630,21 @@ const optionalUuidList = (value: unknown) =>
     value.length <= 100 &&
     value.every((id) => typeof id === "string" && UUID.test(id)) &&
     new Set(value).size === value.length);
+const pricingPolicy = (
+  value: unknown,
+): value is {
+  halfAndHalfStrategy: "HIGHEST" | "AVERAGE";
+  halfAndHalfSurchargeCents: number;
+  maxExtrasPerHalf: number;
+} =>
+  isObject(value) &&
+  only(value, [
+    "halfAndHalfStrategy",
+    "halfAndHalfSurchargeCents",
+    "maxExtrasPerHalf",
+  ]) &&
+  ["HIGHEST", "AVERAGE"].includes(String(value.halfAndHalfStrategy)) &&
+  nonnegativeInt(value.halfAndHalfSurchargeCents) &&
+  Number.isSafeInteger(value.maxExtrasPerHalf) &&
+  Number(value.maxExtrasPerHalf) >= 0 &&
+  Number(value.maxExtrasPerHalf) <= 10;

@@ -6,10 +6,14 @@ import { currentTenantContext } from "../tenancy/tenant-context";
 import { ApiError } from "../errors/api-error";
 import { TenantStatusPolicy } from "../tenancy/tenant-status-policy";
 import type { TenantStatus } from "../tenancy/tenant.entity";
+import type { TenantCapability } from "../tenancy/tenant-status-policy";
 import type {
   CatalogCategoryBody,
   CatalogFlavorBody,
   CatalogIngredientBody,
+  CatalogNamedItemBody,
+  CatalogPricingPolicyBody,
+  CatalogSimpleProductBody,
   CatalogSizeBody,
 } from "./catalog.types";
 
@@ -38,25 +42,66 @@ export class CatalogService {
 
   get() {
     return this.transactions.run(async (em) => {
-      const [categories, sizes, ingredients, flavors, prices] =
-        await Promise.all([
-          em.execute(
-            `select id, name, kind, sort_order as "sortOrder", (archived_at is not null) as archived from catalog_categories order by sort_order, name`,
-          ),
-          em.execute(
-            `select id, name, slices, max_flavors as "maxFlavors", sort_order as "sortOrder", available, (archived_at is not null) as archived from pizza_sizes order by sort_order, slices`,
-          ),
-          em.execute(
-            `select id, name, removable, (archived_at is not null) as archived from catalog_ingredients order by name`,
-          ),
-          em.execute(
-            `select f.id, f.category_id as "categoryId", f.name, f.description, f.available, (f.archived_at is not null) as archived, coalesce(array_agg(fi.ingredient_id) filter (where fi.ingredient_id is not null), '{}') as "ingredientIds" from catalog_flavors f left join catalog_flavor_ingredients fi on fi.tenant_id = f.tenant_id and fi.flavor_id = f.id group by f.id order by f.name`,
-          ),
-          em.execute(
-            `select flavor_id as "flavorId", size_id as "sizeId", price_cents as "priceCents" from catalog_flavor_prices order by flavor_id, size_id`,
-          ),
-        ]);
-      return { categories, sizes, ingredients, flavors, flavorPrices: prices };
+      const [
+        categories,
+        sizes,
+        ingredients,
+        flavors,
+        prices,
+        crusts,
+        crustPrices,
+        extras,
+        extraPrices,
+        simpleProducts,
+        pricingPolicy,
+      ] = await Promise.all([
+        em.execute(
+          `select id, name, kind, sort_order as "sortOrder", (archived_at is not null) as archived from catalog_categories order by sort_order, name`,
+        ),
+        em.execute(
+          `select id, name, slices, max_flavors as "maxFlavors", sort_order as "sortOrder", available, (archived_at is not null) as archived from pizza_sizes order by sort_order, slices`,
+        ),
+        em.execute(
+          `select id, name, removable, (archived_at is not null) as archived from catalog_ingredients order by name`,
+        ),
+        em.execute(
+          `select f.id, f.category_id as "categoryId", f.name, f.description, f.available, (f.archived_at is not null) as archived, coalesce(array_agg(fi.ingredient_id) filter (where fi.ingredient_id is not null), '{}') as "ingredientIds" from catalog_flavors f left join catalog_flavor_ingredients fi on fi.tenant_id = f.tenant_id and fi.flavor_id = f.id group by f.id order by f.name`,
+        ),
+        em.execute(
+          `select flavor_id as "flavorId", size_id as "sizeId", price_cents as "priceCents" from catalog_flavor_prices order by flavor_id, size_id`,
+        ),
+        em.execute(
+          `select id,name,available,(archived_at is not null) as archived from catalog_crusts order by name`,
+        ),
+        em.execute(
+          `select crust_id as "crustId",size_id as "sizeId",price_cents as "priceCents" from catalog_crust_prices order by crust_id,size_id`,
+        ),
+        em.execute(
+          `select id,name,available,(archived_at is not null) as archived from catalog_extras order by name`,
+        ),
+        em.execute(
+          `select extra_id as "extraId",size_id as "sizeId",whole_price_cents as "wholePriceCents",half_price_cents as "halfPriceCents" from catalog_extra_prices order by extra_id,size_id`,
+        ),
+        em.execute(
+          `select id,category_id as "categoryId",name,price_cents as "priceCents",available,(archived_at is not null) as archived from catalog_simple_products order by name`,
+        ),
+        em.execute(
+          `select half_and_half_strategy as "halfAndHalfStrategy",half_and_half_surcharge_cents as "halfAndHalfSurchargeCents",max_extras_per_half as "maxExtrasPerHalf" from catalog_pricing_policies limit 1`,
+        ),
+      ]);
+      return {
+        categories,
+        sizes,
+        ingredients,
+        flavors,
+        flavorPrices: prices,
+        crusts,
+        crustPrices,
+        extras,
+        extraPrices,
+        simpleProducts,
+        pricingPolicy: pricingPolicy[0] ?? null,
+      };
     });
   }
 
@@ -106,6 +151,142 @@ export class CatalogService {
       requestId,
     );
   }
+  async createCrust(body: CatalogNamedItemBody, requestId: string) {
+    return this.create(
+      "catalog_crusts",
+      "crust",
+      { name: body.name.trim() },
+      requestId,
+    );
+  }
+  async createExtra(body: CatalogNamedItemBody, requestId: string) {
+    return this.create(
+      "catalog_extras",
+      "extra",
+      { name: body.name.trim() },
+      requestId,
+    );
+  }
+  async createSimpleProduct(body: CatalogSimpleProductBody, requestId: string) {
+    const tenantId = currentTenantContext().tenantId;
+    const id = randomUUID();
+    await this.perform(requestId, async (em) => {
+      const [category] = await em.execute<
+        { kind: string; archivedAt: Date | null }[]
+      >(
+        'select kind,archived_at as "archivedAt" from catalog_categories where id=?',
+        [body.categoryId],
+      );
+      if (!category || category.kind !== "PRODUCT" || category.archivedAt)
+        throw notFound();
+      try {
+        await em.execute(
+          "insert into catalog_simple_products (id,tenant_id,category_id,name,price_cents) values (?,?,?,?,?)",
+          [id, tenantId, body.categoryId, body.name.trim(), body.priceCents],
+        );
+      } catch (error) {
+        this.mapConstraint(error);
+      }
+    });
+    return { id };
+  }
+
+  async setCrustPrice(
+    crustId: string,
+    sizeId: string,
+    priceCents: number,
+    requestId: string,
+  ) {
+    return this.setAddonPrice(
+      "crust",
+      crustId,
+      sizeId,
+      { priceCents },
+      requestId,
+    );
+  }
+  async setExtraPrice(
+    extraId: string,
+    sizeId: string,
+    wholePriceCents: number,
+    halfPriceCents: number,
+    requestId: string,
+  ) {
+    return this.setAddonPrice(
+      "extra",
+      extraId,
+      sizeId,
+      { wholePriceCents, halfPriceCents },
+      requestId,
+    );
+  }
+  async removeCrustPrice(crustId: string, sizeId: string, requestId: string) {
+    return this.removeAddonPrice("crust", crustId, sizeId, requestId);
+  }
+  async removeExtraPrice(extraId: string, sizeId: string, requestId: string) {
+    return this.removeAddonPrice("extra", extraId, sizeId, requestId);
+  }
+
+  async updateAvailability(
+    table: string,
+    id: string,
+    available: boolean,
+    requestId: string,
+  ) {
+    if (
+      ![
+        "catalog_flavors",
+        "catalog_crusts",
+        "catalog_extras",
+        "catalog_simple_products",
+      ].includes(table)
+    )
+      throw new Error("invalid availability table");
+    const actor = currentTenantContext().actor;
+    if (actor.type === "staff" && actor.role === "STAFF" && available)
+      throw new ApiError(
+        HttpStatus.FORBIDDEN,
+        "ROLE_FORBIDDEN",
+        "Staff can mark an item unavailable only.",
+      );
+    await this.perform(
+      requestId,
+      async (em) => {
+        const [row] = await em.execute<{ id: string }[]>(
+          `update ${table} set available=?,updated_at=now() where id=? and archived_at is null returning id`,
+          [available, id],
+        );
+        if (!row) throw notFound();
+      },
+      "catalogAvailability",
+    );
+    return { id, available };
+  }
+
+  async updatePricingPolicy(
+    policy: CatalogPricingPolicyBody,
+    requestId: string,
+  ) {
+    await this.perform(
+      requestId,
+      async (em) => {
+        await em.execute(
+          `insert into catalog_pricing_policies (tenant_id,half_and_half_strategy,half_and_half_surcharge_cents,max_extras_per_half)
+         values (current_setting('app.tenant_id')::uuid,?,?,?) on conflict (tenant_id) do update set
+         half_and_half_strategy=excluded.half_and_half_strategy,
+         half_and_half_surcharge_cents=excluded.half_and_half_surcharge_cents,
+         max_extras_per_half=excluded.max_extras_per_half,updated_at=now()`,
+          [
+            policy.halfAndHalfStrategy,
+            policy.halfAndHalfSurchargeCents,
+            policy.maxExtrasPerHalf,
+          ],
+        );
+      },
+      "catalogPolicyWrite",
+    );
+    return policy;
+  }
   async createFlavor(body: CatalogFlavorBody, requestId: string) {
     const tenantId = currentTenantContext().tenantId;
     const id = randomUUID();
@@ -150,11 +331,13 @@ export class CatalogService {
       if (!before || before.archived_at) throw notFound();
       const mapping: Record<string, string> = {
         name: "name",
+        categoryId: "category_id",
         sortOrder: "sort_order",
         slices: "slices",
         maxFlavors: "max_flavors",
         available: "available",
         removable: "removable",
+        priceCents: "price_cents",
       };
       const assignments: string[] = [];
       const values: unknown[] = [];
@@ -165,6 +348,16 @@ export class CatalogService {
         values.push(key === "name" ? (value as string).trim() : value);
       }
       if (!assignments.length) throw notFound();
+      if (table === "catalog_simple_products" && "categoryId" in patch) {
+        const [category] = await em.execute<
+          { kind: string; archivedAt: Date | null }[]
+        >(
+          'select kind,archived_at as "archivedAt" from catalog_categories where id=?',
+          [patch.categoryId],
+        );
+        if (!category || category.kind !== "PRODUCT" || category.archivedAt)
+          throw notFound();
+      }
       assignments.push("updated_at = now()");
       values.push(id);
       try {
@@ -272,7 +465,13 @@ export class CatalogService {
   async archive(table: string, _entity: string, id: string, requestId: string) {
     this.assertTable(table);
     await this.perform(requestId, async (em) => {
-      const availability = ["pizza_sizes", "catalog_flavors"].includes(table)
+      const availability = [
+        "pizza_sizes",
+        "catalog_flavors",
+        "catalog_crusts",
+        "catalog_extras",
+        "catalog_simple_products",
+      ].includes(table)
         ? ", available=false"
         : "";
       const [row] = await em.execute<{ id: string; archivedAt: Date | null }[]>(
@@ -283,6 +482,10 @@ export class CatalogService {
       if (table === "catalog_categories") {
         await em.execute(
           "update catalog_flavors set archived_at=now(),available=false,updated_at=now() where category_id=? and archived_at is null",
+          [id],
+        );
+        await em.execute(
+          "update catalog_simple_products set archived_at=now(),available=false,updated_at=now() where category_id=? and archived_at is null",
           [id],
         );
       }
@@ -340,6 +543,7 @@ export class CatalogService {
   private async perform<T>(
     requestId: string,
     work: (em: import("@mikro-orm/postgresql").EntityManager) => Promise<T>,
+    capability: TenantCapability = "catalogWrite",
   ): Promise<T> {
     try {
       return await this.transactions.run(async (em) => {
@@ -363,7 +567,7 @@ export class CatalogService {
           !TenantStatusPolicy.allows(
             tenant.status,
             context.actor.role,
-            "catalogWrite",
+            capability,
           )
         ) {
           throw new ApiError(
@@ -389,6 +593,84 @@ export class CatalogService {
       [`${flavorId}:${sizeId}`],
     );
   }
+  private async setAddonPrice(
+    kind: "crust" | "extra",
+    ownerId: string,
+    sizeId: string,
+    values:
+      | { priceCents: number }
+      | { wholePriceCents: number; halfPriceCents: number },
+    requestId: string,
+  ) {
+    const table =
+      kind === "crust" ? "catalog_crust_prices" : "catalog_extra_prices";
+    const ownerTable = kind === "crust" ? "catalog_crusts" : "catalog_extras";
+    const ownerColumn = kind === "crust" ? "crust_id" : "extra_id";
+    const key = kind === "crust" ? "crustId" : "extraId";
+    const columns =
+      kind === "crust"
+        ? ["price_cents"]
+        : ["whole_price_cents", "half_price_cents"];
+    const input =
+      kind === "crust"
+        ? [(values as { priceCents: number }).priceCents]
+        : [
+            (values as { wholePriceCents: number }).wholePriceCents,
+            (values as { halfPriceCents: number }).halfPriceCents,
+          ];
+    await this.perform(requestId, async (em) => {
+      const [owner] = await em.execute<{ id: string }[]>(
+        `select id from ${ownerTable} where id=? and archived_at is null`,
+        [ownerId],
+      );
+      const [size] = await em.execute<{ id: string }[]>(
+        "select id from pizza_sizes where id=? and archived_at is null and available=true",
+        [sizeId],
+      );
+      if (!owner || !size) throw notFound();
+      await this.lockAddonPrice(em, kind, ownerId, sizeId);
+      const insertColumns = [ownerColumn, "size_id", ...columns];
+      const insertValues = input.map(() => `?`).join(",");
+      const updateSet = columns
+        .map((column) => `${column}=excluded.${column}`)
+        .join(",");
+      await em.execute(
+        `insert into ${table} (tenant_id,${insertColumns.join(",")}) values (current_setting('app.tenant_id')::uuid,?,?,${insertValues})
+         on conflict (tenant_id,${ownerColumn},size_id) do update set ${updateSet},updated_at=now()`,
+        [ownerId, sizeId, ...input],
+      );
+    });
+    return { [key]: ownerId, sizeId, ...values };
+  }
+  private async removeAddonPrice(
+    kind: "crust" | "extra",
+    ownerId: string,
+    sizeId: string,
+    requestId: string,
+  ) {
+    const table =
+      kind === "crust" ? "catalog_crust_prices" : "catalog_extra_prices";
+    const ownerColumn = kind === "crust" ? "crust_id" : "extra_id";
+    await this.perform(requestId, async (em) => {
+      await this.lockAddonPrice(em, kind, ownerId, sizeId);
+      const [row] = await em.execute(
+        `delete from ${table} where ${ownerColumn}=? and size_id=? returning id`,
+        [ownerId, sizeId],
+      );
+      if (!row) throw notFound();
+    });
+  }
+  private async lockAddonPrice(
+    em: import("@mikro-orm/postgresql").EntityManager,
+    kind: string,
+    ownerId: string,
+    sizeId: string,
+  ) {
+    await em.execute(
+      "select pg_advisory_xact_lock(hashtextextended(?::text, 0))",
+      [`${kind}:${ownerId}:${sizeId}`],
+    );
+  }
   private mapConstraint(error: unknown): never {
     const code = (error as { code?: string } | null)?.code;
     if (code === "23505" || code === "23503" || code === "23514")
@@ -402,6 +684,9 @@ export class CatalogService {
         "pizza_sizes",
         "catalog_ingredients",
         "catalog_flavors",
+        "catalog_crusts",
+        "catalog_extras",
+        "catalog_simple_products",
       ].includes(table)
     )
       throw new Error("invalid catalog table");

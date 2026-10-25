@@ -16,7 +16,7 @@ import {
 } from "./staff-fixtures";
 import { runInTenant } from "../src/tenancy/tenant-transaction";
 
-describe("M2.3 tenant catalog API", databaseSuite, () => {
+describe("M2.3–M2.4 tenant catalog API", databaseSuite, () => {
   let database: TestDatabase;
   let owner: Awaited<ReturnType<TestDatabase["connect"]>>;
   let server: TestServer;
@@ -110,6 +110,250 @@ describe("M2.3 tenant catalog API", databaseSuite, () => {
           event.changes.to === 4900,
       ),
     );
+  });
+
+  it("manages crusts, extras, simple products, pricing policy and STAFF availability", async () => {
+    const productCategory = await json(
+      await call("/categories", "POST", { name: "Bebidas", kind: "PRODUCT" }),
+    );
+    const pizzaCategory = await json(
+      await call("/categories", "POST", {
+        name: "Pizza category",
+        kind: "PIZZA",
+      }),
+    );
+    const crust = await json(
+      await call("/crusts", "POST", { name: "Recheada" }),
+    );
+    const extra = await json(
+      await call("/extras", "POST", { name: "Azeitona" }),
+    );
+    const product = await json(
+      await call("/products", "POST", {
+        categoryId: productCategory.id,
+        name: "Refrigerante",
+        priceCents: 700,
+      }),
+    );
+    assert.equal(
+      (
+        await call("/products", "POST", {
+          categoryId: pizzaCategory.id,
+          name: "Produto na categoria errada",
+          priceCents: 700,
+        })
+      ).status,
+      404,
+    );
+    const size = await json(
+      await call("/sizes", "POST", { name: "M2.4", slices: 8, maxFlavors: 2 }),
+    );
+    assert.equal(
+      (
+        await call(`/crusts/${crust.id}/prices/${size.id}`, "PUT", {
+          priceCents: 0,
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await call(`/extras/${extra.id}/prices/${size.id}`, "PUT", {
+          halfPriceCents: 500,
+          wholePriceCents: 1200,
+        })
+      ).status,
+      422,
+    );
+    assert.equal(
+      (
+        await call(`/extras/${extra.id}/prices/${size.id}`, "PUT", {
+          halfPriceCents: 500,
+          wholePriceCents: 1000,
+        })
+      ).status,
+      200,
+    );
+    const policy = {
+      halfAndHalfStrategy: "HIGHEST",
+      halfAndHalfSurchargeCents: 150,
+      maxExtrasPerHalf: 4,
+    };
+    assert.equal((await call("/pricing-policy", "PUT", policy)).status, 200);
+
+    const snapshot = await json(await call("/items"));
+    assert.deepEqual(
+      Object.keys(snapshot).sort(),
+      [
+        "categories",
+        "crustPrices",
+        "crusts",
+        "extraPrices",
+        "extras",
+        "flavorPrices",
+        "flavors",
+        "ingredients",
+        "pricingPolicy",
+        "simpleProducts",
+        "sizes",
+      ].sort(),
+    );
+    assert.equal(snapshot.simpleProducts[0].id, product.id);
+    assert.equal(snapshot.pricingPolicy.maxExtrasPerHalf, 4);
+    const audit = await json(await call("/audit-events"));
+    for (const action of [
+      "catalog.crust.created",
+      "catalog.crust.price_created",
+      "catalog.extra.created",
+      "catalog.extra.price_created",
+      "catalog.product.created",
+      "catalog.pricing_policy.created",
+    ])
+      assert.ok(
+        audit.some((event: { action: string }) => event.action === action),
+        action,
+      );
+
+    const staffEmail = `catalog-availability-${randomUUID()}@test.invalid`;
+    const staffId = await insertStaffUser(
+      owner,
+      staffEmail,
+      "catalog-test-password",
+    );
+    await insertMembership(owner, tenantId, staffId, "STAFF");
+    const staffLoginResult = await staffLogin(
+      server.baseUrl,
+      staffEmail,
+      "catalog-test-password",
+    );
+    const staffTenant = await json(
+      await switchTenant(
+        server.baseUrl,
+        staffLoginResult.accessToken,
+        tenantId,
+      ),
+    );
+    const staffCall = (path: string, body: unknown) =>
+      fetch(`${server.baseUrl}/v1/admin/catalog${path}`, {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${staffTenant.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    assert.equal(
+      (
+        await staffCall(`/availability/products/${product.id}`, {
+          available: false,
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await staffCall(`/availability/products/${product.id}`, {
+          available: true,
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await fetch(`${server.baseUrl}/v1/admin/catalog/pricing-policy`, {
+          method: "PUT",
+          headers: {
+            authorization: `Bearer ${staffTenant.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(policy),
+        })
+      ).status,
+      403,
+    );
+    const app = await database.connect(database.appUrl);
+    try {
+      const [session] = await owner.em
+        .getConnection()
+        .execute<{ id: string }[]>(
+          "select id from staff_sessions where staff_user_id=? and revoked_at is null order by created_at desc limit 1",
+          [staffId],
+        );
+      assert.ok(session);
+      let sqlCode: string | undefined;
+      try {
+        await runInTenant(app, tenantId, async (em) => {
+          await em.execute(
+            "select set_config('app.catalog_actor_id', ?, true), set_config('app.catalog_session_id', ?, true), set_config('app.catalog_request_id', ?, true)",
+            [staffId, session.id!, randomUUID()],
+          );
+          await em.execute(
+            "update catalog_simple_products set price_cents=701 where id=?",
+            [product.id],
+          );
+        });
+      } catch (error) {
+        sqlCode = (error as { code?: string }).code;
+      }
+      assert.equal(sqlCode, "42501");
+    } finally {
+      await app.close();
+    }
+
+    const managerEmail = `catalog-policy-${randomUUID()}@test.invalid`;
+    const managerId = await insertStaffUser(
+      owner,
+      managerEmail,
+      "catalog-test-password",
+    );
+    await insertMembership(owner, tenantId, managerId, "MANAGER");
+    const managerLogin = await staffLogin(
+      server.baseUrl,
+      managerEmail,
+      "catalog-test-password",
+    );
+    const managerTenant = await json(
+      await switchTenant(server.baseUrl, managerLogin.accessToken, tenantId),
+    );
+    assert.equal(
+      (
+        await fetch(`${server.baseUrl}/v1/admin/catalog/pricing-policy`, {
+          method: "PUT",
+          headers: {
+            authorization: `Bearer ${managerTenant.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(policy),
+        })
+      ).status,
+      403,
+    );
+    const [managerSession] = await owner.em
+      .getConnection()
+      .execute<{ id: string }[]>(
+        "select id from staff_sessions where staff_user_id=? and revoked_at is null order by created_at desc limit 1",
+        [managerId],
+      );
+    assert.ok(managerSession);
+    const managerApp = await database.connect(database.appUrl);
+    let managerSqlCode: string | undefined;
+    try {
+      await runInTenant(managerApp, tenantId, async (em) => {
+        await em.execute(
+          "select set_config('app.catalog_actor_id', ?, true), set_config('app.catalog_session_id', ?, true), set_config('app.catalog_request_id', ?, true)",
+          [managerId, managerSession.id!, randomUUID()],
+        );
+        await em.execute(
+          "update catalog_pricing_policies set max_extras_per_half=5 where tenant_id=?",
+          [tenantId],
+        );
+      });
+    } catch (error) {
+      managerSqlCode = (error as { code?: string }).code;
+    } finally {
+      await managerApp.close();
+    }
+    assert.equal(managerSqlCode, "42501");
   });
 
   it("serializes concurrent first price writes and preserves archived recipe links", async () => {

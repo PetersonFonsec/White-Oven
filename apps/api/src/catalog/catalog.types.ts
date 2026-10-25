@@ -19,3 +19,16 @@ export interface CatalogFlavorBody {
   description?: string | null;
   ingredientIds?: string[];
 }
+export interface CatalogNamedItemBody {
+  name: string;
+}
+export interface CatalogSimpleProductBody {
+  categoryId: string;
+  name: string;
+  priceCents: number;
+}
+export interface CatalogPricingPolicyBody {
+  halfAndHalfStrategy: "HIGHEST" | "AVERAGE";
+  halfAndHalfSurchargeCents: number;
+  maxExtrasPerHalf: number;
+}
