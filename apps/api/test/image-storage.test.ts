@@ -1,11 +1,36 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import sharp from "sharp";
 import type { ApiConfig } from "../src/config/config";
+import { JsonLogger } from "../src/logging/json-logger";
 import { LocalImageStorage, processImage } from "../src/images/image-storage";
+
+const logger = new JsonLogger("error", () => {});
+
+class FailingVariantStorage extends LocalImageStorage {
+  private writes = 0;
+  readonly originalError = new Error("injected variant failure");
+
+  constructor(config: ApiConfig, failAtVariant: number) {
+    super(config, logger);
+    this.failAtVariant = failAtVariant;
+  }
+
+  private readonly failAtVariant: number;
+
+  protected override async writeVariant(
+    directory: string,
+    target: string,
+    bytes: Buffer,
+  ) {
+    await super.writeVariant(directory, target, bytes);
+    this.writes += 1;
+    if (this.writes === this.failAtVariant) throw this.originalError;
+  }
+}
 
 describe("M2.5 image processing and local storage", () => {
   it("sniffs PNG, JPEG and WebP bytes and emits metadata-free WebP variants", async () => {
@@ -45,7 +70,7 @@ describe("M2.5 image processing and local storage", () => {
   it("stores only generated WebP variants under tenant and opaque asset IDs", async () => {
     const root = await mkdtemp(join(tmpdir(), "whiteoven-images-"));
     const config = { imageStorageDirectory: root } as ApiConfig;
-    const storage = new LocalImageStorage(config);
+    const storage = new LocalImageStorage(config, logger);
     const tenantId = "51b7cf37-828a-4d18-8f60-804ab23e05e5";
     const assetId = "510c9890-ece7-4fa8-82b0-26171aa88af1";
     const variants = {
@@ -69,7 +94,63 @@ describe("M2.5 image processing and local storage", () => {
         storage.read("00000000-0000-0000-0000-000000000000", assetId, "menu"),
       );
       await storage.remove(tenantId, assetId);
+      await storage.remove(tenantId, assetId);
       await assert.rejects(storage.read(tenantId, assetId, "menu"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const failAtVariant of [1, 2]) {
+    it(`removes all partial files when variant ${failAtVariant} fails`, async () => {
+      const root = await mkdtemp(join(tmpdir(), "whiteoven-images-failure-"));
+      const config = { imageStorageDirectory: root } as ApiConfig;
+      const storage = new FailingVariantStorage(config, failAtVariant);
+      const tenantId = "51b7cf37-828a-4d18-8f60-804ab23e05e5";
+      const assetId = "510c9890-ece7-4fa8-82b0-26171aa88af1";
+      try {
+        await assert.rejects(
+          storage.write(tenantId, assetId, {
+            thumbnail: Buffer.from("thumbnail"),
+            menu: Buffer.from("menu"),
+          }),
+          (error) => error === storage.originalError,
+        );
+        await assert.rejects(access(join(root, "tenants", tenantId, assetId)), {
+          code: "ENOENT",
+        });
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("does not overwrite or clean an existing asset after an ID collision", async () => {
+    const root = await mkdtemp(join(tmpdir(), "whiteoven-images-collision-"));
+    const config = { imageStorageDirectory: root } as ApiConfig;
+    const storage = new LocalImageStorage(config, logger);
+    const tenantId = "51b7cf37-828a-4d18-8f60-804ab23e05e5";
+    const assetId = "510c9890-ece7-4fa8-82b0-26171aa88af1";
+    const variants = {
+      thumbnail: Buffer.from("original-thumbnail"),
+      menu: Buffer.from("original-menu"),
+    };
+    try {
+      await storage.write(tenantId, assetId, variants);
+      await assert.rejects(
+        storage.write(tenantId, assetId, {
+          thumbnail: Buffer.from("replacement-thumbnail"),
+          menu: Buffer.from("replacement-menu"),
+        }),
+      );
+      assert.deepEqual(
+        await storage.read(tenantId, assetId, "thumbnail"),
+        variants.thumbnail,
+      );
+      assert.deepEqual(
+        await storage.read(tenantId, assetId, "menu"),
+        variants.menu,
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

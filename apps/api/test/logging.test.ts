@@ -84,12 +84,14 @@ describe("JsonLogger security", () => {
     );
   });
 
-  it("keeps the tenantId resolved by the API verbatim, even when it ends in digits", () => {
+  it("keeps API-generated tenant and asset IDs verbatim for diagnostics", () => {
     const { logger, entries } = capture();
     logger.write("info", "event", {
       tenantId: "ce660541-9772-4dfd-96ce-428610097648",
+      assetId: "510c9890-ece7-4fa8-82b0-26171aa88af1",
     });
     assert.equal(entries()[0].tenantId, "ce660541-9772-4dfd-96ce-428610097648");
+    assert.equal(entries()[0].assetId, "510c9890-ece7-4fa8-82b0-26171aa88af1");
   });
 
   it("logs an Error passed as message by type and frames, without its text", () => {

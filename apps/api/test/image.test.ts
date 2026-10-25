@@ -96,13 +96,22 @@ describe("M2.5 tenant catalog images", databaseSuite, () => {
       const response = await imageCall(`/${asset.id}/${variant}`);
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("content-type"), "image/webp");
-      assert.match(response.headers.get("cache-control") ?? "", /private/);
+      assert.equal(response.headers.get("cache-control"), "private, no-store");
       assert.equal(
         (await sharp(Buffer.from(await response.arrayBuffer())).metadata())
           .format,
         "webp",
       );
     }
+    await rm(
+      join(storageDirectory, "tenants", tenantId, asset.id, "thumbnail.webp"),
+    );
+    const missingVariant = await imageCall(`/${asset.id}/thumbnail`);
+    assert.equal(missingVariant.status, 503);
+    const missingBody = await json(missingVariant);
+    assert.equal(missingBody.code, "IMAGE_STORAGE_MISSING");
+    assert.equal(missingBody.message, "Image is temporarily unavailable.");
+    assert.equal(JSON.stringify(missingBody).includes(storageDirectory), false);
     const metadata = await runInTenant(owner, tenantId, (em) =>
       em.execute<{ source_format: string; width: number; height: number }[]>(
         "select source_format,width,height from image_assets where id=?",

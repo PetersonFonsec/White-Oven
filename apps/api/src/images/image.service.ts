@@ -9,12 +9,15 @@ import {
 } from "../tenancy/tenant-status-policy";
 import type { TenantStatus } from "../tenancy/tenant.entity";
 import { ApiError } from "../errors/api-error";
+import { JsonLogger } from "../logging/json-logger";
 import {
+  IMAGE_PROCESSOR,
   IMAGE_STORAGE,
   type ImageStorage,
   type ImageVariant,
+  type ProcessedImage,
 } from "./image-storage";
-import { processImage } from "./image-storage";
+import type { ImageProcessor } from "./image-storage";
 
 const notFound = () =>
   new ApiError(HttpStatus.NOT_FOUND, "IMAGE_NOT_FOUND", "Image not found.");
@@ -24,18 +27,35 @@ const forbidden = () =>
     "CATALOG_WRITE_FORBIDDEN",
     "Catalog is read-only for this store status.",
   );
+const missingStorage = () =>
+  new ApiError(
+    HttpStatus.SERVICE_UNAVAILABLE,
+    "IMAGE_STORAGE_MISSING",
+    "Image is temporarily unavailable.",
+  );
 
 @Injectable()
 export class ImageService {
   constructor(
     private readonly transactions: TenantTransactions,
     @Inject(IMAGE_STORAGE) private readonly storage: ImageStorage,
+    @Inject(IMAGE_PROCESSOR) private readonly processImage: ImageProcessor,
+    @Inject(JsonLogger) private readonly logger: JsonLogger,
   ) {}
 
   async upload(bytes: Buffer, contentType: string, requestId: string) {
-    let processed;
+    const context = currentTenantContext();
+    if (context.actor.type !== "staff") throw forbidden();
+
+    // Reject unauthorized requests before invoking Sharp. This short transaction ends before
+    // image decoding; the same access is checked again in the persistence transaction below.
+    await this.transactions.run((em) =>
+      this.authorize(em, "catalogWrite", requestId),
+    );
+
+    let processed: ProcessedImage;
     try {
-      processed = await processImage(bytes, contentType);
+      processed = await this.processImage(bytes, contentType);
     } catch {
       throw new ApiError(
         HttpStatus.UNPROCESSABLE_ENTITY,
@@ -43,15 +63,13 @@ export class ImageService {
         "Upload must be a valid PNG, JPEG, or WebP image.",
       );
     }
-    const context = currentTenantContext();
-    if (context.actor.type !== "staff") throw forbidden();
     const assetId = randomUUID();
-    let stored = false;
+    let storageWriteCompleted = false;
     try {
       await this.transactions.run(async (em) => {
         await this.authorize(em, "catalogWrite", requestId);
         await this.storage.write(context.tenantId, assetId, processed.variants);
-        stored = true;
+        storageWriteCompleted = true;
         await em.execute(
           "insert into image_assets (id,tenant_id,source_format,width,height) values (?,?,?, ?, ?)",
           [
@@ -64,10 +82,8 @@ export class ImageService {
         );
       });
     } catch (error) {
-      if (stored)
-        await this.storage
-          .remove(context.tenantId, assetId)
-          .catch(() => undefined);
+      if (storageWriteCompleted)
+        await this.compensateStorageWrite(context.tenantId, assetId, error);
       const code = (error as { code?: string } | null)?.code;
       if (code === "23503" || code === "23514")
         throw new ApiError(
@@ -101,7 +117,47 @@ export class ImageService {
       return row;
     });
     if (!found) throw notFound();
-    return this.storage.read(context.tenantId, assetId, variant);
+    try {
+      return await this.storage.read(context.tenantId, assetId, variant);
+    } catch (error) {
+      if (!isMissingFile(error)) throw error;
+      this.logger.write(
+        "error",
+        "image metadata exists without stored variant",
+        {
+          event: "image_storage.variant_missing",
+          operation: "read",
+          tenantId: context.tenantId,
+          assetId,
+          variant,
+          errorType: errorType(error),
+        },
+      );
+      throw missingStorage();
+    }
+  }
+
+  private async compensateStorageWrite(
+    tenantId: string,
+    assetId: string,
+    originalError: unknown,
+  ) {
+    try {
+      await this.storage.remove(tenantId, assetId);
+    } catch (cleanupError) {
+      try {
+        this.logger.write("error", "image storage compensation failed", {
+          event: "image_storage.compensation_failed",
+          operation: "upload",
+          tenantId,
+          assetId,
+          originalErrorType: errorType(originalError),
+          cleanupErrorType: errorType(cleanupError),
+        });
+      } catch {
+        // Logging must not replace the original database or commit failure.
+      }
+    }
   }
 
   private async authorize(
@@ -123,6 +179,8 @@ export class ImageService {
           : "",
       ],
     );
+    // TenantTransactions.run re-locks and validates the live staff session, user and membership
+    // for every transaction. This query adds the capability-specific current tenant status.
     const [tenant] = await em.execute<{ status: TenantStatus }[]>(
       "select status from tenants where id=?",
       [context.tenantId],
@@ -140,3 +198,9 @@ export class ImageService {
       throw forbidden();
   }
 }
+
+const isMissingFile = (error: unknown): error is NodeJS.ErrnoException =>
+  error instanceof Error && "code" in error && error.code === "ENOENT";
+
+const errorType = (error: unknown) =>
+  error instanceof Error ? error.constructor.name : typeof error;

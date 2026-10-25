@@ -14,8 +14,11 @@ O catálogo precisa receber imagens sem confiar no nome, extensão ou tipo MIME 
 - Implementar `LocalImageStorage` no diretório `IMAGE_STORAGE_DIRECTORY`; produção exige um caminho absoluto. O Compose de desenvolvimento monta o volume nomeado `image-data` nesse caminho.
 - Aceitar somente PNG, JPEG e WebP até 5 MiB. Conferir o formato pelos bytes decodificados, limitar a 30 megapixels, remover metadados e gerar variantes WebP `thumbnail` (até 480 px) e `menu` (até 1600 px).
 - Gerar UUIDs no servidor e armazenar em `tenants/{tenantId}/{assetId}/{variant}.webp`. Diretórios usam modo 0700 e arquivos 0600.
-- Restringir upload e leitura a sessões da equipe OWNER/MANAGER, validar membership e estado do tenant na transação, aplicar RLS ao metadado e auditar a criação. As rotas são administrativas e autenticadas; exposição pública de imagens pertence a milestone posterior.
-- Gravar arquivos antes do metadado e removê-los se a transação do banco falhar. Uma falha de processo entre gravação e commit ainda pode deixar arquivo órfão; uma rotina de reconciliação fica para operação posterior.
+- Restringir upload e leitura a sessões da equipe OWNER/MANAGER, validar membership e estado do tenant na transação, aplicar RLS ao metadado e auditar a criação. Upload faz uma autorização curta antes da decodificação e revalida em uma segunda transação antes da gravação; `TenantTransactions` revalida sessão e membership e mantém locks durante a persistência. As rotas são administrativas e autenticadas; exposição pública de imagens pertence a milestone posterior.
+- O contrato `ImageStorage` exige que `write` remova suas gravações parciais sempre que possível e repropague o erro original. `remove` é idempotente e limitado ao par tenant/asset. O storage local escreve em diretório novo e remove esse diretório se uma variante falhar; UUIDs em colisão não sobrescrevem nem removem conteúdo existente.
+- Gravar arquivos antes do metadado e removê-los se INSERT ou COMMIT do banco falhar. Uma falha de remoção compensatória é registrada com evento, operação, tenant/asset e tipos de erro, sem mensagens ou caminhos do filesystem; o erro original continua sendo propagado. Uma falha de processo entre gravação e commit ainda pode deixar arquivo órfão; uma rotina de reconciliação fica para operação posterior.
+- Quando o metadado existe mas uma variante não está no storage (`ENOENT`), responder `503 IMAGE_STORAGE_MISSING` e registrar a inconsistência. Outros erros de I/O continuam como falhas internas observáveis e não são convertidos em `404`.
+- Respostas administrativas de imagem usam `Cache-Control: private, no-store` porque a autorização pode ser revogada. Endpoints públicos futuros definirão sua política separadamente.
 
 ## Consequências
 

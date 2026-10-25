@@ -105,7 +105,7 @@ export class ImageController {
     res
       .status(HttpStatus.OK)
       .type("image/webp")
-      .set("Cache-Control", "private, max-age=31536000, immutable")
+      .set("Cache-Control", "private, no-store")
       .set("X-Content-Type-Options", "nosniff")
       .send(image);
   }

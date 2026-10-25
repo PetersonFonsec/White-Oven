@@ -1,5 +1,10 @@
 import { Module } from "@nestjs/common";
-import { IMAGE_STORAGE, LocalImageStorage } from "./image-storage";
+import {
+  IMAGE_PROCESSOR,
+  IMAGE_STORAGE,
+  LocalImageStorage,
+  processImage,
+} from "./image-storage";
 import { ImageController } from "./image.controller";
 import { ImageService } from "./image.service";
 
@@ -9,6 +14,7 @@ import { ImageService } from "./image.service";
     ImageService,
     LocalImageStorage,
     { provide: IMAGE_STORAGE, useExisting: LocalImageStorage },
+    { provide: IMAGE_PROCESSOR, useValue: processImage },
   ],
 })
 export class ImageModule {}
