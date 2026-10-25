@@ -20,3 +20,5 @@ lead-exports/
 
 .ops-state/
 backups/
+
+.angular/
