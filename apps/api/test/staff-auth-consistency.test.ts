@@ -93,6 +93,19 @@ describe(
       locks = new HeldTransactions(owner);
       tenantA = await insertTenant(owner, "consistencia-a");
       tenantB = await insertTenant(owner, "consistencia-b");
+      // A store never loses its last ACTIVE OWNER (ADR 0015), so each keeps one that the tests
+      // below never touch; they demote and revoke other owners.
+      for (const tenantId of [tenantA, tenantB])
+        await insertMembership(
+          owner,
+          tenantId,
+          await insertStaffUser(
+            owner,
+            `dona-fixa-${tenantId}@consistencia.test`,
+            PASSWORD,
+          ),
+          "OWNER",
+        );
       // Two API instances sharing only PostgreSQL and the signing key, as in production.
       const env = {
         DATABASE_URL: database.appUrl,

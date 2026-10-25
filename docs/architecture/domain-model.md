@@ -162,6 +162,8 @@ Invariantes:
 - Todo tenant `ACTIVE` tem ao menos um `OWNER` ativo; o último OWNER não pode ser removido nem rebaixado.
 - O tenant ativo do token de equipe precisa ter vínculo `ACTIVE` verificado a cada requisição (sem cache; ver ADR 0007).
 
+Em M3.6 ([ADR 0015](../adr/0015-team-management.md)) um trigger em `memberships` recusa qualquer mudança que deixe a loja sem OWNER ativo, com lock por loja. Convites de equipe ficam em `staff_invites` (token só como hash, 72 horas, uso único). Revogar um vínculo encerra as sessões da pessoa cuja loja ativa é aquela (`MEMBERSHIP_REVOKED`).
+
 ### Customer
 
 `id`, `tenantId`, `name`, `email` (único por tenant), `phone` (E.164, opcional, único por tenant se presente), `passwordHash`, `status` (`ACTIVE`, `DELETED`), `privacyPolicyVersion`, `acceptedAt`.

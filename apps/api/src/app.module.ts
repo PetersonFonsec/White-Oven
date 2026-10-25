@@ -12,6 +12,7 @@ import { PlatformModule } from "./platform/platform.module";
 import { CatalogModule } from "./catalog/catalog.module";
 import { ImageModule } from "./images/image.module";
 import { StoreModule } from "./store/store.module";
+import { TeamModule } from "./team/team.module";
 
 @Module({})
 export class AppModule {
@@ -31,6 +32,7 @@ export class AppModule {
         CatalogModule,
         ImageModule,
         StoreModule,
+        TeamModule,
       ],
       controllers: [HealthController],
       providers: [

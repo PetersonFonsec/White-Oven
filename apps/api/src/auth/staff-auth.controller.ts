@@ -425,7 +425,7 @@ export class PlatformMeController {
 }
 
 /** The TCP peer until the API runs behind a trusted proxy (ADR 0007, lockout). */
-const clientIp = (req: Request) => req.socket.remoteAddress ?? "unknown";
+export const clientIp = (req: Request) => req.socket.remoteAddress ?? "unknown";
 
 function toBody(issued: IssuedTokens): AccessTokenBody {
   return {
