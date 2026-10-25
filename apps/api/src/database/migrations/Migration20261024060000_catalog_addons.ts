@@ -68,6 +68,25 @@ export class Migration20261024060000_catalog_addons extends Migration {
       create trigger catalog_simple_products_validate_category before insert or update of category_id,tenant_id
         on catalog_simple_products for each row execute function whiteoven_validate_product_category();
 
+      create function whiteoven_guard_catalog_archive() returns trigger language plpgsql as $$
+      begin
+        if (old.archived_at is not null and (new.archived_at is null or new.available))
+          or (new.archived_at is not null and new.available) then
+          raise exception using errcode='23514', constraint='catalog_archived_item_unavailable';
+        end if;
+        return new;
+      end $$;
+      create trigger pizza_sizes_guard_archive before update of archived_at,available on pizza_sizes
+        for each row execute function whiteoven_guard_catalog_archive();
+      create trigger catalog_flavors_guard_archive before update of archived_at,available on catalog_flavors
+        for each row execute function whiteoven_guard_catalog_archive();
+      create trigger catalog_crusts_guard_archive before update of archived_at,available on catalog_crusts
+        for each row execute function whiteoven_guard_catalog_archive();
+      create trigger catalog_extras_guard_archive before update of archived_at,available on catalog_extras
+        for each row execute function whiteoven_guard_catalog_archive();
+      create trigger catalog_simple_products_guard_archive before update of archived_at,available on catalog_simple_products
+        for each row execute function whiteoven_guard_catalog_archive();
+
       create or replace function whiteoven_catalog_audit_change() returns trigger
       language plpgsql security definer set search_path = pg_catalog, public as $$
       declare
