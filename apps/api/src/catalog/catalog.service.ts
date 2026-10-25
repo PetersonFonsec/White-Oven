@@ -65,7 +65,7 @@ export class CatalogService {
           `select id, name, removable, (archived_at is not null) as archived from catalog_ingredients order by name`,
         ),
         em.execute(
-          `select f.id, f.category_id as "categoryId", f.name, f.description, f.available, (f.archived_at is not null) as archived, coalesce(array_agg(fi.ingredient_id) filter (where fi.ingredient_id is not null), '{}') as "ingredientIds" from catalog_flavors f left join catalog_flavor_ingredients fi on fi.tenant_id = f.tenant_id and fi.flavor_id = f.id group by f.id order by f.name`,
+          `select f.id, f.category_id as "categoryId", f.image_asset_id as "imageId", f.name, f.description, f.available, (f.archived_at is not null) as archived, coalesce(array_agg(fi.ingredient_id) filter (where fi.ingredient_id is not null), '{}') as "ingredientIds" from catalog_flavors f left join catalog_flavor_ingredients fi on fi.tenant_id = f.tenant_id and fi.flavor_id = f.id group by f.id order by f.name`,
         ),
         em.execute(
           `select flavor_id as "flavorId", size_id as "sizeId", price_cents as "priceCents" from catalog_flavor_prices order by flavor_id, size_id`,
@@ -83,7 +83,7 @@ export class CatalogService {
           `select extra_id as "extraId",size_id as "sizeId",whole_price_cents as "wholePriceCents",half_price_cents as "halfPriceCents" from catalog_extra_prices order by extra_id,size_id`,
         ),
         em.execute(
-          `select id,category_id as "categoryId",name,price_cents as "priceCents",available,(archived_at is not null) as archived from catalog_simple_products order by name`,
+          `select id,category_id as "categoryId",image_asset_id as "imageId",name,price_cents as "priceCents",available,(archived_at is not null) as archived from catalog_simple_products order by name`,
         ),
         em.execute(
           `select half_and_half_strategy as "halfAndHalfStrategy",half_and_half_surcharge_cents as "halfAndHalfSurchargeCents",max_extras_per_half as "maxExtrasPerHalf" from catalog_pricing_policies limit 1`,
@@ -338,6 +338,7 @@ export class CatalogService {
         available: "available",
         removable: "removable",
         priceCents: "price_cents",
+        imageId: "image_asset_id",
       };
       const assignments: string[] = [];
       const values: unknown[] = [];
@@ -387,8 +388,15 @@ export class CatalogService {
         name: "name",
         description: "description",
         available: "available",
+        imageId: "image_asset_id",
       };
-      for (const key of ["categoryId", "name", "description", "available"])
+      for (const key of [
+        "categoryId",
+        "name",
+        "description",
+        "available",
+        "imageId",
+      ])
         if (Object.hasOwn(patch, key)) {
           const value = patch[key];
           assignments.push(`${map[key]} = ?`);
