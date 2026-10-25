@@ -85,6 +85,18 @@ const MESSAGES: Record<string, string> = {
   CATALOG_WRITE_FORBIDDEN:
     "O cardápio não pode ser alterado na situação atual da loja.",
   ROLE_FORBIDDEN: "Seu papel na loja não permite esta ação.",
+  ALREADY_MEMBER: "Esta pessoa já faz parte da equipe da loja.",
+  LAST_OWNER:
+    "A loja precisa de pelo menos um dono. Promova outra pessoa a dono antes.",
+  TEAM_WRITE_FORBIDDEN:
+    "A equipe não pode ser alterada na situação atual da loja.",
+  MEMBER_NOT_FOUND:
+    "Esta pessoa não faz mais parte da equipe. Atualize a lista.",
+  INVITE_NOT_FOUND: "Este convite não está mais pendente. Atualize a lista.",
+  ACCOUNT_EXISTS:
+    "Já existe uma conta com este e-mail. Entre com ela para aceitar o convite.",
+  INVITE_EMAIL_MISMATCH:
+    "Este convite é para outro e-mail. Saia e entre com a conta convidada.",
 };
 
 /** A message in Portuguese for the person; never the API's English text. */

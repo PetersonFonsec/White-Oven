@@ -11,6 +11,7 @@ export const SESSION_REVOKED_REASONS = [
   "USER_DISABLED",
   "MFA_RESET",
   "TENANT_SUSPENDED",
+  "MEMBERSHIP_REVOKED",
 ] as const;
 
 export type MembershipRole = (typeof MEMBERSHIP_ROLES)[number];

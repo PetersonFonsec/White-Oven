@@ -64,6 +64,8 @@ interface Fixture {
   extraId: string;
   productId: string;
   imageAssetId: string;
+  membershipId: string;
+  inviteId: string;
 }
 
 /** Staff membership cache TTL of this suite's server; production allows at most 60 s. */
@@ -169,7 +171,25 @@ describe("tenant isolation", databaseSuite, () => {
         imageAssetId: image!.id,
       };
     });
-    return { id, slug, flavorId: row!.id, ...catalog };
+    const memberId = await insertStaffUser(
+      owner,
+      `fixture-${slug}@isolamento.test`,
+      STAFF_PASSWORD,
+    );
+    await insertMembership(owner, id, memberId, "STAFF");
+    const team = await runInTenant(owner, id, async (em) => {
+      const [membership] = await em.execute<{ id: string }[]>(
+        "select id from memberships where staff_user_id = ?",
+        [memberId],
+      );
+      const [invite] = await em.execute<{ id: string }[]>(
+        `insert into staff_invites (tenant_id,email,role,token_hash,expires_at,created_by,idempotency_key_hash,request_hash)
+         values (?,?,'STAFF',sha256(?::bytea),now() + interval '1 hour',?,sha256(?::bytea),sha256(?::bytea)) returning id`,
+        [id, `convite-${slug}@isolamento.test`, slug, memberId, slug, slug],
+      );
+      return { membershipId: membership!.id, inviteId: invite!.id };
+    });
+    return { id, slug, flavorId: row!.id, ...catalog, ...team };
   };
 
   const appCount = async (sql: string, params: unknown[] = []) => {
@@ -428,6 +448,25 @@ describe("tenant isolation", databaseSuite, () => {
           attacker,
           `/admin/catalog/images/${victim.imageAssetId}/menu`,
         ),
+      "PATCH /admin/team/members/:membershipId": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/team/members/${victim.membershipId}`,
+          "PATCH",
+          { role: "OWNER" },
+        ),
+      "DELETE /admin/team/members/:membershipId": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/team/members/${victim.membershipId}`,
+          "DELETE",
+        ),
+      "DELETE /admin/team/invites/:inviteId": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/team/invites/${victim.inviteId}`,
+          "DELETE",
+        ),
     };
 
     it("lists every tenant route of the API (new routes must join the matrix)", () => {
@@ -478,6 +517,9 @@ describe("tenant isolation", databaseSuite, () => {
         "GET /admin/store/pause",
         "PUT /admin/store/pause",
         "DELETE /admin/store/pause",
+        // The store's own team and a new invite; covered in team.test.ts.
+        "GET /admin/team",
+        "POST /admin/team/invites",
       ];
       assert.deepEqual(
         routes.filter((route) => !listings.includes(route)).sort(),
@@ -498,6 +540,8 @@ describe("tenant isolation", databaseSuite, () => {
               "NOT_FOUND",
               "CATALOG_RESOURCE_NOT_FOUND",
               "IMAGE_NOT_FOUND",
+              "MEMBER_NOT_FOUND",
+              "INVITE_NOT_FOUND",
             ].includes((await json(response)).code),
           );
           const [row] = await runInTenant(owner, victim.id, (em) =>
@@ -575,7 +619,18 @@ describe("tenant isolation", databaseSuite, () => {
               "select whole_price_cents,half_price_cents from catalog_extra_prices where extra_id=? and size_id=?",
               [victim.extraId, victim.sizeId],
             );
+            const [membership] = await em.execute<
+              { role: string; status: string }[]
+            >("select role,status from memberships where id=?", [
+              victim.membershipId,
+            ]);
+            const [invite] = await em.execute<{ revoked_at: Date | null }[]>(
+              "select revoked_at from staff_invites where id=?",
+              [victim.inviteId],
+            );
             return {
+              membership: membership!,
+              invite: invite!,
               category: category!,
               size: size!,
               ingredient: ingredient!,
@@ -590,6 +645,11 @@ describe("tenant isolation", databaseSuite, () => {
               extraPrice: extraPrice!,
             };
           });
+          assert.deepEqual(state.membership, {
+            role: "STAFF",
+            status: "ACTIVE",
+          });
+          assert.equal(state.invite.revoked_at, null);
           assert.equal(state.category.name, `${victim.slug} category`);
           assert.equal(state.category.archived_at, null);
           assert.equal(state.size.name, `${victim.slug} size`);
@@ -726,6 +786,7 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "orders", forced: true },
         { table: "owner_invites", forced: true },
         { table: "pizza_sizes", forced: true },
+        { table: "staff_invites", forced: true },
         { table: "store_opening_hours", forced: true },
         { table: "store_pauses", forced: true },
         { table: "store_settings", forced: true },

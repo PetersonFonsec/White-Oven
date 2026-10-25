@@ -18,11 +18,14 @@ import {
 import { rolesOf } from "./shell/navigation";
 import { StoreHomePage } from "./shell/store-home.page";
 import { StoreShell } from "./shell/store-shell";
-import { UpcomingPage } from "./shell/upcoming.page";
 import { StoreSelectPage } from "./stores/store-select.page";
 import { BrandPage } from "./settings/brand.page";
 import { SettingsPage } from "./settings/settings.page";
 import { MenuPage } from "./catalog/menu.page";
+
+/** Pages only some people open load on demand, keeping the initial bundle in its budget. */
+const teamInvitePage = () =>
+  import("./team/team-invite.page").then((m) => m.TeamInvitePage);
 
 export const routes: Routes = [
   {
@@ -53,6 +56,17 @@ export const routes: Routes = [
     title: "Aceitar convite · WhiteOven",
     canActivate: [signedOut],
     component: InviteRedemptionPage,
+  },
+  {
+    // Open to anyone with the link: a signed-in person may join another store's team too.
+    path: "equipe/convite/aceitar",
+    title: "Convite para a equipe · WhiteOven",
+    loadComponent: teamInvitePage,
+  },
+  {
+    path: "equipe/convite/:token",
+    title: "Convite para a equipe · WhiteOven",
+    loadComponent: teamInvitePage,
   },
   {
     path: "seguranca/mfa",
@@ -106,7 +120,7 @@ export const routes: Routes = [
         path: "equipe",
         title: "Equipe · WhiteOven",
         data: { roles: rolesOf("equipe"), title: "Equipe" },
-        component: UpcomingPage,
+        loadComponent: () => import("./team/team.page").then((m) => m.TeamPage),
       },
     ],
   },

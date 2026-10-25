@@ -1,0 +1,175 @@
+wo-team-page {
+  display: block;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--wo-spacing-6);
+}
+
+@media (max-width: 768px) {
+  wo-team-page {
+    padding: var(--wo-spacing-4);
+  }
+}
+
+wo-team-page .team-block {
+  display: grid;
+  gap: var(--wo-spacing-3);
+  margin-top: var(--wo-spacing-5);
+  padding: var(--wo-spacing-4);
+  border: 1px solid var(--wo-color-border);
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-surface);
+}
+
+wo-team-page h2,
+wo-team-page h3 {
+  margin: 0;
+}
+
+wo-team-page .invite-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--wo-spacing-3);
+}
+
+wo-team-page .invite-form .field {
+  flex: 1 1 220px;
+  margin-bottom: 0;
+}
+
+wo-team-page .invite-form .field:has(select) {
+  flex: 0 1 180px;
+}
+
+wo-team-page select {
+  min-height: var(--wo-interaction-minimumTarget);
+  padding: 0 var(--wo-spacing-2);
+  border: 1px solid var(--wo-color-inputBorder);
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-surface);
+  color: var(--wo-color-text);
+  font: inherit;
+}
+
+wo-team-page [aria-invalid="true"] {
+  border-color: var(--wo-color-error);
+}
+
+wo-team-page .field-error {
+  margin: 0;
+  color: var(--wo-color-error);
+}
+
+wo-team-page .role-help {
+  margin: 0;
+}
+
+wo-team-page .invite-result {
+  display: grid;
+  gap: var(--wo-spacing-2);
+  padding: var(--wo-spacing-4);
+  border: 1px solid var(--wo-color-border);
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-cream);
+}
+
+wo-team-page .invite-result p {
+  margin: 0;
+}
+
+wo-team-page .invite-result label {
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+wo-team-page .invite-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wo-spacing-2);
+}
+
+wo-team-page .invite-link-row input {
+  flex: 1 1 260px;
+  min-height: var(--wo-interaction-minimumTarget);
+  padding: 0 var(--wo-spacing-3);
+  border: 1px solid var(--wo-color-inputBorder);
+  border-radius: var(--wo-radius-small);
+  font-family: ui-monospace, monospace;
+}
+
+wo-team-page .team-list {
+  display: grid;
+  gap: var(--wo-spacing-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+wo-team-page .team-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wo-spacing-3);
+  padding: var(--wo-spacing-3);
+  border: 1px solid var(--wo-color-border);
+  border-radius: var(--wo-radius-small);
+}
+
+wo-team-page .team-person {
+  display: grid;
+  gap: var(--wo-spacing-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+wo-team-page .team-you {
+  justify-self: start;
+  padding: 0 var(--wo-spacing-2);
+  border-radius: 999px;
+  background: var(--wo-color-orangeSoft);
+  font-size: var(--wo-fontSize-small);
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+wo-team-page .team-role {
+  display: grid;
+  margin: 0;
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+wo-team-page .team-role .muted {
+  font-weight: normal;
+}
+
+wo-team-page .team-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wo-spacing-2);
+}
+
+wo-team-page .button--danger {
+  background: var(--wo-color-error);
+  color: #ffffff;
+}
+
+wo-team-page .button--danger:hover:not(:disabled) {
+  background: #8d2929;
+}
+
+wo-team-page .team-notice {
+  color: var(--wo-color-success);
+}
+
+wo-team-page .visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
