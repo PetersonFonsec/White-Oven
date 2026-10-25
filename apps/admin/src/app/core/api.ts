@@ -53,6 +53,17 @@ const MESSAGES: Record<string, string> = {
   VALIDATION_FAILED: "Confira os campos e tente de novo.",
   MFA_ALREADY_ENABLED: "A verificação em duas etapas já está ativa.",
   MFA_SETUP_REQUIRED: "Gere um novo código de configuração e tente de novo.",
+  TENANT_SLUG_TAKEN: "Esse identificador já está em uso. Escolha outro.",
+  TENANT_STATUS_CONFLICT:
+    "A situação da pizzaria mudou. Atualize a lista e tente de novo.",
+  IDEMPOTENCY_CONFLICT:
+    "Os dados do cadastro mudaram durante a tentativa. Envie novamente.",
+  RESOURCE_CONFLICT: "Já existe um cadastro com esses dados.",
+  TENANT_NOT_FOUND: "Essa pizzaria não está mais disponível.",
+  ADMIN_ORIGIN_NOT_CONFIGURED:
+    "O envio de convite não está configurado neste ambiente.",
+  INVITE_INVALID: "Este convite é inválido ou expirou.",
+  OWNER_ACCOUNT_EXISTS: "Já existe uma conta com este e-mail.",
 };
 
 /** A message in Portuguese for the person; never the API's English text. */
