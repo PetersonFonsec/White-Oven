@@ -66,6 +66,7 @@ services:
       API_PORT: "3000"
       API_LOG_LEVEL: ${API_LOG_LEVEL:-info}
       API_OPENAPI_ENABLED: "true"
+      IMAGE_STORAGE_DIRECTORY: /var/lib/whiteoven/images
       # Runtime role only: the API never receives the owner credentials.
       DATABASE_URL: postgres://whiteoven_app:${DATABASE_APP_PASSWORD:-whiteoven-dev-app-password}@postgres:5432/whiteoven
     depends_on:
@@ -73,6 +74,8 @@ services:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:${WHITEOVEN_API_PORT:-3000}:3000"
+    volumes:
+      - image-data:/var/lib/whiteoven/images
     init: true
     read_only: true
     cap_drop: [ALL]
@@ -89,3 +92,4 @@ services:
 
 volumes:
   postgres-data:
+  image-data:

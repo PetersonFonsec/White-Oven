@@ -63,6 +63,7 @@ interface Fixture {
   crustId: string;
   extraId: string;
   productId: string;
+  imageAssetId: string;
 }
 
 /** Staff membership cache TTL of this suite's server; production allows at most 60 s. */
@@ -152,6 +153,10 @@ describe("tenant isolation", databaseSuite, () => {
         "insert into catalog_pricing_policies (tenant_id,half_and_half_strategy,half_and_half_surcharge_cents,max_extras_per_half) values (?,'HIGHEST',0,4)",
         [id],
       );
+      const [image] = await em.execute<{ id: string }[]>(
+        "insert into image_assets (id,tenant_id,source_format,width,height) values (gen_random_uuid(),?,'webp',2,2) returning id",
+        [id],
+      );
       return {
         categoryId: category!.id,
         productCategoryId: productCategory!.id,
@@ -161,6 +166,7 @@ describe("tenant isolation", databaseSuite, () => {
         crustId: crust!.id,
         extraId: extra!.id,
         productId: product!.id,
+        imageAssetId: image!.id,
       };
     });
     return { id, slug, flavorId: row!.id, ...catalog };
@@ -417,6 +423,11 @@ describe("tenant isolation", databaseSuite, () => {
           `/admin/catalog/products/${victim.productId}`,
           "DELETE",
         ),
+      "GET /admin/catalog/images/:id/:variant": (attacker, victim) =>
+        adminCatalogCall(
+          attacker,
+          `/admin/catalog/images/${victim.imageAssetId}/menu`,
+        ),
     };
 
     it("lists every tenant route of the API (new routes must join the matrix)", () => {
@@ -455,6 +466,7 @@ describe("tenant isolation", databaseSuite, () => {
         "POST /admin/catalog/crusts",
         "POST /admin/catalog/extras",
         "POST /admin/catalog/products",
+        "POST /admin/catalog/images",
         "PUT /admin/catalog/pricing-policy",
       ];
       assert.deepEqual(
@@ -472,9 +484,11 @@ describe("tenant isolation", databaseSuite, () => {
           const response = await attack(attacker, victim);
           assert.equal(response.status, 404);
           assert.ok(
-            ["NOT_FOUND", "CATALOG_RESOURCE_NOT_FOUND"].includes(
-              (await json(response)).code,
-            ),
+            [
+              "NOT_FOUND",
+              "CATALOG_RESOURCE_NOT_FOUND",
+              "IMAGE_NOT_FOUND",
+            ].includes((await json(response)).code),
           );
           const [row] = await runInTenant(owner, victim.id, (em) =>
             em.execute<{ name: string }[]>(
@@ -673,6 +687,7 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "catalog_ingredients", forced: true },
         { table: "catalog_pricing_policies", forced: true },
         { table: "catalog_simple_products", forced: true },
+        { table: "image_assets", forced: true },
         { table: "memberships", forced: true },
         { table: "orders", forced: true },
         { table: "owner_invites", forced: true },

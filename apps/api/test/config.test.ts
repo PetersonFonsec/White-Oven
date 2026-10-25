@@ -11,6 +11,7 @@ const ACCESS_KEY = generateKeyPairSync("ed25519")
 /** Production requires persistent auth/invitation keys; other settings are tested here. */
 const production = {
   NODE_ENV: "production",
+  IMAGE_STORAGE_DIRECTORY: "/var/lib/whiteoven/images",
   AUTH_ACCESS_TOKEN_PRIVATE_KEY: ACCESS_KEY,
   AUTH_MFA_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
   OWNER_INVITE_SECRET: randomBytes(32).toString("base64"),
@@ -34,6 +35,7 @@ describe("loadConfig", () => {
       port: 3000,
       logLevel: "info",
       openApiEnabled: true,
+      imageStorageDirectory: ".data/images",
       database: { url: DATABASE_URL, poolMax: 10 },
       auth: {
         accessTokenPrivateKey: null,
@@ -65,10 +67,12 @@ describe("loadConfig", () => {
       API_PORT: "8080",
       API_LOG_LEVEL: "warn",
       API_OPENAPI_ENABLED: "false",
+      IMAGE_STORAGE_DIRECTORY: "/srv/whiteoven/images",
     });
     assert.equal(config.port, 8080);
     assert.equal(config.host, "0.0.0.0");
     assert.equal(config.database.poolMax, 20);
+    assert.equal(config.imageStorageDirectory, "/srv/whiteoven/images");
     assert.ok(Object.isFrozen(config));
     assert.ok(Object.isFrozen(config.database));
   });
@@ -115,11 +119,17 @@ describe("loadConfig", () => {
   }
 
   it("requires persistent authentication and invitation keys in production only", () => {
-    assert.deepEqual(problemsOf({ NODE_ENV: "production" }), [
-      "AUTH_ACCESS_TOKEN_PRIVATE_KEY is required in production",
-      "AUTH_MFA_ENCRYPTION_KEY is required in production",
-      "OWNER_INVITE_SECRET is required in production",
-    ]);
+    assert.deepEqual(
+      problemsOf({
+        NODE_ENV: "production",
+        IMAGE_STORAGE_DIRECTORY: "/var/lib/whiteoven/images",
+      }),
+      [
+        "AUTH_ACCESS_TOKEN_PRIVATE_KEY is required in production",
+        "AUTH_MFA_ENCRYPTION_KEY is required in production",
+        "OWNER_INVITE_SECRET is required in production",
+      ],
+    );
     const config = loadConfig({
       ...base,
       ...production,
@@ -137,6 +147,16 @@ describe("loadConfig", () => {
       "http://localhost:4200",
     ]);
     assert.ok(Object.isFrozen(config.auth));
+  });
+
+  it("requires an absolute image storage directory in production", () => {
+    const problems = problemsOf({
+      ...production,
+      IMAGE_STORAGE_DIRECTORY: "images",
+    });
+    assert.deepEqual(problems, [
+      "IMAGE_STORAGE_DIRECTORY must be an absolute path in production",
+    ]);
   });
 
   it("ignores unrelated variables that share the API_ prefix", () => {

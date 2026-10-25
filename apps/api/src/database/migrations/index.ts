@@ -6,6 +6,7 @@ import { Migration20261024030000_staff_mfa } from "./Migration20261024030000_sta
 import { Migration20261024040000_platform } from "./Migration20261024040000_platform";
 import { Migration20261024050000_catalog } from "./Migration20261024050000_catalog";
 import { Migration20261024060000_catalog_addons } from "./Migration20261024060000_catalog_addons";
+import { Migration20261024070000_image_assets } from "./Migration20261024070000_image_assets";
 
 /**
  * Explicit, ordered list: no folder discovery at runtime. Names are stored in
@@ -39,5 +40,9 @@ export const MIGRATIONS: MigrationObject[] = [
   {
     name: "Migration20261024060000_catalog_addons",
     class: Migration20261024060000_catalog_addons,
+  },
+  {
+    name: "Migration20261024070000_image_assets",
+    class: Migration20261024070000_image_assets,
   },
 ];
