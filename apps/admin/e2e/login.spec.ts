@@ -25,6 +25,7 @@ test("an owner signs in, picks a store and keeps the session after a reload", as
     "Início",
     "Cardápio",
     "Configurações",
+    "Marca",
     "Equipe",
   ]);
 

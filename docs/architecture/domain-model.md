@@ -142,6 +142,8 @@ Cenários obrigatórios de teste (sexta com regra 18:00–02:00, sábado com reg
 
 `logoAssetId`, `iconAssetId`, `splashAssetId`, `colorOverrides` (mapa restrito aos tokens de marca), `fontFamily` (lista fechada), `version`. Publicar um tema exige validação de contraste e formatos. O app usa `version` para invalidar cache.
 
+Implementação (M3.5, [ADR 0014](../adr/0014-brand-theme.md)): `colorOverrides` aceita só `primary`, `primaryHover`, `primaryPressed`, `onPrimary` e `accentText`. O texto sobre a cor principal e o texto de destaque precisam de 4,5:1, e um tema que falha não é gravado. O logotipo precisa de ao menos 256 px no lado maior, e o ícone precisa ser quadrado com ao menos 512 px. Só o OWNER publica, e cada publicação incrementa `version`. `splashAssetId` e `fontFamily` chegam com o app (M5).
+
 ## Identidade e acesso
 
 ### StaffUser (global)

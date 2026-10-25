@@ -9,6 +9,18 @@ import {
 import type { TenantStatus } from "../tenancy/tenant.entity";
 import { TenantTransactions } from "../tenancy/tenant-transaction";
 import {
+  BRAND_COLOR_TOKENS,
+  type BrandColorToken,
+  type BrandError,
+  type BrandThemeInput,
+  CONTRAST_RULES,
+  DEFAULT_BRAND_COLORS,
+  FIXED_COLORS,
+  ICON_MIN_SIDE,
+  LOGO_MIN_SIDE,
+  resolveBrandColors,
+} from "./brand-rules";
+import {
   DEFAULT_STORE_SETTINGS,
   type OpeningHours,
   type StoreSettings,
@@ -23,6 +35,22 @@ export interface StorePause {
   pausedUntil: string | null;
   /** The store's IANA time zone (`tenants.timezone`), for showing `pausedUntil` in local time. */
   timezone: string;
+}
+
+export interface BrandTheme extends BrandThemeInput {
+  /** Grows on every save; 0 while the store uses the WhiteOven defaults. */
+  version: number;
+}
+
+/** The brand as saved, the colors it resolves to, and the rules the panel previews against. */
+export interface BrandState {
+  saved: boolean;
+  theme: BrandTheme;
+  colors: Record<BrandColorToken, string>;
+  defaults: typeof DEFAULT_BRAND_COLORS;
+  fixedColors: typeof FIXED_COLORS;
+  contrastRules: typeof CONTRAST_RULES;
+  imageRules: { logoMinSide: number; iconMinSide: number };
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -127,6 +155,102 @@ export class StoreService {
     await this.perform(requestId, "storePause", (em) =>
       em.execute("delete from store_pauses"),
     );
+  }
+
+  getBrand(): Promise<BrandState> {
+    return this.transactions.run((em) => this.readBrand(em));
+  }
+
+  /**
+   * Saves a theme that already passed `validateBrandTheme`, after checking its images belong to
+   * this store and have the right size. Each save is a new version.
+   */
+  updateBrand(theme: BrandThemeInput, requestId: string): Promise<BrandState> {
+    return this.perform(requestId, "storeSettingsWrite", async (em) => {
+      const ids = [theme.logoAssetId, theme.iconAssetId].filter(
+        (id): id is string => id !== null,
+      );
+      const images = ids.length
+        ? await em.execute<{ id: string; width: number; height: number }[]>(
+            "select id, width, height from image_assets where id = any(?::uuid[])",
+            [`{${ids.join(",")}}`],
+          )
+        : [];
+      const image = (id: string | null) => images.find((row) => row.id === id);
+      const errors: BrandError[] = [];
+      if (theme.logoAssetId) {
+        const logo = image(theme.logoAssetId);
+        if (!logo)
+          errors.push({ code: "BRAND_IMAGE_NOT_FOUND", path: "logoAssetId" });
+        else if (Math.max(logo.width, logo.height) < LOGO_MIN_SIDE)
+          errors.push({ code: "BRAND_LOGO_TOO_SMALL", path: "logoAssetId" });
+      }
+      if (theme.iconAssetId) {
+        const icon = image(theme.iconAssetId);
+        if (!icon)
+          errors.push({ code: "BRAND_IMAGE_NOT_FOUND", path: "iconAssetId" });
+        else if (icon.width !== icon.height)
+          errors.push({ code: "BRAND_ICON_NOT_SQUARE", path: "iconAssetId" });
+        else if (icon.width < ICON_MIN_SIDE)
+          errors.push({ code: "BRAND_ICON_TOO_SMALL", path: "iconAssetId" });
+      }
+      if (errors.length)
+        throw new ApiError(
+          HttpStatus.UNPROCESSABLE_ENTITY,
+          "BRAND_THEME_INVALID",
+          "Invalid brand theme.",
+          { errors },
+        );
+      await em.execute(
+        `insert into brand_themes (tenant_id,color_overrides,logo_asset_id,icon_asset_id)
+        values (current_setting('app.tenant_id')::uuid,?::jsonb,?,?)
+        on conflict (tenant_id) do update set color_overrides=excluded.color_overrides,
+          logo_asset_id=excluded.logo_asset_id,icon_asset_id=excluded.icon_asset_id,
+          version=brand_themes.version+1,updated_at=now()`,
+        [
+          JSON.stringify(theme.colorOverrides),
+          theme.logoAssetId,
+          theme.iconAssetId,
+        ],
+      );
+      return this.readBrand(em);
+    });
+  }
+
+  private async readBrand(em: EntityManager): Promise<BrandState> {
+    const [row] = await em.execute<BrandTheme[]>(
+      `select color_overrides as "colorOverrides", logo_asset_id as "logoAssetId",
+        icon_asset_id as "iconAssetId", version from brand_themes`,
+    );
+    const theme: BrandTheme = row
+      ? {
+          // Token order, whatever order jsonb kept.
+          colorOverrides: Object.fromEntries(
+            BRAND_COLOR_TOKENS.flatMap((token) =>
+              row.colorOverrides[token]
+                ? [[token, row.colorOverrides[token]]]
+                : [],
+            ),
+          ),
+          logoAssetId: row.logoAssetId,
+          iconAssetId: row.iconAssetId,
+          version: row.version,
+        }
+      : {
+          colorOverrides: {},
+          logoAssetId: null,
+          iconAssetId: null,
+          version: 0,
+        };
+    return {
+      saved: Boolean(row),
+      theme,
+      colors: resolveBrandColors(theme.colorOverrides),
+      defaults: DEFAULT_BRAND_COLORS,
+      fixedColors: FIXED_COLORS,
+      contrastRules: CONTRAST_RULES,
+      imageRules: { logoMinSide: LOGO_MIN_SIDE, iconMinSide: ICON_MIN_SIDE },
+    };
   }
 
   private async readPause(em: EntityManager): Promise<StorePause> {
