@@ -496,6 +496,7 @@ describe("tenant isolation", databaseSuite, () => {
       const listings = [
         "GET /public/stores/:storeSlug/isolation-probe",
         "GET /public/stores/:storeSlug/menu",
+        "GET /public/stores/:storeSlug/status",
         "GET /admin/me",
         "GET /admin/catalog/items",
         "GET /admin/catalog/audit-events",

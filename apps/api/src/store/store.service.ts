@@ -25,6 +25,7 @@ import {
   type OpeningHours,
   type StoreSettings,
 } from "./store-rules";
+import { type StoreStatusReason, storeStatusAt } from "./store-status";
 
 export const PAUSE_MINUTES = [15, 30, 60] as const;
 export type PauseMinutes = (typeof PAUSE_MINUTES)[number];
@@ -35,6 +36,17 @@ export interface StorePause {
   pausedUntil: string | null;
   /** The store's IANA time zone (`tenants.timezone`), for showing `pausedUntil` in local time. */
   timezone: string;
+}
+
+/** `GET /v1/public/stores/{slug}/status` (M4.1). */
+export interface PublicStoreStatus {
+  open: boolean;
+  reason: StoreStatusReason;
+  /** ISO instant the store reopens by itself; set only while `reason` is PAUSED with an end. */
+  pausedUntil: string | null;
+  timezone: string;
+  /** The database instant the status was computed for. */
+  checkedAt: string;
 }
 
 export interface BrandTheme extends BrandThemeInput {
@@ -85,6 +97,53 @@ export class StoreService {
         settings: settings ?? DEFAULT_STORE_SETTINGS,
         openingHours: hours ?? { rules: [], exceptions: [] },
         pause,
+      };
+    });
+  }
+
+  /**
+   * Open or closed now, from the tenant, its hours and its pause read in one statement. The
+   * instant is the database clock, the same one that writes `store_pauses.paused_until`.
+   */
+  getStatus(): Promise<PublicStoreStatus> {
+    return this.transactions.run(async (em) => {
+      const [row] = await em.execute<
+        {
+          status: TenantStatus;
+          timezone: string;
+          rules: OpeningHours["rules"] | null;
+          exceptions: OpeningHours["exceptions"] | null;
+          paused: boolean;
+          pausedUntil: Date | null;
+          now: Date;
+        }[]
+      >(
+        `select t.status, t.timezone, h.rules, h.exceptions,
+          p.tenant_id is not null as paused, p.paused_until as "pausedUntil", now() as now
+        from tenants t
+        left join store_opening_hours h on h.tenant_id = t.id
+        left join store_pauses p on p.tenant_id = t.id
+        where t.id = ?`,
+        [currentTenantContext().tenantId],
+      );
+      if (!row) throw new Error("store status: tenant not found");
+      const at = new Date(row.now);
+      const pausedUntil = row.pausedUntil ? new Date(row.pausedUntil) : null;
+      const status = storeStatusAt({
+        tenantStatus: row.status,
+        timezone: row.timezone,
+        hours: { rules: row.rules ?? [], exceptions: row.exceptions ?? [] },
+        pause: row.paused ? { pausedUntil } : null,
+        at,
+      });
+      return {
+        ...status,
+        pausedUntil:
+          status.reason === "PAUSED" && pausedUntil
+            ? pausedUntil.toISOString()
+            : null,
+        timezone: row.timezone,
+        checkedAt: at.toISOString(),
       };
     });
   }
