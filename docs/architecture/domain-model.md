@@ -138,6 +138,8 @@ Cenários obrigatórios de teste (sexta com regra 18:00–02:00, sábado com reg
 | H9  | Sexta substituta 18:00–23:59    | Sábado 00:30 | Fechada   | Substituto de sexta não cruza a meia-noite |
 | H10 | Nenhuma, pausa até sábado 00:30 | Sexta 23:45  | Fechada   | Pausa tem precedência                      |
 
+Implementação (M4.1, [ADR 0016](../adr/0016-store-open-status.md)): `storeStatusAt` em `apps/api/src/store/store-status.ts` aplica esta regra com o relógio do banco, e `GET /v1/public/stores/{slug}/status` publica o resultado (`OPEN`, `PAUSED` ou `OUTSIDE_HOURS`). H1–H10 estão em `apps/api/test/store-status.test.ts`.
+
 ### BrandTheme
 
 `logoAssetId`, `iconAssetId`, `splashAssetId`, `colorOverrides` (mapa restrito aos tokens de marca), `fontFamily` (lista fechada), `version`. Publicar um tema exige validação de contraste e formatos. O app usa `version` para invalidar cache.
