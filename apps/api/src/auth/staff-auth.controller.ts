@@ -382,7 +382,7 @@ export class StaffAuthController {
   /** CSRF defense in depth besides SameSite=Strict (system-overview.md, "Regras"). */
   private assertAllowedOrigin(req: Request): void {
     const origin = req.get("origin");
-    if (origin !== undefined && !this.config.auth.adminOrigins.includes(origin))
+    if (origin === undefined || !this.config.auth.adminOrigins.includes(origin))
       throw new ApiError(
         HttpStatus.FORBIDDEN,
         "ORIGIN_NOT_ALLOWED",
