@@ -1,7 +1,15 @@
-import { Component, inject, signal } from "@angular/core";
+import {
+  Component,
+  DestroyRef,
+  computed,
+  effect,
+  inject,
+  signal,
+  untracked,
+} from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { apiFieldErrors, errorMessage } from "../core/api";
-import { ROLE_LABELS, type Role } from "../core/session";
+import { ROLE_LABELS, type Role, Session } from "../core/session";
 import {
   type CreatedInvite,
   TEAM_ROLES,
@@ -19,6 +27,13 @@ const date = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" });
 /**
  * Team of the store for the OWNER (M3.6, ADR 0015): invite by link, change roles, revoke access.
  * The API keeps the last OWNER and ends a revoked person's sessions; the page only explains it.
+ *
+ * Everything shown belongs to one store. A store switch leaves the store shell (it happens on
+ * `/lojas`), which destroys this page; should the page outlive a switch anyway, it clears its
+ * state and loads the new store. Every request records the page's generation and publishes its
+ * result only if the generation is unchanged, so a late answer about the previous store (or
+ * after the page is gone) changes nothing. Requests carry the token of the store they were sent
+ * for (the interceptor never retries one with another store's token).
  */
 @Component({
   selector: "wo-team-page",
@@ -225,8 +240,19 @@ export class TeamPage {
   private idempotencyKey = "";
   private requestBody = "";
 
+  private readonly session = inject(Session);
+  private readonly tenantId = computed(
+    () => this.session.store()?.tenantId ?? null,
+  );
+  /** Changes with the store and on destroy; results of older requests are dropped. */
+  private generation = 0;
+
   constructor() {
-    void this.load();
+    effect(() => {
+      const tenantId = this.tenantId();
+      untracked(() => this.reset(tenantId));
+    });
+    inject(DestroyRef).onDestroy(() => this.generation++);
   }
 
   protected sinceLabel(iso: string): string {
@@ -257,20 +283,18 @@ export class TeamPage {
       this.emailError.set("Informe o e-mail da pessoa.");
       return;
     }
-    await this.run("invite", async () => {
-      this.created.set(null);
-      this.copied.set(false);
-      try {
-        const body = JSON.stringify({ email, role: this.role });
-        if (body !== this.requestBody) {
-          this.requestBody = body;
-          this.idempotencyKey = crypto.randomUUID();
-        }
-        const invite = await this.api.invite(
-          email,
-          this.role,
-          this.idempotencyKey,
-        );
+    const role = this.role;
+    const body = JSON.stringify({ email, role });
+    if (body !== this.requestBody) {
+      this.requestBody = body;
+      this.idempotencyKey = crypto.randomUUID();
+    }
+    this.created.set(null);
+    this.copied.set(false);
+    await this.run(
+      "invite",
+      () => this.api.invite(email, role, this.idempotencyKey),
+      (invite) => {
         this.created.set(invite);
         this.requestBody = "";
         this.idempotencyKey = "";
@@ -279,14 +303,14 @@ export class TeamPage {
         this.notice.set(
           `Convite criado para ${invite.invite.email} como ${this.labels[invite.invite.role]}.`,
         );
-      } catch (error) {
-        if (apiFieldErrors(error).some((e) => e.path === "email")) {
-          this.emailError.set("Use um e-mail válido, como nome@exemplo.com.");
-          return;
-        }
-        throw error;
-      }
-    });
+      },
+      (error) => {
+        if (!apiFieldErrors(error).some((e) => e.path === "email"))
+          return false;
+        this.emailError.set("Use um e-mail válido, como nome@exemplo.com.");
+        return true;
+      },
+    );
   }
 
   protected async copy(invite: CreatedInvite): Promise<void> {
@@ -305,12 +329,14 @@ export class TeamPage {
   protected async changeRole(member: TeamMember): Promise<void> {
     const role = this.draftOf(member);
     if (role === member.role || this.busy()) return;
-    await this.run(member.membershipId, async () => {
-      await this.api.changeRole(member.membershipId, role);
-      this.notice.set(
-        `${member.name} agora é ${this.labels[role]}. A mudança vale a partir da próxima ação da pessoa.`,
-      );
-    });
+    await this.run(
+      member.membershipId,
+      () => this.api.changeRole(member.membershipId, role),
+      () =>
+        this.notice.set(
+          `${member.name} agora é ${this.labels[role]}. A mudança vale a partir da próxima ação da pessoa.`,
+        ),
+    );
   }
 
   protected async revoke(member: TeamMember): Promise<void> {
@@ -321,46 +347,85 @@ export class TeamPage {
       )
     )
       return;
-    await this.run(member.membershipId, async () => {
-      await this.api.revoke(member.membershipId);
-      this.notice.set(
-        `Acesso de ${member.name} revogado. As sessões da pessoa nesta loja foram encerradas.`,
-      );
-    });
+    await this.run(
+      member.membershipId,
+      () => this.api.revoke(member.membershipId),
+      () =>
+        this.notice.set(
+          `Acesso de ${member.name} revogado. As sessões da pessoa nesta loja foram encerradas.`,
+        ),
+    );
   }
 
   protected async cancelInvite(inviteId: string, email: string): Promise<void> {
     if (this.busy()) return;
-    await this.run(inviteId, async () => {
-      await this.api.cancelInvite(inviteId);
-      if (this.created()?.invite.id === inviteId) this.created.set(null);
-      this.notice.set(`Convite de ${email} cancelado. O link deixou de valer.`);
-    });
+    await this.run(
+      inviteId,
+      () => this.api.cancelInvite(inviteId),
+      () => {
+        if (this.created()?.invite.id === inviteId) this.created.set(null);
+        this.notice.set(
+          `Convite de ${email} cancelado. O link deixou de valer.`,
+        );
+      },
+    );
   }
 
-  /** Runs an action, shows its error, and reloads the team afterwards either way. */
-  private async run(key: string, action: () => Promise<void>): Promise<void> {
+  /** A new store (or none): forget everything about the previous one and load this one. */
+  private reset(tenantId: string | null): void {
+    this.generation++;
+    this.team.set(null);
+    this.created.set(null);
+    this.copied.set(false);
+    this.roleDrafts.set({});
+    this.busy.set(null);
+    this.error.set("");
+    this.notice.set("");
+    this.emailError.set("");
+    this.email = "";
+    this.role = "STAFF";
+    this.requestBody = "";
+    this.idempotencyKey = "";
+    this.loading.set(tenantId !== null);
+    if (tenantId) void this.load(this.generation);
+  }
+
+  /**
+   * Runs a write for this page's store. Its result, error and the reload that follows apply only
+   * while the page still shows the store the write was sent for.
+   */
+  private async run<T>(
+    key: string,
+    request: () => Promise<T>,
+    apply: (result: T) => void,
+    handled: (error: unknown) => boolean = () => false,
+  ): Promise<void> {
+    const generation = this.generation;
     this.busy.set(key);
     this.error.set("");
     this.notice.set("");
     try {
-      await action();
+      const result = await request();
+      if (generation !== this.generation) return;
+      apply(result);
     } catch (error) {
-      this.error.set(errorMessage(error));
-    } finally {
-      await this.load();
-      this.busy.set(null);
+      if (generation !== this.generation) return;
+      if (!handled(error)) this.error.set(errorMessage(error));
     }
+    await this.load(generation);
+    if (generation === this.generation) this.busy.set(null);
   }
 
-  private async load(): Promise<void> {
+  private async load(generation: number): Promise<void> {
     try {
-      this.team.set(await this.api.team());
+      const team = await this.api.team();
+      if (generation !== this.generation) return;
+      this.team.set(team);
       this.roleDrafts.set({});
     } catch (error) {
+      if (generation !== this.generation) return;
       this.error.set(errorMessage(error));
-    } finally {
-      this.loading.set(false);
     }
+    this.loading.set(false);
   }
 }

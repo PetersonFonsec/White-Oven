@@ -41,6 +41,6 @@ import { SecretBox } from "./totp";
     StaffGuard,
     PlatformGuard,
   ],
-  exports: [AccessTokens, LoginThrottle, StaffAuth, StaffGuard, PlatformGuard],
+  exports: [AccessTokens, StaffAuth, StaffGuard, PlatformGuard],
 })
 export class AuthModule {}

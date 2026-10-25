@@ -94,7 +94,9 @@ const MESSAGES: Record<string, string> = {
     "Esta pessoa não faz mais parte da equipe. Atualize a lista.",
   INVITE_NOT_FOUND: "Este convite não está mais pendente. Atualize a lista.",
   ACCOUNT_EXISTS:
-    "Já existe uma conta com este e-mail. Abra o link de novo para entrar com ela.",
+    "Já existe uma conta com este e-mail. Entre com ela para aceitar o convite.",
+  INVITE_EMAIL_MISMATCH:
+    "Este convite é para outro e-mail. Saia e entre com a conta convidada.",
 };
 
 /** A message in Portuguese for the person; never the API's English text. */

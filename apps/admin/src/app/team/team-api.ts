@@ -41,7 +41,7 @@ export interface InvitePreview {
   storeName: string;
   role: Role;
   email: string;
-  /** The invitee confirms with their password instead of creating an account. */
+  /** The invitee signs in with that account and accepts, instead of creating one. */
   accountExists: boolean;
   expiresAt: string;
 }
@@ -104,18 +104,25 @@ export class TeamApi {
     );
   }
 
-  /** `name` only for a new account; an existing one confirms with its current password. */
+  /** A new person: creates the account the invite is for. */
   redeem(
     token: string,
+    name: string,
     password: string,
-    name?: string,
   ): Promise<RedeemedInvite> {
     return firstValueFrom(
       this.http.post<RedeemedInvite>(`${INVITES}/redeem`, {
         token,
+        name,
         password,
-        ...(name !== undefined ? { name } : {}),
       }),
+    );
+  }
+
+  /** A person with an account, signed in: the API takes the identity from the session. */
+  accept(token: string): Promise<RedeemedInvite> {
+    return firstValueFrom(
+      this.http.post<RedeemedInvite>(`${INVITES}/accept`, { token }),
     );
   }
 }

@@ -1,5 +1,7 @@
 import { HttpErrorResponse } from "@angular/common/http";
+import { signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
+import { Session } from "../core/session";
 import { TeamPage } from "./team.page";
 import { type Team, TeamApi } from "./team-api";
 
@@ -44,12 +46,21 @@ describe("TeamPage", () => {
     revoke: vi.fn(),
   };
 
+  const store = signal<{ tenantId: string; displayName: string } | null>({
+    tenantId: "A",
+    displayName: "Loja A",
+  });
+
   beforeEach(() => {
     for (const mock of Object.values(api)) mock.mockReset();
     api.team.mockResolvedValue(TEAM);
+    store.set({ tenantId: "A", displayName: "Loja A" });
     TestBed.configureTestingModule({
       imports: [TeamPage],
-      providers: [{ provide: TeamApi, useValue: api }],
+      providers: [
+        { provide: TeamApi, useValue: api },
+        { provide: Session, useValue: { store } },
+      ],
     });
   });
 
@@ -184,5 +195,145 @@ describe("TeamPage", () => {
     await page.flush();
     expect(api.cancelInvite).toHaveBeenCalledWith("i-ana");
     expect(page.element.textContent).toContain("O link deixou de valer.");
+  });
+
+  describe("with a store switch while requests are pending", () => {
+    /** A promise the test settles by hand. */
+    const deferred = <T>() => {
+      let resolve!: (value: T) => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<T>((ok, fail) => {
+        resolve = ok;
+        reject = fail;
+      });
+      return { promise, resolve, reject };
+    };
+    const TEAM_B: Team = {
+      members: [
+        {
+          membershipId: "m-beto",
+          name: "Beto",
+          email: "beto@test.invalid",
+          role: "OWNER",
+          since: "2026-10-03T12:00:00.000Z",
+          you: true,
+        },
+      ],
+      invites: [],
+    };
+    const switchTo = async (
+      page: Awaited<ReturnType<typeof render>>,
+      tenantId: string,
+    ) => {
+      store.set({ tenantId, displayName: `Loja ${tenantId}` });
+      await page.flush();
+    };
+
+    it("loads store A, then only store B after a switch", async () => {
+      const page = await render();
+      expect(page.element.textContent).toContain("João");
+      api.team.mockResolvedValue(TEAM_B);
+      await switchTo(page, "B");
+      expect(api.team).toHaveBeenCalledTimes(2);
+      expect(page.element.textContent).toContain("Beto");
+      expect(page.element.textContent).not.toContain("João");
+      expect(page.element.textContent).not.toContain("ana@test.invalid");
+    });
+
+    it("ignores store A's answer arriving after the switch", async () => {
+      const lateA = deferred<Team>();
+      api.team.mockReturnValueOnce(lateA.promise);
+      const page = await render();
+      expect(page.element.textContent).toContain("Carregando equipe");
+      api.team.mockResolvedValue(TEAM_B);
+      await switchTo(page, "B");
+      lateA.resolve(TEAM);
+      await page.flush();
+      expect(page.element.textContent).toContain("Beto");
+      expect(page.element.textContent).not.toContain("João");
+    });
+
+    it("shows store B's failure without any of store A's data", async () => {
+      const page = await render();
+      expect(page.element.textContent).toContain("João");
+      api.team.mockRejectedValue(
+        new HttpErrorResponse({ status: 0, error: null }),
+      );
+      await switchTo(page, "B");
+      expect(page.element.querySelector("[role=alert]")!.textContent).toContain(
+        "Não foi possível falar com o servidor",
+      );
+      expect(page.element.textContent).not.toContain("João");
+      expect(page.element.querySelector("li")).toBeNull();
+    });
+
+    it("drops a role change and a revocation still pending when the store changes", async () => {
+      for (const action of ["role", "revoke"] as const) {
+        api.team.mockResolvedValue(TEAM);
+        store.set({ tenantId: "A", displayName: "Loja A" });
+        const pending = deferred<void>();
+        const page = await render();
+        if (action === "role") {
+          api.changeRole.mockReturnValueOnce(pending.promise);
+          await page.set("#role-m-joao", "MANAGER", "change");
+          page.button(page.row("João"), "Alterar papel").click();
+        } else {
+          api.revoke.mockReturnValueOnce(pending.promise);
+          vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+          page.button(page.row("João"), "Revogar acesso").click();
+        }
+        await page.flush();
+        // Sent for store A, with store A's token: the interceptor reads it when sending.
+        expect(
+          action === "role" ? api.changeRole : api.revoke,
+        ).toHaveBeenCalledWith(
+          ...(action === "role" ? ["m-joao", "MANAGER"] : ["m-joao"]),
+        );
+        api.team.mockResolvedValue(TEAM_B);
+        await switchTo(page, "B");
+        const calls = api.team.mock.calls.length;
+        pending.resolve();
+        await page.flush();
+        // No notice about store A, no reload for it, and B's buttons are not left waiting.
+        expect(page.element.querySelector("[role=status]")).toBeNull();
+        expect(api.team).toHaveBeenCalledTimes(calls);
+        expect(page.element.textContent).toContain("Beto");
+        expect(page.button(page.element, "Gerar convite").disabled).toBe(false);
+        page.fixture.destroy();
+      }
+    });
+
+    it("hides store A's invite link after the switch", async () => {
+      const page = await render();
+      api.invite.mockResolvedValue({
+        invite: {
+          id: "i-bia",
+          email: "bia@test.invalid",
+          role: "STAFF",
+          expiresAt: "2026-10-28T12:00:00.000Z",
+        },
+        inviteUrl: "https://admin.test/equipe/convite/TOKEN-A",
+        expiresIn: 259200,
+      });
+      await page.set("#invite-email", "bia@test.invalid");
+      page.element.querySelector("form")!.dispatchEvent(new Event("submit"));
+      await page.flush();
+      expect(page.element.querySelector("#invite-link")).not.toBeNull();
+      api.team.mockResolvedValue(TEAM_B);
+      await switchTo(page, "B");
+      expect(page.element.querySelector("#invite-link")).toBeNull();
+      expect(page.element.textContent).not.toContain("bia@test.invalid");
+    });
+
+    it("changes nothing when destroyed during a request", async () => {
+      const late = deferred<Team>();
+      api.team.mockReturnValueOnce(late.promise);
+      const page = await render();
+      page.fixture.destroy();
+      late.resolve(TEAM);
+      await settle();
+      expect(api.team).toHaveBeenCalledTimes(1);
+      expect(page.element.textContent).not.toContain("João");
+    });
   });
 });

@@ -1,18 +1,20 @@
 import { Location } from "@angular/common";
 import { Component, inject, OnDestroy, signal } from "@angular/core";
 import { FormsModule } from "@angular/forms";
-import { ActivatedRoute, RouterLink } from "@angular/router";
+import { ActivatedRoute, Router, RouterLink } from "@angular/router";
 import { apiErrorCode, errorMessage } from "../core/api";
-import { ROLE_LABELS } from "../core/session";
+import { PendingTeamInvite } from "../core/pending-invite";
+import { ROLE_LABELS, Session } from "../core/session";
 import { type InvitePreview, type RedeemedInvite, TeamApi } from "./team-api";
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const INVALID = "Este convite é inválido, já foi usado ou expirou.";
 
 /**
- * Accepting a team invitation (M3.6). The token leaves the address bar at once and stays in
- * memory only. A new person creates an account; a person who already has one confirms it with
- * their current password, under the same lockout as the sign-in.
+ * Accepting a team invitation (M3.6, ADR 0015). The token leaves the address bar at once and
+ * stays in memory only. A new person creates an account. A person who already has one signs in
+ * (lockout and second factor included) and accepts with that session: the token waits in memory
+ * during the sign-in, which brings them back here.
  */
 @Component({
   selector: "wo-team-invite-page",
@@ -35,7 +37,9 @@ const INVALID = "Este convite é inválido, já foi usado ou expirou.";
             Entre com seu e-mail e a senha que você acabou de criar.
           }
         </p>
-        <a class="button" routerLink="/">Ir para o painel</a>
+        <a class="button" [routerLink]="result.newAccount ? '/' : '/lojas'"
+          >Ir para o painel</a
+        >
       } @else if (loading()) {
         <p role="status">Conferindo convite…</p>
       } @else if (preview(); as invite) {
@@ -45,23 +49,27 @@ const INVALID = "Este convite é inválido, já foi usado ou expirou.";
           <strong>{{ labels[invite.role] }}</strong
           >.
         </p>
-        <form (submit)="$event.preventDefault(); submit()">
-          @if (invite.accountExists) {
-            <p class="muted">
-              Este e-mail já tem acesso ao WhiteOven. Confirme com a sua senha
-              atual para entrar na equipe.
-            </p>
-            <label for="invite-password">Sua senha</label>
-            <input
-              id="invite-password"
-              name="password"
-              type="password"
-              autocomplete="current-password"
-              maxlength="1024"
-              required
-              [(ngModel)]="password"
-            />
+        @if (invite.accountExists) {
+          <p class="muted">
+            Este e-mail já tem acesso ao WhiteOven. Para aceitar, entre com a
+            conta {{ invite.email }}.
+          </p>
+          @if (signedIn()) {
+            <button
+              class="button"
+              type="button"
+              [disabled]="submitting()"
+              (click)="accept()"
+            >
+              {{ submitting() ? "Entrando na equipe…" : "Aceitar convite" }}
+            </button>
           } @else {
+            <button class="button" type="button" (click)="signInToAccept()">
+              Entrar para aceitar
+            </button>
+          }
+        } @else {
+          <form (submit)="$event.preventDefault(); submit()">
             <label for="invite-name">Seu nome</label>
             <input
               id="invite-name"
@@ -100,11 +108,11 @@ const INVALID = "Este convite é inválido, já foi usado ou expirou.";
             <p class="match-error" role="alert" [hidden]="!passwordMismatch()">
               As senhas não coincidem.
             </p>
-          }
-          <button class="button" type="submit" [disabled]="submitting()">
-            {{ submitting() ? "Entrando na equipe…" : "Aceitar convite" }}
-          </button>
-        </form>
+            <button class="button" type="submit" [disabled]="submitting()">
+              {{ submitting() ? "Entrando na equipe…" : "Aceitar convite" }}
+            </button>
+          </form>
+        }
         <p class="expiry-note">Este convite só pode ser usado uma vez.</p>
       }
     </main>
@@ -156,7 +164,10 @@ const INVALID = "Este convite é inválido, já foi usado ou expirou.";
 })
 export class TeamInvitePage implements OnDestroy {
   private readonly api = inject(TeamApi);
+  private readonly router = inject(Router);
+  private readonly pending = inject(PendingTeamInvite);
   private inviteToken: string | null = null;
+  protected readonly signedIn = inject(Session).signedIn;
   protected readonly labels = ROLE_LABELS;
 
   protected name = "";
@@ -169,7 +180,10 @@ export class TeamInvitePage implements OnDestroy {
   protected readonly submitting = signal(false);
 
   constructor() {
-    const token = inject(ActivatedRoute).snapshot.paramMap.get("token");
+    // From the link, or back from the sign-in this page sent the person to.
+    const token =
+      inject(ActivatedRoute).snapshot.paramMap.get("token") ??
+      this.pending.take();
     inject(Location).replaceState("/equipe/convite/aceitar");
     if (!token || !TOKEN.test(token)) {
       this.loading.set(false);
@@ -196,27 +210,41 @@ export class TeamInvitePage implements OnDestroy {
   }
 
   protected async submit(): Promise<void> {
-    const invite = this.preview();
-    const token = this.inviteToken;
-    if (!invite || !token || this.submitting()) return;
-    this.error.set("");
-    if (!invite.accountExists) {
-      if (!this.name.trim()) {
-        this.error.set("Informe o seu nome.");
-        return;
-      }
-      if (this.password !== this.passwordConfirmation) {
-        this.error.set("As senhas não coincidem.");
-        return;
-      }
+    if (!this.name.trim()) {
+      this.error.set("Informe o seu nome.");
+      return;
     }
+    if (this.password !== this.passwordConfirmation) {
+      this.error.set("As senhas não coincidem.");
+      return;
+    }
+    await this.finish((token) =>
+      this.api.redeem(token, this.name.trim(), this.password),
+    );
+  }
+
+  protected async accept(): Promise<void> {
+    await this.finish((token) => this.api.accept(token));
+  }
+
+  /** Keeps the token in memory through the sign-in, which comes back to this page. */
+  protected async signInToAccept(): Promise<void> {
+    const token = this.inviteToken;
+    if (!token) return;
+    this.pending.hold(token);
+    this.inviteToken = null;
+    await this.router.navigateByUrl("/entrar");
+  }
+
+  private async finish(
+    request: (token: string) => Promise<RedeemedInvite>,
+  ): Promise<void> {
+    const token = this.inviteToken;
+    if (!this.preview() || !token || this.submitting()) return;
+    this.error.set("");
     this.submitting.set(true);
     try {
-      const result = await this.api.redeem(
-        token,
-        this.password,
-        invite.accountExists ? undefined : this.name.trim(),
-      );
+      const result = await request(token);
       this.inviteToken = null;
       this.name = "";
       this.password = "";

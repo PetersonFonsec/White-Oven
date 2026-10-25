@@ -1,7 +1,10 @@
 import { Location } from "@angular/common";
 import { HttpErrorResponse } from "@angular/common/http";
+import { signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
-import { ActivatedRoute, provideRouter } from "@angular/router";
+import { ActivatedRoute, provideRouter, Router } from "@angular/router";
+import { PendingTeamInvite } from "../core/pending-invite";
+import { Session } from "../core/session";
 import { TeamInvitePage } from "./team-invite.page";
 import { TeamApi } from "./team-api";
 
@@ -11,13 +14,16 @@ const failure = (status: number, code: string) =>
 
 describe("TeamInvitePage", () => {
   const token = "B".repeat(43);
-  const api = { preview: vi.fn(), redeem: vi.fn() };
+  const api = { preview: vi.fn(), redeem: vi.fn(), accept: vi.fn() };
+  const signedIn = signal(false);
   const location = { replaceState: vi.fn() };
   let routeToken: string | null = token;
 
   beforeEach(() => {
     api.preview.mockReset();
     api.redeem.mockReset();
+    api.accept.mockReset();
+    signedIn.set(false);
     location.replaceState.mockReset();
     routeToken = token;
     TestBed.configureTestingModule({
@@ -36,8 +42,10 @@ describe("TeamInvitePage", () => {
         },
         { provide: Location, useValue: location },
         { provide: TeamApi, useValue: api },
+        { provide: Session, useValue: { signedIn } },
       ],
     });
+    vi.spyOn(TestBed.inject(Router), "navigateByUrl").mockResolvedValue(true);
   });
 
   const render = async () => {
@@ -59,7 +67,13 @@ describe("TeamInvitePage", () => {
       element.querySelector("form")!.dispatchEvent(new Event("submit"));
       await flush();
     };
-    return { element, set, submit };
+    const click = async (text: string) => {
+      Array.from(element.querySelectorAll("button"))
+        .find((item) => item.textContent?.trim() === text)!
+        .click();
+      await flush();
+    };
+    return { element, set, submit, click };
   };
 
   it("hides the token, previews the invite and creates the account", async () => {
@@ -88,8 +102,8 @@ describe("TeamInvitePage", () => {
     await page.submit();
     expect(api.redeem).toHaveBeenCalledWith(
       token,
-      "senha-bem-segura",
       "Nova Pessoa",
+      "senha-bem-segura",
     );
     expect(page.element.querySelector("[role=status]")!.textContent).toContain(
       "Você agora faz parte da equipe de Pizzaria Centro",
@@ -97,22 +111,57 @@ describe("TeamInvitePage", () => {
     expect(page.element.querySelector("form")).toBeNull();
   });
 
-  it("asks an existing account for its password only", async () => {
-    api.preview.mockResolvedValue({
+  const existing = {
+    storeName: "Pizzaria Centro",
+    role: "MANAGER",
+    email: "antiga@test.invalid",
+    accountExists: true,
+    expiresAt: "2026-10-28T12:00:00.000Z",
+  };
+
+  it("sends an existing account to sign in, keeping the token in memory only", async () => {
+    api.preview.mockResolvedValue(existing);
+    const page = await render();
+    expect(page.element.querySelector("input[type=password]")).toBeNull();
+    await page.click("Entrar para aceitar");
+    expect(TestBed.inject(Router).navigateByUrl).toHaveBeenCalledWith(
+      "/entrar",
+    );
+    expect(TestBed.inject(PendingTeamInvite).take()).toBe(token);
+    expect(api.accept).not.toHaveBeenCalled();
+  });
+
+  it("comes back from the sign-in with the waiting token and accepts with the session", async () => {
+    routeToken = null;
+    TestBed.inject(PendingTeamInvite).hold(token);
+    signedIn.set(true);
+    api.preview.mockResolvedValue(existing);
+    api.accept.mockResolvedValue({
       storeName: "Pizzaria Centro",
       role: "MANAGER",
-      email: "antiga@test.invalid",
-      accountExists: true,
-      expiresAt: "2026-10-28T12:00:00.000Z",
+      newAccount: false,
     });
-    api.redeem.mockRejectedValueOnce(failure(401, "INVALID_CREDENTIALS"));
     const page = await render();
-    expect(page.element.querySelector("#invite-name")).toBeNull();
-    page.set("invite-password", "errada");
-    await page.submit();
-    expect(api.redeem).toHaveBeenCalledWith(token, "errada", undefined);
+    expect(api.preview).toHaveBeenCalledWith(token);
+    expect(TestBed.inject(PendingTeamInvite).waiting()).toBe(false);
+    await page.click("Aceitar convite");
+    expect(api.accept).toHaveBeenCalledWith(token);
+    expect(page.element.querySelector("[role=status]")!.textContent).toContain(
+      "como Gerente",
+    );
+    expect(page.element.querySelector("a.button")!.getAttribute("href")).toBe(
+      "/lojas",
+    );
+  });
+
+  it("explains an invite for another account", async () => {
+    signedIn.set(true);
+    api.preview.mockResolvedValue(existing);
+    api.accept.mockRejectedValue(failure(403, "INVITE_EMAIL_MISMATCH"));
+    const page = await render();
+    await page.click("Aceitar convite");
     expect(page.element.querySelector("[role=alert]")!.textContent).toContain(
-      "E-mail ou senha incorretos.",
+      "Este convite é para outro e-mail.",
     );
   });
 

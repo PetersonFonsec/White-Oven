@@ -28,15 +28,21 @@ O [modelo de domínio](../architecture/domain-model.md#membership) pede que toda
   - `Idempotency-Key` é obrigatório (system-overview). O token é derivado por HMAC da chave, da loja e do corpo, com o mesmo segredo dos convites de dono e outro domínio, então uma nova tentativa devolve o mesmo link. A mesma chave com outro corpo é `409 IDEMPOTENCY_CONFLICT`.
   - Um novo convite para o mesmo e-mail substitui o pendente, e o link anterior deixa de valer. Convidar quem já está ativo na loja é `409 ALREADY_MEMBER`.
 - **Aceitar o convite** é público (`POST /v1/team/invites/preview` e `/redeem`). A prévia mostra loja, papel, e-mail e se a conta já existe. Token desconhecido, usado, cancelado ou vencido é sempre `410 INVITE_INVALID`, então os tokens não podem ser sondados.
-  - Pessoa nova: informa nome e senha, com as mesmas regras de senha do login.
-  - Pessoa que já tem conta: confirma com a senha atual, sob o mesmo bloqueio progressivo do login (`429 RATE_LIMITED`). A conta precisa estar ativa e ter o mesmo e-mail do convite.
+  - **Pessoa nova** (`/redeem`, público): informa nome e senha, com as mesmas regras de senha do login. Se o e-mail já tem conta, a resposta é `409 ACCOUNT_EXISTS`, antes de ler qualquer senha.
+  - **Pessoa que já tem conta** (`POST /v1/team/invites/accept`, `@StaffRoute()`): entra no painel pelo login normal, com bloqueio progressivo e segundo fator quando cadastrado, e aceita com essa sessão. A função `whiteoven_accept_staff_invite` não recebe a identidade como um id de usuário: ela confere a sessão viva (não revogada, não expirada, com `mfa` quando a conta tem MFA), o usuário `ACTIVE` dessa sessão e o e-mail do convite. Convite para outro e-mail é `403 INVITE_EMAIL_MISMATCH`.
+  - Os dois caminhos travam o convite (`for update`) e gravam conta, vínculo, consumo e auditoria na mesma transação: duas requisições simultâneas consomem o convite uma vez só, e uma falha no meio não deixa nada gravado.
   - Um vínculo `REVOKED` volta a `ACTIVE` com o papel do convite. Se a pessoa entrou na loja por outro caminho depois do convite, o resgate é `409 ALREADY_MEMBER` e o papel dela não muda.
-- **Painel:** a página `/loja/equipe` é só do OWNER e é carregada sob demanda. Ela lista as pessoas ativas e os convites pendentes, gera o convite e mostra o link uma vez, altera o papel com um botão (não ao trocar o seletor) e revoga depois de uma confirmação. A página `/equipe/convite/{token}` tira o token da barra de endereço na hora, como a do convite de dono, e o guarda só na memória.
+  - A app perde o `insert` em `memberships`: vínculos só nascem pelas funções auditadas (convites de equipe e de dono).
+- **Painel:**
+  - A página `/loja/equipe` é só do OWNER e é carregada sob demanda. Ela lista as pessoas ativas e os convites pendentes, gera o convite e mostra o link uma vez, altera o papel com um botão (não ao trocar o seletor) e revoga depois de uma confirmação.
+  - A troca de loja acontece em `/lojas`, fora do shell da loja, e destrói a página. Mesmo assim a página se prende à loja ativa da sessão: ao mudar de loja, ela limpa o estado e recarrega, e cada requisição só publica o resultado se a página ainda mostra a loja para a qual foi enviada. Respostas atrasadas, de leitura ou de escrita, não mudam dados, mensagens nem botões da loja atual.
+  - A página `/equipe/convite/{token}` tira o token da barra de endereço na hora, como a do convite de dono, e o guarda só na memória. Para uma conta existente, "Entrar para aceitar" leva ao login com o token guardado em memória (`PendingTeamInvite`), e o login volta para o convite.
 
 ## Alternativas descartadas
 
 - **Checar o último OWNER só na API:** um `update` direto ou duas requisições simultâneas passariam. O trigger com lock vale para qualquer escrita.
-- **Tirar da app o `update` em `memberships`:** o `select ... for share` que o guard usa a cada requisição exige esse privilégio. As mudanças da app passam pelas funções e o trigger protege o resto.
+- **Tirar da app o `update` em `memberships`:** o `select ... for share` que o guard usa a cada requisição exige esse privilégio. As mudanças da app passam pelas funções e o trigger protege o resto. O `insert` foi retirado.
+- **Confirmar a conta existente só com a senha no próprio convite:** dispensava o segundo fator de quem tem MFA, e a função privilegiada teria de confiar num id de usuário enviado pela API. Entrar pelo login reaproveita o bloqueio, o MFA e a sessão que o banco consegue conferir.
 - **Encerrar todas as sessões da pessoa:** ela perderia o acesso a outras lojas em que continua na equipe.
 - **Token aleatório a cada tentativa:** uma resposta perdida faria a nova tentativa trocar o link, e o primeiro, talvez já enviado, deixaria de valer.
 
@@ -44,4 +50,5 @@ O [modelo de domínio](../architecture/domain-model.md#membership) pede que toda
 
 - O envio do convite por e-mail entra quando houver provedor (Q-12). O link e as regras continuam os mesmos.
 - O trigger também vale para seeds e scripts. Os testes que rebaixam ou revogam donos mantêm outro OWNER na loja.
+- A fronteira de confiança continua sendo o papel `whiteoven_app`: quem executa SQL com ele lê `staff_sessions` e consegue montar uma chamada com uma sessão viva de outra pessoa. Proteger contra isso exigiria segredo fora do banco; a garantia aqui é que nenhum caminho HTTP aceita um convite sem uma sessão autenticada da conta convidada.
 - `staff_invites` fica com o histórico dos convites (aceito, cancelado, substituído) para auditoria. A limpeza entra com a política de retenção.

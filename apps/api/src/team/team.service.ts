@@ -3,12 +3,7 @@ import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import { MikroORM, type EntityManager } from "@mikro-orm/postgresql";
 import { ApiError } from "../errors/api-error";
 import { API_CONFIG, type ApiConfig } from "../config/config";
-import { LoginThrottle } from "../auth/login-throttle";
-import {
-  hashPassword,
-  passwordProblem,
-  verifyPassword,
-} from "../auth/password";
+import { hashPassword, passwordProblem } from "../auth/password";
 import type { MembershipRole } from "../auth/staff.entity";
 import { currentTenantContext } from "../tenancy/tenant-context";
 import { TenantStatusPolicy } from "../tenancy/tenant-status-policy";
@@ -43,7 +38,7 @@ export interface InvitePreview {
   storeName: string;
   role: MembershipRole;
   email: string;
-  /** The invitee confirms with their password instead of creating an account. */
+  /** The invitee signs in and accepts instead of creating an account. */
   accountExists: boolean;
   expiresAt: string;
 }
@@ -70,7 +65,6 @@ export class TeamService {
     private readonly transactions: TenantTransactions,
     @Inject(MikroORM) private readonly orm: MikroORM,
     @Inject(API_CONFIG) private readonly config: ApiConfig,
-    @Inject(LoginThrottle) private readonly throttle: LoginThrottle,
   ) {
     // The invitation secret of the owner invites (M1.5), with its own domain below. Production
     // config requires it; the random fallback is local/test only, as there.
@@ -231,105 +225,117 @@ export class TeamService {
   }
 
   /**
-   * Accepts an invite. A new person creates an account with `name` and `password`; a person who
-   * already has one confirms with their current password, under the login lockout.
+   * A new person accepts an invite by creating the account it is for. An e-mail that already has
+   * an account is 409 `ACCOUNT_EXISTS`, before any password is read: that person signs in (with
+   * the login lockout and second factor) and accepts through `accept`.
    */
   async redeem(
     token: string,
-    name: string | null,
+    name: string,
     password: string,
-    ip: string,
     requestId: string,
-  ): Promise<{ storeName: string; role: MembershipRole; newAccount: boolean }> {
+  ): Promise<{ storeName: string; role: MembershipRole; newAccount: true }> {
     const preview = TOKEN.test(token) ? await this.peek(token) : undefined;
     if (!preview) throw inviteGone();
-    let staffUserId: string | null = null;
-    let passwordHash: string | null = null;
-    if (preview.accountExists) {
-      if (this.throttle.retryAfterMs(preview.email, ip) > 0)
-        throw new ApiError(
-          HttpStatus.TOO_MANY_REQUESTS,
-          "RATE_LIMITED",
-          "Too many attempts. Try again later.",
-        );
-      const [user] = await this.orm.em
-        .fork()
-        .execute<{ id: string; passwordHash: string; status: string }[]>(
-          'select id, password_hash as "passwordHash", status from staff_users where email = ?',
-          [preview.email],
-        );
-      const ok = await verifyPassword(
-        user?.passwordHash ?? null,
-        password.length <= 1024 ? password : "",
+    if (preview.accountExists) throw accountExists();
+    const trimmed = name.trim();
+    const paths = [
+      ...(trimmed.length < 1 || trimmed.length > 120 ? ["name"] : []),
+      ...(passwordProblem(password) ? ["password"] : []),
+    ];
+    if (paths.length)
+      throw new ApiError(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        "VALIDATION_FAILED",
+        "Invalid request body.",
+        {
+          errors: paths.map((path) => ({ code: "VALIDATION_FAILED", path })),
+        },
       );
-      if (!user || !ok || user.status !== "ACTIVE") {
-        this.throttle.recordFailure(preview.email, ip);
-        throw new ApiError(
-          HttpStatus.UNAUTHORIZED,
-          "INVALID_CREDENTIALS",
-          "Invalid e-mail or password.",
-        );
-      }
-      this.throttle.recordSuccess(preview.email);
-      staffUserId = user.id;
-    } else {
-      const trimmed = name?.trim() ?? "";
-      if (
-        trimmed.length < 1 ||
-        trimmed.length > 120 ||
-        passwordProblem(password)
-      )
-        throw new ApiError(
-          HttpStatus.UNPROCESSABLE_ENTITY,
-          "VALIDATION_FAILED",
-          "Invalid request body.",
-          {
-            errors: [
-              ...(trimmed.length < 1 || trimmed.length > 120
-                ? [{ code: "VALIDATION_FAILED", path: "name" }]
-                : []),
-              ...(passwordProblem(password)
-                ? [{ code: "VALIDATION_FAILED", path: "password" }]
-                : []),
-            ],
-          },
-        );
-      passwordHash = await hashPassword(password);
-    }
-    let row: { staffUserId: string } | undefined;
-    try {
-      [row] = await this.orm.em
+    const passwordHash = await hashPassword(password);
+    const row = await this.consume(() =>
+      this.orm.em
         .fork()
         .transactional((em) =>
           em.execute<{ staffUserId: string }[]>(
-            'select staff_user_id as "staffUserId" from whiteoven_redeem_staff_invite(?, ?, ?, ?, ?)',
+            'select staff_user_id as "staffUserId" from whiteoven_redeem_staff_invite(?, ?, ?, ?)',
             [
               hashOf(token),
-              staffUserId,
-              staffUserId ? null : name!.trim(),
+              trimmed,
               passwordHash,
               UUID.test(requestId) ? requestId : null,
             ],
           ),
-        );
-    } catch (error) {
-      // Someone created an account with this e-mail between the preview and now.
-      if ((error as { code?: unknown } | null)?.code === "23505")
-        throw new ApiError(
-          HttpStatus.CONFLICT,
-          "ACCOUNT_EXISTS",
-          "An account already uses this e-mail address.",
-        );
-      if ((error as { code?: unknown } | null)?.code === "P0010")
-        throw alreadyMember();
-      throw error;
-    }
+        ),
+    );
     if (!row) throw inviteGone();
     return {
       storeName: preview.storeName,
       role: preview.role,
-      newAccount: staffUserId === null,
+      newAccount: true,
     };
+  }
+
+  /**
+   * A signed-in person accepts an invite for their own e-mail. The database takes the identity
+   * from the live session, not from a user id, and refuses another account's invite (403).
+   */
+  async accept(
+    token: string,
+    staffUserId: string,
+    sessionId: string,
+    requestId: string,
+  ): Promise<{ storeName: string; role: MembershipRole; newAccount: false }> {
+    const preview = TOKEN.test(token) ? await this.peek(token) : undefined;
+    if (!preview) throw inviteGone();
+    const row = await this.consume(() =>
+      this.orm.em
+        .fork()
+        .transactional((em) =>
+          em.execute<{ staffUserId: string }[]>(
+            'select staff_user_id as "staffUserId" from whiteoven_accept_staff_invite(?, ?, ?, ?)',
+            [
+              hashOf(token),
+              staffUserId,
+              sessionId,
+              UUID.test(requestId) ? requestId : null,
+            ],
+          ),
+        ),
+    );
+    if (!row) throw inviteGone();
+    return {
+      storeName: preview.storeName,
+      role: preview.role,
+      newAccount: false,
+    };
+  }
+
+  /** Runs a redemption, mapping the database's refusals. */
+  private async consume(
+    work: () => Promise<{ staffUserId: string }[]>,
+  ): Promise<{ staffUserId: string } | undefined> {
+    try {
+      return (await work())[0];
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      // P0013, or 23505 when the account was created between the check and the insert.
+      if (code === "P0013" || code === "23505") throw accountExists();
+      if (code === "P0010") throw alreadyMember();
+      if (code === "P0012")
+        throw new ApiError(
+          HttpStatus.FORBIDDEN,
+          "INVITE_EMAIL_MISMATCH",
+          "This invitation is for another e-mail address.",
+        );
+      if (code === "42501")
+        throw new ApiError(
+          HttpStatus.UNAUTHORIZED,
+          "UNAUTHORIZED",
+          "Authentication required.",
+        );
+      throw error;
+    }
   }
 
   private async peek(token: string): Promise<InvitePreview | undefined> {
@@ -416,6 +422,12 @@ export class TeamService {
   }
 }
 
+const accountExists = () =>
+  new ApiError(
+    HttpStatus.CONFLICT,
+    "ACCOUNT_EXISTS",
+    "An account already uses this e-mail address. Sign in to accept the invitation.",
+  );
 const alreadyMember = () =>
   new ApiError(
     HttpStatus.CONFLICT,

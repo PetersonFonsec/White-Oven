@@ -89,5 +89,28 @@ test("an owner invites a person by link, changes their role and revokes them", a
   );
   await guest.reload();
   await expect(guest).toHaveURL(/\/entrar$/);
+
+  // A new invite brings the person back: having an account, they sign in to accept it.
+  await page.getByLabel("E-mail").fill("nova-pessoa@e2e.test");
+  await page.getByRole("button", { name: "Gerar convite" }).click();
+  const again = await page.getByLabel("Link de convite").inputValue();
+  await guest.goto(again);
+  await expect(guest).toHaveURL(/\/equipe\/convite\/aceitar$/);
+  await guest.getByRole("button", { name: "Entrar para aceitar" }).click();
+  await expect(guest).toHaveURL(/\/entrar$/);
+  await guest.getByLabel("E-mail").fill("nova-pessoa@e2e.test");
+  await guest.getByLabel("Senha").fill(NEW_PASSWORD);
+  await guest.getByRole("button", { name: "Entrar" }).click();
+  await expect(guest).toHaveURL(/\/equipe\/convite\/aceitar$/);
+  await guest.getByRole("button", { name: "Aceitar convite" }).click();
+  await expect(guest.getByRole("status")).toContainText(
+    "Você agora faz parte da equipe de Pizzaria pizzaria-bairro como Equipe.",
+  );
+  await guest.getByRole("link", { name: "Ir para o painel" }).click();
+  // Their only store opens directly.
+  await expect(guest).toHaveURL(/\/loja$/);
+  await expect(guest.getByRole("banner")).toContainText(
+    "Pizzaria pizzaria-bairro",
+  );
   await invitee.close();
 });

@@ -102,6 +102,8 @@ describe("M3.6 team management", databaseSuite, () => {
     api(null, "/team/invites/preview", "POST", { token });
   const redeem = (body: Record<string, string>) =>
     api(null, "/team/invites/redeem", "POST", body);
+  const accept = (accessToken: string | null, token: string) =>
+    api(accessToken, "/team/invites/accept", "POST", { token });
   const membershipOf = async (tenantId: string, userId: string) => {
     const [row] = await runInTenant(owner, tenantId, (em) =>
       em.execute<{ id: string; role: string; status: string }[]>(
@@ -206,7 +208,17 @@ describe("M3.6 team management", databaseSuite, () => {
     assert.equal(missing.status, 422);
     assert.deepEqual(
       (await json(missing)).details.errors.map((e: { path: string }) => e.path),
-      ["name", "password"],
+      ["name"],
+    );
+    const weak = await redeem({
+      token: created.token,
+      name: "Nova",
+      password: "curta",
+    });
+    assert.equal(weak.status, 422);
+    assert.deepEqual(
+      (await json(weak)).details.errors.map((e: { path: string }) => e.path),
+      ["password"],
     );
     const joined = await redeem({
       token: created.token,
@@ -252,52 +264,160 @@ describe("M3.6 team management", databaseSuite, () => {
     );
   });
 
-  it("lets a person who already has an account join by confirming their password", async () => {
+  it("lets a person who already has an account accept while signed in, never with a bare password", async () => {
     const dona = await person(tenantA, "OWNER");
     const elsewhere = await person(tenantB, "OWNER");
     const created = await invite(dona.token, elsewhere.email, "MANAGER");
-    assert.equal(
-      (await json(await preview(created.token))).accountExists,
-      true,
-    );
+    const shown = await json(await preview(created.token));
+    assert.equal(shown.accountExists, true);
+    // The public route creates accounts only: it checks no password of an existing account,
+    // right or wrong, so it is no way around the login and its lockout.
+    for (const password of [PASSWORD, "errada-123"]) {
+      const refused = await redeem({
+        token: created.token,
+        name: "Outro Nome",
+        password,
+      });
+      assert.equal(refused.status, 409);
+      assert.equal((await json(refused)).code, "ACCOUNT_EXISTS");
+    }
+    assert.equal((await accept(null, created.token)).status, 401);
 
-    const wrong = await redeem({
-      token: created.token,
-      password: "errada-123",
-    });
-    assert.equal(wrong.status, 401);
-    assert.equal((await json(wrong)).code, "INVALID_CREDENTIALS");
-    // The name is ignored for an existing account; the invite is still pending.
-    const joined = await redeem({
-      token: created.token,
-      password: PASSWORD,
-      name: "Outro Nome",
-    });
+    // Any session of the account works, with or without an active store.
+    const joined = await accept(elsewhere.login.accessToken, created.token);
     assert.equal(joined.status, 200);
-    assert.equal((await json(joined)).newAccount, false);
+    assert.deepEqual(await json(joined), {
+      storeName: shown.storeName,
+      role: "MANAGER",
+      newAccount: false,
+    });
     assert.equal(
       (await membershipOf(tenantA, elsewhere.userId))?.role,
       "MANAGER",
     );
-    // The existing session in the other store keeps working.
+    const [audit] = (await audits(tenantA)).filter(
+      (a) =>
+        a.action === "team.invite_redeemed" && a.actor === elsewhere.userId,
+    );
+    assert.deepEqual(audit!.changes, { role: "MANAGER", newAccount: false });
+    // Single use, and the existing session in the other store keeps working.
+    const again = await accept(elsewhere.login.accessToken, created.token);
+    assert.equal(again.status, 410);
+    assert.equal((await json(again)).code, "INVITE_INVALID");
     assert.equal((await api(elsewhere.token, "/admin/team")).status, 200);
   });
 
-  it("locks the password confirmation like the login after repeated failures", async () => {
+  it("keeps the login lockout in front of accepting: a locked account cannot get a session", async () => {
     const dona = await person(tenantA, "OWNER");
-    const target = await person(tenantB, "STAFF");
-    const created = await invite(dona.token, target.email);
+    const email = `bloqueio-${randomUUID()}@test.invalid`;
+    const userId = await insertStaffUser(owner, email, PASSWORD);
+    await invite(dona.token, email);
+    const login = (password: string) =>
+      fetch(`${server.baseUrl}/v1/admin/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
     const statuses: number[] = [];
     for (let attempt = 0; attempt < 7; attempt++)
-      statuses.push(
-        (await redeem({ token: created.token, password: "errada-123" })).status,
-      );
+      statuses.push((await login("errada-123")).status);
     assert.deepEqual(statuses, [401, 401, 401, 401, 401, 401, 429]);
-    // Even the right password waits for the lock.
-    const locked = await redeem({ token: created.token, password: PASSWORD });
-    assert.equal(locked.status, 429);
-    assert.equal((await json(locked)).code, "RATE_LIMITED");
-    assert.equal(await membershipOf(tenantA, target.userId), undefined);
+    // Even the right password waits for the lock, so there is no session to accept with.
+    assert.equal((await login(PASSWORD)).status, 429);
+    assert.equal(await membershipOf(tenantA, userId), undefined);
+  });
+
+  it("refuses an invite for another e-mail, whoever is signed in", async () => {
+    const dona = await person(tenantA, "OWNER");
+    const intended = `destino-${randomUUID()}@test.invalid`;
+    const intendedId = await insertStaffUser(owner, intended, PASSWORD);
+    const created = await invite(dona.token, intended);
+    const intruder = await person(tenantB, "STAFF");
+    const response = await accept(intruder.login.accessToken, created.token);
+    assert.equal(response.status, 403);
+    assert.equal((await json(response)).code, "INVITE_EMAIL_MISMATCH");
+    assert.equal(await membershipOf(tenantA, intruder.userId), undefined);
+    // The invite is still pending for the right person.
+    assert.equal((await preview(created.token)).status, 200);
+    const owned = await staffLogin(server.baseUrl, intended, PASSWORD);
+    assert.equal((await accept(owned.accessToken, created.token)).status, 200);
+    assert.equal((await membershipOf(tenantA, intendedId))?.status, "ACTIVE");
+  });
+
+  it("lets only one of two simultaneous requests consume an invite", async () => {
+    const dona = await person(tenantA, "OWNER");
+    const email = `corrida-${randomUUID()}@test.invalid`;
+    const fresh = await invite(dona.token, email);
+    const created = await Promise.all(
+      ["Primeira", "Segunda"].map((name) =>
+        redeem({ token: fresh.token, name, password: NEW_PASSWORD }),
+      ),
+    );
+    assert.deepEqual(created.map((r) => r.status).sort(), [200, 410]);
+    const [users] = await owner.em
+      .getConnection()
+      .execute<{ count: number }[]>(
+        "select count(*)::int as count from staff_users where email = ?",
+        [email],
+      );
+    assert.equal(users!.count, 1);
+
+    const existing = await person(tenantB, "STAFF");
+    const forExisting = await invite(dona.token, existing.email);
+    const accepted = await Promise.all(
+      [0, 1].map(() => accept(existing.login.accessToken, forExisting.token)),
+    );
+    assert.deepEqual(accepted.map((r) => r.status).sort(), [200, 410]);
+    assert.equal(
+      (await audits(tenantA)).filter(
+        (a) =>
+          a.action === "team.invite_redeemed" && a.actor === existing.userId,
+      ).length,
+      1,
+    );
+  });
+
+  it("leaves nothing behind when the redemption fails midway", async () => {
+    const dona = await person(tenantA, "OWNER");
+    const email = `falha-${randomUUID()}@test.invalid`;
+    const created = await invite(dona.token, email);
+    // Fails the last write of the redemption (its audit event), after the account, the
+    // membership and the consumed invite were written in the same transaction.
+    const sql = owner.em.getConnection();
+    await sql.execute(`
+      create function team_test_fail_audit() returns trigger language plpgsql as $$
+      begin
+        if NEW.action = 'team.invite_redeemed' then raise exception 'injected failure'; end if;
+        return NEW;
+      end $$;
+      create trigger team_test_fail_audit before insert on audit_events
+        for each row execute function team_test_fail_audit();
+    `);
+    try {
+      const failed = await redeem({
+        token: created.token,
+        name: "Nova",
+        password: NEW_PASSWORD,
+      });
+      assert.equal(failed.status, 500);
+    } finally {
+      await sql.execute(`
+        drop trigger team_test_fail_audit on audit_events;
+        drop function team_test_fail_audit();
+      `);
+    }
+    const [users] = await sql.execute<{ count: number }[]>(
+      "select count(*)::int as count from staff_users where email = ?",
+      [email],
+    );
+    assert.equal(users!.count, 0);
+    assert.equal((await preview(created.token)).status, 200);
+    const joined = await redeem({
+      token: created.token,
+      name: "Nova",
+      password: NEW_PASSWORD,
+    });
+    assert.equal(joined.status, 200);
   });
 
   it("refuses inviting an active member, replaces a pending invite and cancels one", async () => {
@@ -385,13 +505,20 @@ describe("M3.6 team management", databaseSuite, () => {
       dona.token,
       `expira-${randomUUID()}@test.invalid`,
     );
+    const existing = await person(tenantB, "STAFF");
+    const forExisting = await invite(dona.token, existing.email);
     await runInTenant(owner, tenantA, (em) =>
       em.execute(
-        "update staff_invites set created_at = now() - interval '73 hours', expires_at = now() - interval '1 hour' where id = ?",
-        [created.invite.id],
+        "update staff_invites set created_at = now() - interval '73 hours', expires_at = now() - interval '1 hour' where id in (?, ?)",
+        [created.invite.id, forExisting.invite.id],
       ),
     );
     assert.equal((await preview(created.token)).status, 410);
+    assert.equal(
+      (await accept(existing.login.accessToken, forExisting.token)).status,
+      410,
+    );
+    assert.equal(await membershipOf(tenantA, existing.userId), undefined);
     assert.equal(
       (
         await redeem({
@@ -420,6 +547,7 @@ describe("M3.6 team management", databaseSuite, () => {
     }
     const extra = await redeem({
       token: created.token,
+      name: "X",
       password: "x",
       role: "OWNER",
     });
@@ -600,10 +728,7 @@ describe("M3.6 team management", databaseSuite, () => {
 
     // A new invite brings the person back.
     const back = await invite(dona.token, email);
-    assert.equal(
-      (await redeem({ token: back.token, password: PASSWORD })).status,
-      200,
-    );
+    assert.equal((await accept(inB.token, back.token)).status, 200);
     const rejoined = (await membershipOf(tenantA, member.userId))!;
     assert.equal(rejoined.id, membership.id);
     assert.deepEqual([rejoined.role, rejoined.status], ["STAFF", "ACTIVE"]);
@@ -614,7 +739,7 @@ describe("M3.6 team management", databaseSuite, () => {
     const target = await person(tenantB, "OWNER");
     const created = await invite(dona.token, target.email, "STAFF");
     await insertMembership(owner, tenantA, target.userId, "OWNER");
-    const response = await redeem({ token: created.token, password: PASSWORD });
+    const response = await accept(target.login.accessToken, created.token);
     assert.equal(response.status, 409);
     assert.equal((await json(response)).code, "ALREADY_MEMBER");
     assert.equal((await membershipOf(tenantA, target.userId))?.role, "OWNER");
@@ -667,6 +792,87 @@ describe("M3.6 team management", databaseSuite, () => {
     assert.equal(write.status, 403);
     assert.equal((await json(write)).code, "TEAM_WRITE_FORBIDDEN");
     assert.equal((await preview(created.token)).status, 410);
+  });
+
+  it("refuses a privileged accept that does not come from the invitee's own live session", async () => {
+    const dona = await person(tenantA, "OWNER");
+    const victim = `vitima-${randomUUID()}@test.invalid`;
+    const victimId = await insertStaffUser(owner, victim, PASSWORD);
+    const created = await invite(dona.token, victim);
+    const intruder = await person(tenantB, "STAFF");
+    const sessionOf = async (userId: string) =>
+      (
+        await owner.em
+          .getConnection()
+          .execute<{ id: string }[]>(
+            "select id from staff_sessions where staff_user_id = ? and revoked_at is null limit 1",
+            [userId],
+          )
+      )[0]!.id;
+    const intruderSession = await sessionOf(intruder.userId);
+    const hash = createHash("sha256").update(created.token).digest();
+    const app = await database.connect(database.appUrl);
+    const refused = (sql: string, params: unknown[], code = "42501") =>
+      assert.rejects(
+        app.em.transactional((em) => em.execute(sql, params)),
+        (error: { code?: string }) => error.code === code,
+      );
+    try {
+      // The victim's id with someone else's session, or with a made-up one.
+      for (const session of [intruderSession, randomUUID()])
+        await refused(
+          "select * from whiteoven_accept_staff_invite(?, ?, ?, null)",
+          [hash, victimId, session],
+        );
+      // The intruder's own session reaches the e-mail check and stops there.
+      await refused(
+        "select * from whiteoven_accept_staff_invite(?, ?, ?, null)",
+        [hash, intruder.userId, intruderSession],
+        "P0012",
+      );
+      // A revoked session, or one without the second factor of an enrolled account.
+      const victimLogin = await staffLogin(server.baseUrl, victim, PASSWORD);
+      const victimSession = await sessionOf(victimId);
+      const sql = owner.em.getConnection();
+      await sql.execute(
+        "update staff_users set mfa_enabled_at = now(), mfa_secret = 'v1.test' where id = ?",
+        [victimId],
+      );
+      await refused(
+        "select * from whiteoven_accept_staff_invite(?, ?, ?, null)",
+        [hash, victimId, victimSession],
+      );
+      await sql.execute(
+        "update staff_users set mfa_enabled_at = null, mfa_secret = null where id = ?",
+        [victimId],
+      );
+      await sql.execute(
+        "update staff_sessions set revoked_at = now(), revoked_reason = 'LOGOUT' where id = ?",
+        [victimSession],
+      );
+      assert.equal(
+        (await accept(victimLogin.accessToken, created.token)).status,
+        401,
+      );
+      await refused(
+        "select * from whiteoven_accept_staff_invite(?, ?, ?, null)",
+        [hash, victimId, victimSession],
+      );
+      // No direct way around the functions: the app cannot create memberships itself.
+      await assert.rejects(
+        runInTenant(app, tenantA, (em) =>
+          em.execute(
+            "insert into memberships (tenant_id, staff_user_id, role, status) values (?, ?, 'OWNER', 'ACTIVE')",
+            [tenantA, victimId],
+          ),
+        ),
+        (error: { code?: string }) => error.code === "42501",
+      );
+    } finally {
+      await app.close();
+    }
+    assert.equal(await membershipOf(tenantA, victimId), undefined);
+    assert.equal((await preview(created.token)).status, 200);
   });
 
   it("refuses the app role running team functions without a live OWNER session", async () => {

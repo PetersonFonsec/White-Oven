@@ -3,6 +3,7 @@ import { Component, inject, signal } from "@angular/core";
 import { FormBuilder, ReactiveFormsModule, Validators } from "@angular/forms";
 import { Router } from "@angular/router";
 import { apiErrorCode, errorMessage } from "../core/api";
+import { PendingTeamInvite } from "../core/pending-invite";
 import { Session } from "../core/session";
 
 /** E-mail and password, then the second factor when the account has one. */
@@ -115,6 +116,7 @@ import { Session } from "../core/session";
 export class LoginPage {
   protected readonly session = inject(Session);
   private readonly router = inject(Router);
+  private readonly pendingInvite = inject(PendingTeamInvite);
   private readonly document = inject(DOCUMENT);
   private readonly forms = inject(FormBuilder).nonNullable;
 
@@ -147,7 +149,7 @@ export class LoginPage {
     const { email, password } = this.credentials.getRawValue();
     await this.run(async () => {
       const result = await this.session.login(email.trim(), password);
-      if (result === "signed-in") await this.router.navigateByUrl("/");
+      if (result === "signed-in") await this.router.navigateByUrl(this.next());
       else {
         this.credentials.reset();
         this.mfaToken.set(result.mfaToken);
@@ -167,8 +169,13 @@ export class LoginPage {
         this.mfaToken()!,
         this.useRecovery() ? { recoveryCode: value } : { code: value },
       );
-      await this.router.navigateByUrl("/");
+      await this.router.navigateByUrl(this.next());
     });
+  }
+
+  /** Back to a team invite waiting for this sign-in, or the panel. */
+  private next(): string {
+    return this.pendingInvite.waiting() ? "/equipe/convite/aceitar" : "/";
   }
 
   protected toggleRecovery(): void {

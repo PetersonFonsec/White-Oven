@@ -17,13 +17,16 @@ import {
   ApiHeader,
   ApiOperation,
   ApiProperty,
-  ApiPropertyOptional,
   ApiTags,
 } from "@nestjs/swagger";
 import type { Request, Response } from "express";
-import { AdminRoute } from "../auth/staff.guard";
+import {
+  AdminRoute,
+  CurrentStaff,
+  StaffRoute,
+  type StaffPrincipal,
+} from "../auth/staff.guard";
 import { PublicRoute } from "../auth/route-access";
-import { clientIp } from "../auth/staff-auth.controller";
 import type { MembershipRole } from "../auth/staff.entity";
 import { ApiError } from "../errors/api-error";
 import { requestIdOf } from "../logging/request-context";
@@ -40,15 +43,11 @@ class TokenBody {
   @ApiProperty({ minLength: 43, maxLength: 43 }) token!: string;
 }
 class RedeemBody extends TokenBody {
-  @ApiPropertyOptional({
-    minLength: 1,
-    maxLength: 120,
-    description: "Required only when the invitee has no account yet",
-  })
-  name?: string;
+  @ApiProperty({ minLength: 1, maxLength: 120 })
+  name!: string;
   @ApiProperty({
     format: "password",
-    description: "A new password, or the existing account's password",
+    description: "The new account's password",
   })
   password!: string;
 }
@@ -59,20 +58,17 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   !Array.isArray(value) &&
   Object.getPrototypeOf(value) === Object.prototype;
 
-/** Exactly `required` (strings) plus any of `optional`; anything else is a 422. */
+/** Exactly the `required` keys, as non-empty strings; anything else is a 422. */
 function body(
   raw: unknown,
   required: readonly string[],
-  optional: readonly string[] = [],
 ): Record<string, string> {
-  const allowed = [...required, ...optional];
   const paths = isObject(raw)
     ? [
         ...required.filter(
           (key) => typeof raw[key] !== "string" || raw[key] === "",
         ),
-        ...optional.filter((key) => key in raw && typeof raw[key] !== "string"),
-        ...Object.keys(raw).filter((key) => !allowed.includes(key)),
+        ...Object.keys(raw).filter((key) => !required.includes(key)),
       ]
     : [""];
   if (paths.length)
@@ -206,17 +202,39 @@ export class TeamInviteController {
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: RedeemBody })
   @ApiOperation({
-    summary: "Accept a team invitation",
+    summary: "Accept a team invitation by creating the account",
     description:
-      "Creates the account (name and new password) or, when the e-mail already has one, confirms it with that account's password under the login lockout.",
+      "For an e-mail without an account. 409 ACCOUNT_EXISTS otherwise: that person signs in and uses POST /team/invites/accept.",
   })
   redeem(@Body() raw: unknown, @Req() req: Request) {
-    const fields = body(raw, ["token", "password"], ["name"]);
+    const fields = body(raw, ["token", "name", "password"]);
     return this.team.redeem(
       fields.token!,
-      fields.name ?? null,
+      fields.name!,
       fields.password!,
-      clientIp(req),
+      requestIdOf(req),
+    );
+  }
+
+  @Post("accept")
+  @StaffRoute()
+  @HttpCode(HttpStatus.OK)
+  @ApiBody({ type: TokenBody })
+  @ApiOperation({
+    summary: "Accept a team invitation with the signed-in account",
+    description:
+      "The account comes from the authenticated session (login lockout and second factor included). 403 INVITE_EMAIL_MISMATCH for an invitation to another e-mail.",
+  })
+  accept(
+    @Body() raw: unknown,
+    @CurrentStaff() staff: StaffPrincipal,
+    @Req() req: Request,
+  ) {
+    const fields = body(raw, ["token"]);
+    return this.team.accept(
+      fields.token!,
+      staff.access.staffUserId,
+      staff.access.sessionId,
       requestIdOf(req),
     );
   }
