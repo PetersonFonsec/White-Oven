@@ -56,6 +56,10 @@ const expected: Record<
     ONBOARDING: ["OWNER"],
     ACTIVE: ["OWNER"],
   },
+  storeSettingsWrite: {
+    ONBOARDING: ["OWNER"],
+    ACTIVE: ["OWNER"],
+  },
   storePause: {
     ONBOARDING: ["OWNER", "MANAGER", "STAFF"],
     ACTIVE: ["OWNER", "MANAGER", "STAFF"],

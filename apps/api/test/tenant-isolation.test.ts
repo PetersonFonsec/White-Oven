@@ -469,6 +469,13 @@ describe("tenant isolation", databaseSuite, () => {
         "POST /admin/catalog/products",
         "POST /admin/catalog/images",
         "PUT /admin/catalog/pricing-policy",
+        // One row per tenant, no id in the path; covered in store.test.ts.
+        "GET /admin/store/settings",
+        "PUT /admin/store/settings",
+        "PUT /admin/store/opening-hours",
+        "GET /admin/store/pause",
+        "PUT /admin/store/pause",
+        "DELETE /admin/store/pause",
       ];
       assert.deepEqual(
         routes.filter((route) => !listings.includes(route)).sort(),
@@ -716,6 +723,9 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "orders", forced: true },
         { table: "owner_invites", forced: true },
         { table: "pizza_sizes", forced: true },
+        { table: "store_opening_hours", forced: true },
+        { table: "store_pauses", forced: true },
+        { table: "store_settings", forced: true },
       ]);
     });
 

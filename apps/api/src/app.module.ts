@@ -11,6 +11,7 @@ import { TenancyModule } from "./tenancy/tenancy.module";
 import { PlatformModule } from "./platform/platform.module";
 import { CatalogModule } from "./catalog/catalog.module";
 import { ImageModule } from "./images/image.module";
+import { StoreModule } from "./store/store.module";
 
 @Module({})
 export class AppModule {
@@ -29,6 +30,7 @@ export class AppModule {
         PlatformModule,
         CatalogModule,
         ImageModule,
+        StoreModule,
       ],
       controllers: [HealthController],
       providers: [

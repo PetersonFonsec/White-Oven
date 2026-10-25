@@ -2,11 +2,7 @@ import { CurrencyPipe, NgTemplateOutlet } from "@angular/common";
 import { Component, computed, inject, OnDestroy, signal } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { evaluatePizza } from "@whiteoven/pizza-pricing";
-import type {
-  PizzaCatalog,
-  PizzaConfiguration,
-  PricingPolicy,
-} from "@whiteoven/contracts";
+import type { PizzaConfiguration, PricingPolicy } from "@whiteoven/contracts";
 import { errorMessage } from "../core/api";
 import { CatalogApi, type CatalogSnapshot } from "./catalog-api";
 import {
@@ -18,6 +14,7 @@ import {
   previewCrusts,
   previewFlavors,
   previewSizes,
+  pricingCatalog,
   reconcilePreview,
 } from "./menu-model";
 
@@ -1243,7 +1240,7 @@ export class MenuPage implements OnDestroy {
     };
     return evaluatePizza(
       configuration,
-      this.pricingCatalog(data),
+      pricingCatalog(data),
       data.pricingPolicy ?? PREVIEW_POLICY,
     );
   });
@@ -1903,59 +1900,6 @@ export class MenuPage implements OnDestroy {
     for (const draft of this.drafts.values())
       if (JSON.stringify(draft.value) !== draft.base) count++;
     return count;
-  }
-
-  private pricingCatalog(data: CatalogSnapshot): PizzaCatalog {
-    return {
-      categories: data.categories.map(({ id, kind, archived }) => ({
-        id,
-        kind,
-        archived,
-      })),
-      sizes: data.sizes.map(
-        ({ id, name, slices, maxFlavors, available, archived }) => ({
-          id,
-          name,
-          slices,
-          maxFlavors,
-          available,
-          archived,
-        }),
-      ),
-      ingredients: data.ingredients.map(
-        ({ id, name, removable, archived }) => ({
-          id,
-          name,
-          removable,
-          archived,
-        }),
-      ),
-      flavors: data.flavors.map(
-        ({ id, categoryId, name, ingredientIds, available, archived }) => ({
-          id,
-          categoryId,
-          name,
-          ingredientIds,
-          available,
-          archived,
-        }),
-      ),
-      flavorPrices: data.flavorPrices,
-      crusts: data.crusts.map(({ id, name, available, archived }) => ({
-        id,
-        name,
-        available,
-        archived,
-      })),
-      crustPrices: data.crustPrices,
-      extras: data.extras.map(({ id, name, available, archived }) => ({
-        id,
-        name,
-        available,
-        archived,
-      })),
-      extraPrices: data.extraPrices,
-    };
   }
 
   /**

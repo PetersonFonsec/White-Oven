@@ -1,0 +1,108 @@
+wo-settings-page {
+  display: block;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--wo-spacing-6);
+}
+
+wo-settings-page .settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wo-spacing-2);
+  margin: var(--wo-spacing-4) 0;
+}
+
+wo-settings-page .settings-tabs button {
+  min-height: var(--wo-interaction-minimumTarget);
+  padding: var(--wo-spacing-2) var(--wo-spacing-3);
+  border: 1px solid var(--wo-color-inputBorder);
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-surface);
+  color: var(--wo-color-text);
+  font: inherit;
+  font-weight: var(--wo-fontWeight-bold);
+  cursor: pointer;
+}
+
+wo-settings-page .settings-tabs [aria-selected="true"] {
+  border-color: var(--wo-color-primary);
+  background: var(--wo-color-primary);
+  color: var(--wo-color-onPrimary);
+}
+
+wo-settings-page .settings-panel {
+  padding: var(--wo-spacing-4);
+  border: 1px solid var(--wo-color-border);
+  border-radius: var(--wo-radius-card);
+  background: var(--wo-color-surface);
+}
+
+wo-settings-page .settings-form,
+wo-settings-page fieldset {
+  display: grid;
+  gap: var(--wo-spacing-2);
+  max-width: 560px;
+}
+
+wo-settings-page fieldset {
+  margin: 0 0 var(--wo-spacing-4);
+  padding: var(--wo-spacing-3);
+  border: 1px solid var(--wo-color-border);
+  border-radius: var(--wo-radius-small);
+}
+
+wo-settings-page legend,
+wo-settings-page label {
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+wo-settings-page input:not([type="checkbox"], [type="radio"]),
+wo-settings-page textarea {
+  min-height: var(--wo-interaction-minimumTarget);
+  padding: var(--wo-spacing-2) var(--wo-spacing-3);
+  border: 1px solid var(--wo-color-inputBorder);
+  border-radius: var(--wo-radius-small);
+  font: inherit;
+}
+
+wo-settings-page .check,
+wo-settings-page .shift,
+wo-settings-page .exception {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wo-spacing-2);
+  min-height: var(--wo-interaction-minimumTarget);
+}
+
+wo-settings-page .examples {
+  display: grid;
+  gap: var(--wo-spacing-2);
+  padding: 0;
+  list-style: none;
+}
+
+wo-settings-page .examples li {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--wo-spacing-3);
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-cream);
+}
+
+wo-settings-page .settings-notice {
+  padding: var(--wo-spacing-3) var(--wo-spacing-4);
+  border-radius: var(--wo-radius-small);
+  background: var(--wo-color-cream);
+}
+
+wo-settings-page .field-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--wo-color-error);
+  font-weight: var(--wo-fontWeight-bold);
+}
+
+wo-settings-page [aria-invalid="true"] {
+  border-color: var(--wo-color-error);
+}

@@ -37,6 +37,21 @@ export function apiErrorCode(error: unknown): string | null {
   return typeof body?.code === "string" ? body.code : null;
 }
 
+/** The `{ code, path }` list some 422 responses carry in `details.errors`. */
+export function apiFieldErrors(
+  error: unknown,
+): { code: string; path: string }[] {
+  if (!(error instanceof HttpErrorResponse)) return [];
+  const errors = (error.error as { details?: { errors?: unknown } } | null)
+    ?.details?.errors;
+  return Array.isArray(errors)
+    ? errors.filter(
+        (item): item is { code: string; path: string } =>
+          typeof item?.code === "string" && typeof item?.path === "string",
+      )
+    : [];
+}
+
 /** HTTP status of an API failure; 0 when the API could not be reached, null for other errors. */
 export function apiStatus(error: unknown): number | null {
   return error instanceof HttpErrorResponse ? error.status : null;
@@ -64,6 +79,12 @@ const MESSAGES: Record<string, string> = {
     "O envio de convite não está configurado neste ambiente.",
   INVITE_INVALID: "Este convite é inválido ou expirou.",
   OWNER_ACCOUNT_EXISTS: "Já existe uma conta com este e-mail.",
+  OPENING_HOURS_INVALID: "Confira os horários destacados.",
+  STORE_WRITE_FORBIDDEN:
+    "As configurações não podem ser alteradas na situação atual da loja.",
+  CATALOG_WRITE_FORBIDDEN:
+    "O cardápio não pode ser alterado na situação atual da loja.",
+  ROLE_FORBIDDEN: "Seu papel na loja não permite esta ação.",
 };
 
 /** A message in Portuguese for the person; never the API's English text. */
