@@ -33,5 +33,8 @@ export const isId = (value: unknown): value is string =>
   value.length <= ID_MAX_LENGTH &&
   idPattern.test(value);
 
+/** Database monetary columns use PostgreSQL integer (signed 32 bit). */
 export const isCents = (value: unknown, min = 0): value is number =>
-  Number.isSafeInteger(value) && (value as number) >= min;
+  Number.isSafeInteger(value) &&
+  (value as number) >= min &&
+  (value as number) <= 2_147_483_647;

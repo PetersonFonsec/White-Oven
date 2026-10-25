@@ -8,6 +8,12 @@ import {
   CatalogFlavor,
   CatalogFlavorIngredient,
   CatalogFlavorPrice,
+  CatalogCrust,
+  CatalogCrustPrice,
+  CatalogExtra,
+  CatalogExtraPrice,
+  CatalogSimpleProduct,
+  CatalogPricingPolicy,
   CatalogIngredient,
   PizzaSize,
 } from "../catalog/catalog.entity";
@@ -26,6 +32,12 @@ export const ENTITIES = [
   CatalogFlavor,
   CatalogFlavorIngredient,
   CatalogFlavorPrice,
+  CatalogCrust,
+  CatalogCrustPrice,
+  CatalogExtra,
+  CatalogExtraPrice,
+  CatalogSimpleProduct,
+  CatalogPricingPolicy,
 ];
 
 export interface OrmConnection {

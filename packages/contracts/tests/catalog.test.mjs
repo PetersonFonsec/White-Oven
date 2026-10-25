@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validatePizzaCatalog } from "@whiteoven/contracts";
+import {
+  validateCatalogManagementSnapshot,
+  validatePizzaCatalog,
+} from "@whiteoven/contracts";
 
 const catalog = () => ({
   categories: [
@@ -60,6 +63,38 @@ test("accepts a consistent catalog and returns a detached copy", () => {
   assert.equal(result.ok, true);
   assert.deepEqual(result.value, input);
   assert.notEqual(result.value.flavors[0], input.flavors[0]);
+});
+
+test("validates the complete M2.4 management snapshot, policy and products", () => {
+  const input = {
+    ...catalog(),
+    simpleProducts: [
+      {
+        id: "refrigerante",
+        categoryId: "bebidas",
+        name: "Refrigerante lata",
+        priceCents: 700,
+        available: true,
+        archived: false,
+      },
+    ],
+    pricingPolicy: {
+      halfAndHalfStrategy: "HIGHEST",
+      halfAndHalfSurchargeCents: 0,
+      maxExtrasPerHalf: 5,
+    },
+  };
+  const result = validateCatalogManagementSnapshot(input);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value, input);
+  assert.notEqual(result.value.simpleProducts[0], input.simpleProducts[0]);
+  const bad = structuredClone(input);
+  bad.simpleProducts[0].categoryId = "pizzas";
+  bad.pricingPolicy.maxExtrasPerHalf = 11;
+  assert.deepEqual(
+    validateCatalogManagementSnapshot(bad).errors.map((error) => error.path),
+    ["pricingPolicy.maxExtrasPerHalf", "simpleProducts[0].categoryId"],
+  );
 });
 
 test("rejects missing sections and unknown fields at every level", () => {

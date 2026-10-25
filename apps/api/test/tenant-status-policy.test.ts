@@ -48,6 +48,14 @@ const expected: Record<
     ONBOARDING: ["OWNER", "MANAGER"],
     ACTIVE: ["OWNER", "MANAGER"],
   },
+  catalogAvailability: {
+    ONBOARDING: ["OWNER", "MANAGER", "STAFF"],
+    ACTIVE: ["OWNER", "MANAGER", "STAFF"],
+  },
+  catalogPolicyWrite: {
+    ONBOARDING: ["OWNER"],
+    ACTIVE: ["OWNER"],
+  },
   storePause: {
     ONBOARDING: ["OWNER", "MANAGER", "STAFF"],
     ACTIVE: ["OWNER", "MANAGER", "STAFF"],
