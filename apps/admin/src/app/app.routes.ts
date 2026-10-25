@@ -40,6 +40,12 @@ export const routes: Routes = [
     component: InviteCompletePage,
   },
   {
+    path: "invite/aceitar",
+    title: "Aceitar convite · WhiteOven",
+    canActivate: [signedOut],
+    component: InviteRedemptionPage,
+  },
+  {
     path: "invite/:token",
     title: "Aceitar convite · WhiteOven",
     canActivate: [signedOut],

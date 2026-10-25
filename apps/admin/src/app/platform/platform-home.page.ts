@@ -6,7 +6,7 @@ import {
   inject,
   signal,
 } from "@angular/core";
-import { FormsModule } from "@angular/forms";
+import { FormsModule, NgForm } from "@angular/forms";
 import { Router, RouterLink } from "@angular/router";
 import { errorMessage } from "../core/api";
 import { Session } from "../core/session";
@@ -69,6 +69,10 @@ type TenantInput = { slug: string; displayName: string; ownerEmail: string };
             Atualizar lista
           </button>
         </div>
+
+        @if (listError()) {
+          <p class="status--error" role="alert">{{ listError() }}</p>
+        }
 
         @if (loading()) {
           <p role="status">Carregando pizzarias…</p>
@@ -152,7 +156,11 @@ type TenantInput = { slug: string; displayName: string; ownerEmail: string };
             </p>
           </div>
         </div>
-        <form class="tenant-form" (ngSubmit)="createTenant()">
+        <form
+          #tenantForm="ngForm"
+          class="tenant-form"
+          (ngSubmit)="createTenant()"
+        >
           <label for="tenant-name">Nome da pizzaria</label>
           <input
             id="tenant-name"
@@ -501,6 +509,7 @@ export class PlatformHomePage {
   protected readonly invite = signal<OwnerInvite | null>(null);
   protected readonly copied = signal(false);
   protected readonly error = signal("");
+  protected readonly listError = signal("");
   protected readonly notice = signal("");
   protected readonly pendingChange = signal<{
     tenant: PlatformTenant;
@@ -514,6 +523,7 @@ export class PlatformHomePage {
 
   private requestBody = "";
   private idempotencyKey = "";
+  private listGeneration = 0;
 
   @ViewChild("confirmDialog")
   set confirmDialog(element: ElementRef<HTMLDialogElement> | undefined) {
@@ -526,19 +536,30 @@ export class PlatformHomePage {
     }
   }
 
+  @ViewChild("tenantForm")
+  private tenantForm?: NgForm;
+
   constructor() {
     void this.loadTenants();
   }
 
-  protected async loadTenants(): Promise<void> {
+  protected async loadTenants(afterCreate = false): Promise<void> {
+    const generation = ++this.listGeneration;
     this.loading.set(true);
-    this.error.set("");
+    this.listError.set("");
     try {
-      this.tenants.set(await this.api.listTenants());
+      const tenants = await this.api.listTenants();
+      if (generation !== this.listGeneration) return;
+      this.tenants.set(tenants);
     } catch (error) {
-      this.error.set(errorMessage(error));
+      if (generation !== this.listGeneration) return;
+      this.listError.set(
+        afterCreate
+          ? `Pizzaria cadastrada e convite criado, mas a lista não pôde ser atualizada. ${errorMessage(error)}`
+          : errorMessage(error),
+      );
     } finally {
-      this.loading.set(false);
+      if (generation === this.listGeneration) this.loading.set(false);
     }
   }
 
@@ -563,9 +584,10 @@ export class PlatformHomePage {
       this.invite.set(result);
       this.notice.set("Pizzaria cadastrada e convite criado.");
       this.form = { slug: "", displayName: "", ownerEmail: "" };
+      this.tenantForm?.resetForm(this.form);
       this.requestBody = "";
       this.idempotencyKey = "";
-      await this.loadTenants();
+      await this.loadTenants(true);
     } catch (error) {
       this.error.set(errorMessage(error));
     } finally {

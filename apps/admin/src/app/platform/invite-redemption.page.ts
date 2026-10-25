@@ -1,4 +1,5 @@
-import { Component, inject, signal } from "@angular/core";
+import { Location } from "@angular/common";
+import { Component, inject, OnDestroy, signal } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { ActivatedRoute, Router, RouterLink } from "@angular/router";
 import { errorMessage } from "../core/api";
@@ -58,6 +59,14 @@ import { PlatformApi } from "./platform-api";
         <button class="button" type="submit" [disabled]="submitting()">
           {{ submitting() ? "Criando acesso…" : "Criar acesso de dono" }}
         </button>
+        <button
+          class="button button--cancel"
+          type="button"
+          [disabled]="submitting()"
+          (click)="cancel()"
+        >
+          Cancelar
+        </button>
       </form>
       <p class="expiry-note">Este convite só pode ser usado uma vez.</p>
     </main>
@@ -114,6 +123,12 @@ import { PlatformApi } from "./platform-api";
       opacity: 0.65;
       cursor: wait;
     }
+    .button--cancel {
+      margin-top: 0;
+      background: transparent;
+      color: var(--wo-color-text);
+      text-decoration: underline;
+    }
     .match-error {
       margin: 0;
       color: var(--wo-color-error);
@@ -130,16 +145,38 @@ import { PlatformApi } from "./platform-api";
     }
   `,
 })
-export class InviteRedemptionPage {
+export class InviteRedemptionPage implements OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly location = inject(Location);
   private readonly api = inject(PlatformApi);
+  private inviteToken: string | null = null;
 
   protected name = "";
   protected password = "";
   protected passwordConfirmation = "";
   protected readonly error = signal("");
   protected readonly submitting = signal(false);
+
+  constructor() {
+    const token = this.route.snapshot.paramMap.get("token");
+    if (!token) {
+      this.error.set(
+        "O link não contém um convite. Abra novamente o link original recebido.",
+      );
+      return;
+    }
+    this.location.replaceState("/invite/aceitar");
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
+      this.error.set("Este convite é inválido ou expirou.");
+      return;
+    }
+    this.inviteToken = token;
+  }
+
+  ngOnDestroy(): void {
+    this.inviteToken = null;
+  }
 
   protected passwordMismatch(): boolean {
     return (
@@ -151,15 +188,15 @@ export class InviteRedemptionPage {
   protected async submit(): Promise<void> {
     this.error.set("");
     if (this.passwordMismatch()) return;
-    const token = this.route.snapshot.paramMap.get("token") ?? "";
-    if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    const token = this.inviteToken;
+    if (!token) {
       this.error.set("Este convite é inválido ou expirou.");
       return;
     }
     this.submitting.set(true);
     try {
       await this.api.redeemInvite(token, this.name.trim(), this.password);
-      // Replace the token-bearing URL so it does not remain in browser history or a copied link.
+      this.inviteToken = null;
       this.name = "";
       this.password = "";
       this.passwordConfirmation = "";
@@ -171,6 +208,11 @@ export class InviteRedemptionPage {
     } finally {
       this.submitting.set(false);
     }
+  }
+
+  protected async cancel(): Promise<void> {
+    this.inviteToken = null;
+    await this.router.navigateByUrl("/entrar", { replaceUrl: true });
   }
 }
 

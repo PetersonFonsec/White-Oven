@@ -129,4 +129,73 @@ describe("PlatformHomePage", () => {
       "nova-pizzaria",
     );
   });
+
+  it("preserves the created invite when refreshing the list fails", async () => {
+    api.createTenant.mockResolvedValue({
+      tenantId: "tenant-new",
+      inviteUrl: "http://localhost:4200/invite/synthetic-token",
+      expiresIn: 72 * 60 * 60,
+    });
+    const { fixture, element } = await render();
+    api.listTenants.mockRejectedValueOnce(new Error("Falha temporária"));
+    const set = (id: string, value: string) => {
+      const input = element.querySelector<HTMLInputElement>(`#${id}`)!;
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    set("tenant-name", "Nova Pizzaria");
+    set("tenant-slug", "nova-pizzaria");
+    set("owner-email", "owner@example.test");
+    element
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(element.textContent).toContain("Convite pronto para compartilhar");
+    expect(element.querySelector<HTMLInputElement>("#invite-link")?.value).toBe(
+      "http://localhost:4200/invite/synthetic-token",
+    );
+    expect(element.querySelector('[role="alert"]')?.textContent).toContain(
+      "Pizzaria cadastrada e convite criado, mas a lista não pôde ser atualizada",
+    );
+    expect(element.querySelector<HTMLInputElement>("#tenant-slug")?.value).toBe(
+      "",
+    );
+    expect(api.createTenant).toHaveBeenCalledOnce();
+  });
+
+  it("ignores stale list responses and keeps loading tied to the newest request", async () => {
+    const { fixture } = await render();
+    let resolveOld!: (value: PlatformTenant[]) => void;
+    let rejectOld!: (reason: Error) => void;
+    let resolveCurrent!: (value: PlatformTenant[]) => void;
+    const oldRequest = new Promise<PlatformTenant[]>((resolve, reject) => {
+      resolveOld = resolve;
+      rejectOld = reject;
+    });
+    const currentRequest = new Promise<PlatformTenant[]>((resolve) => {
+      resolveCurrent = resolve;
+    });
+    api.listTenants
+      .mockReturnValueOnce(oldRequest)
+      .mockReturnValueOnce(currentRequest);
+    const page = fixture.componentInstance as unknown as {
+      loadTenants: () => Promise<void>;
+      tenants: () => PlatformTenant[];
+      loading: () => boolean;
+    };
+    const first = page.loadTenants();
+    const second = page.loadTenants();
+    resolveCurrent([{ ...sample, id: "current", displayName: "Lista atual" }]);
+    await second;
+    expect(page.tenants()[0]?.displayName).toBe("Lista atual");
+    expect(page.loading()).toBe(false);
+    rejectOld(new Error("Erro obsoleto"));
+    resolveOld([]);
+    await first;
+    fixture.detectChanges();
+    expect(page.tenants()[0]?.displayName).toBe("Lista atual");
+    expect(fixture.nativeElement.textContent).not.toContain("Erro obsoleto");
+  });
 });

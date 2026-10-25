@@ -264,6 +264,13 @@ test("an operator enrolls the second factor before reaching the platform", async
   await expect(
     invitee.getByRole("heading", { name: "Aceitar convite" }),
   ).toBeVisible();
+  await expect(invitee).toHaveURL(/\/invite\/aceitar$/);
+  await invitee.reload();
+  await expect(invitee.getByRole("alert")).toContainText(
+    "Abra novamente o link original recebido",
+  );
+  await invitee.goto(inviteUrl);
+  await expect(invitee).toHaveURL(/\/invite\/aceitar$/);
   await invitee.getByLabel("Seu nome").fill("Pessoa Responsável E2E");
   await invitee.getByLabel("Crie uma senha").fill("senham3_2-segura");
   await invitee.getByLabel("Repita a senha").fill("senham3_2-segura");
