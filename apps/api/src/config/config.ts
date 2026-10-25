@@ -1,4 +1,5 @@
 import { type KeyObject, createPrivateKey } from "node:crypto";
+import { isAbsolute } from "node:path";
 
 export const NODE_ENVS = ["development", "test", "production"] as const;
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -12,6 +13,7 @@ export interface ApiConfig {
   port: number;
   logLevel: LogLevel;
   openApiEnabled: boolean;
+  imageStorageDirectory: string;
   database: DatabaseConfig;
   auth: AuthConfig;
 }
@@ -114,6 +116,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
   if (env.DATABASE_OWNER_URL !== undefined)
     problems.push("DATABASE_OWNER_URL must not be set for the API process");
 
+  const imageStorageDirectory = env.IMAGE_STORAGE_DIRECTORY || ".data/images";
+  if (nodeEnv === "production" && !isAbsolute(imageStorageDirectory))
+    problems.push(
+      "IMAGE_STORAGE_DIRECTORY must be an absolute path in production",
+    );
+
   const databaseUrl = env.DATABASE_URL ?? "";
   const urlProblem = databaseUrlProblem(databaseUrl);
   if (urlProblem) problems.push(`DATABASE_URL ${urlProblem}`);
@@ -138,6 +146,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
     port,
     logLevel,
     openApiEnabled,
+    imageStorageDirectory,
     database: Object.freeze({ url: databaseUrl, poolMax }),
     auth: Object.freeze(auth),
   });

@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validatePizzaCatalog } from "@whiteoven/contracts";
+import {
+  validateCatalogManagementSnapshot,
+  validatePizzaCatalog,
+} from "@whiteoven/contracts";
 
 const catalog = () => ({
   categories: [
@@ -18,8 +21,8 @@ const catalog = () => ({
     },
   ],
   ingredients: [
-    { id: "cebola", name: "Cebola", removable: true },
-    { id: "mussarela", name: "Mussarela", removable: false },
+    { id: "cebola", name: "Cebola", removable: true, archived: false },
+    { id: "mussarela", name: "Mussarela", removable: false, archived: false },
   ],
   flavors: [
     {
@@ -62,6 +65,38 @@ test("accepts a consistent catalog and returns a detached copy", () => {
   assert.notEqual(result.value.flavors[0], input.flavors[0]);
 });
 
+test("validates the complete M2.4 management snapshot, policy and products", () => {
+  const input = {
+    ...catalog(),
+    simpleProducts: [
+      {
+        id: "refrigerante",
+        categoryId: "bebidas",
+        name: "Refrigerante lata",
+        priceCents: 700,
+        available: true,
+        archived: false,
+      },
+    ],
+    pricingPolicy: {
+      halfAndHalfStrategy: "HIGHEST",
+      halfAndHalfSurchargeCents: 0,
+      maxExtrasPerHalf: 5,
+    },
+  };
+  const result = validateCatalogManagementSnapshot(input);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value, input);
+  assert.notEqual(result.value.simpleProducts[0], input.simpleProducts[0]);
+  const bad = structuredClone(input);
+  bad.simpleProducts[0].categoryId = "pizzas";
+  bad.pricingPolicy.maxExtrasPerHalf = 11;
+  assert.deepEqual(
+    validateCatalogManagementSnapshot(bad).errors.map((error) => error.path),
+    ["pricingPolicy.maxExtrasPerHalf", "simpleProducts[0].categoryId"],
+  );
+});
+
 test("rejects missing sections and unknown fields at every level", () => {
   const rest = catalog();
   delete rest.extraPrices;
@@ -78,9 +113,11 @@ test("validates value ranges per field", () => {
   input.crustPrices[0].priceCents = -1;
   input.flavors[0].name = "  ";
   input.ingredients[0].removable = "yes";
+  input.ingredients[1].archived = "yes";
   assert.deepEqual(paths(input), [
     "sizes[0].maxFlavors",
     "ingredients[0].removable",
+    "ingredients[1].archived",
     "flavors[0].name",
     "flavorPrices[0].priceCents",
     "crustPrices[0].priceCents",

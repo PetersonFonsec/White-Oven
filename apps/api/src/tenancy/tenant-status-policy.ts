@@ -8,6 +8,8 @@ export type TenantCapability =
   | "staffLogin"
   | "storeRead"
   | "catalogWrite"
+  | "catalogAvailability"
+  | "catalogPolicyWrite"
   | "storePause"
   | "teamManage"
   | "orderTransition"
@@ -63,6 +65,17 @@ export const TenantStatusPolicy = {
           isStaffRole(actor) &&
           (status === "ONBOARDING" || status === "ACTIVE") &&
           STORE_WRITERS.includes(actor)
+        );
+      case "catalogAvailability":
+        return (
+          isStaffRole(actor) &&
+          (status === "ONBOARDING" || status === "ACTIVE") &&
+          ALL_STAFF.includes(actor)
+        );
+      case "catalogPolicyWrite":
+        return (
+          (status === "ONBOARDING" || status === "ACTIVE") &&
+          OWNER_ONLY.includes(actor as MembershipRole)
         );
       case "storePause":
         return (

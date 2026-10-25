@@ -4,6 +4,7 @@
  * engine can tell "archived" from "unknown". Public menus omit those items before sending.
  */
 import { isCents, isId, keyIssues, plain } from "./shape.ts";
+import { validatePricingPolicy, type PricingPolicy } from "./pizza.ts";
 
 export const CATEGORY_KINDS = ["PIZZA", "PRODUCT"] as const;
 export type CategoryKind = (typeof CATEGORY_KINDS)[number];
@@ -27,6 +28,7 @@ export interface CatalogIngredient {
   id: string;
   name: string;
   removable: boolean;
+  archived: boolean;
 }
 
 export interface CatalogFlavor {
@@ -72,6 +74,15 @@ export interface CatalogExtraPrice {
   halfPriceCents: number;
 }
 
+export interface CatalogSimpleProduct {
+  id: string;
+  categoryId: string;
+  name: string;
+  priceCents: number;
+  available: boolean;
+  archived: boolean;
+}
+
 export interface PizzaCatalog {
   categories: CatalogCategory[];
   sizes: CatalogPizzaSize[];
@@ -82,6 +93,12 @@ export interface PizzaCatalog {
   crustPrices: CatalogCrustPrice[];
   extras: CatalogExtra[];
   extraPrices: CatalogExtraPrice[];
+}
+
+/** Full management response for /admin/catalog/items, including M2.4 data. */
+export interface CatalogManagementSnapshot extends PizzaCatalog {
+  simpleProducts: CatalogSimpleProduct[];
+  pricingPolicy: PricingPolicy | null;
 }
 
 export const CATALOG_ERROR = "CATALOG_INVALID";
@@ -118,7 +135,7 @@ const SECTIONS = {
     available: isFlag,
     archived: isFlag,
   },
-  ingredients: { id: isId, name: isName, removable: isFlag },
+  ingredients: { id: isId, name: isName, removable: isFlag, archived: isFlag },
   flavors: {
     id: isId,
     categoryId: isId,
@@ -236,6 +253,103 @@ export function validatePizzaCatalog(raw: unknown): CatalogResult {
   });
   if (paths.length) return catalogErrors(paths);
   return { ok: true, value: structuredClone(catalog) };
+}
+
+export function validateCatalogManagementSnapshot(
+  raw: unknown,
+):
+  | { ok: true; value: CatalogManagementSnapshot }
+  | { ok: false; errors: CatalogError[] } {
+  if (!plain(raw)) return catalogErrors([""]);
+  const keys = [...SECTION_NAMES, "simpleProducts", "pricingPolicy"];
+  const paths = keyIssues(raw, keys, "");
+  for (const key of keys) if (!Object.hasOwn(raw, key)) paths.push(key);
+  const pizzaCatalog = Object.fromEntries(
+    SECTION_NAMES.map((section) => [section, raw[section]]),
+  );
+  const catalog = validatePizzaCatalog(pizzaCatalog);
+  if (!catalog.ok) paths.push(...catalog.errors.map((entry) => entry.path));
+
+  const products = raw.simpleProducts;
+  if (!Array.isArray(products)) paths.push("simpleProducts");
+  else
+    products.forEach((entry, index) => {
+      const path = `simpleProducts[${index}]`;
+      if (!plain(entry)) return void paths.push(path);
+      const fields = [
+        "id",
+        "categoryId",
+        "name",
+        "priceCents",
+        "available",
+        "archived",
+      ];
+      paths.push(...keyIssues(entry, fields, path));
+      if (Object.hasOwn(entry, "id") && !isId(entry.id))
+        paths.push(`${path}.id`);
+      if (Object.hasOwn(entry, "categoryId") && !isId(entry.categoryId))
+        paths.push(`${path}.categoryId`);
+      if (Object.hasOwn(entry, "name") && !isName(entry.name))
+        paths.push(`${path}.name`);
+      if (Object.hasOwn(entry, "priceCents") && !isCents(entry.priceCents))
+        paths.push(`${path}.priceCents`);
+      if (Object.hasOwn(entry, "available") && !isFlag(entry.available))
+        paths.push(`${path}.available`);
+      if (Object.hasOwn(entry, "archived") && !isFlag(entry.archived))
+        paths.push(`${path}.archived`);
+    });
+
+  if (raw.pricingPolicy !== null) {
+    const policy = validatePricingPolicy(raw.pricingPolicy);
+    if (!policy.ok)
+      paths.push(
+        ...policy.errors.map((entry) => `pricingPolicy.${entry.path}`),
+      );
+  }
+  if (catalog.ok && Array.isArray(products)) {
+    const ids = new Set<string>();
+    const productCategories = new Set(
+      catalog.value.categories
+        .filter((category) => category.kind === "PRODUCT")
+        .map((category) => category.id),
+    );
+    products.forEach((product, index) => {
+      if (!plain(product) || !isId(product.id) || !isId(product.categoryId))
+        return;
+      if (typeof product.name !== "string") return;
+      const normalizedName = product.name.toLocaleLowerCase();
+      if (ids.has(product.id)) paths.push(`simpleProducts[${index}].id`);
+      ids.add(product.id);
+      if (
+        products.some(
+          (other, otherIndex) =>
+            otherIndex !== index &&
+            plain(other) &&
+            other.categoryId === product.categoryId &&
+            typeof other.name === "string" &&
+            other.name.toLocaleLowerCase() === normalizedName,
+        )
+      )
+        paths.push(`simpleProducts[${index}].name`);
+      if (!productCategories.has(product.categoryId))
+        paths.push(`simpleProducts[${index}].categoryId`);
+    });
+  }
+  if (paths.length) return catalogErrors(paths);
+  if (!catalog.ok)
+    return catalogErrors(catalog.errors.map((entry) => entry.path));
+  const policy =
+    raw.pricingPolicy === null
+      ? null
+      : validatePricingPolicy(raw.pricingPolicy);
+  return {
+    ok: true,
+    value: {
+      ...catalog.value,
+      simpleProducts: structuredClone(products as CatalogSimpleProduct[]),
+      pricingPolicy: policy && policy.ok ? policy.value : null,
+    },
+  };
 }
 
 const catalogErrors = (

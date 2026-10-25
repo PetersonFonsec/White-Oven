@@ -24,7 +24,7 @@ export type LogSink = (line: string) => void;
  * the tenant guard read from the database, never client input; sanitizing it would mask UUIDs
  * whose last group is all digits as a phone or document number.
  */
-const TRUSTED_KEYS = new Set(["requestId", "tenantId"]);
+const TRUSTED_KEYS = new Set(["requestId", "tenantId", "assetId"]);
 
 /**
  * Masks values under sensitive keys and sanitizes every other string, at any depth.

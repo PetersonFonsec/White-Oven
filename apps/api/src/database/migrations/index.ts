@@ -4,6 +4,10 @@ import { Migration20261024010000_tenants } from "./Migration20261024010000_tenan
 import { Migration20261024020000_staff_identity } from "./Migration20261024020000_staff_identity";
 import { Migration20261024030000_staff_mfa } from "./Migration20261024030000_staff_mfa";
 import { Migration20261024040000_platform } from "./Migration20261024040000_platform";
+import { Migration20261024050000_catalog } from "./Migration20261024050000_catalog";
+import { Migration20261024060000_catalog_addons } from "./Migration20261024060000_catalog_addons";
+import { Migration20261024070000_image_assets } from "./Migration20261024070000_image_assets";
+import { Migration20261024080000_catalog_versions } from "./Migration20261024080000_catalog_versions";
 
 /**
  * Explicit, ordered list: no folder discovery at runtime. Names are stored in
@@ -29,5 +33,21 @@ export const MIGRATIONS: MigrationObject[] = [
   {
     name: "Migration20261024040000_platform",
     class: Migration20261024040000_platform,
+  },
+  {
+    name: "Migration20261024050000_catalog",
+    class: Migration20261024050000_catalog,
+  },
+  {
+    name: "Migration20261024060000_catalog_addons",
+    class: Migration20261024060000_catalog_addons,
+  },
+  {
+    name: "Migration20261024070000_image_assets",
+    class: Migration20261024070000_image_assets,
+  },
+  {
+    name: "Migration20261024080000_catalog_versions",
+    class: Migration20261024080000_catalog_versions,
   },
 ];
