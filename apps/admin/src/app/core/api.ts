@@ -37,6 +37,11 @@ export function apiErrorCode(error: unknown): string | null {
   return typeof body?.code === "string" ? body.code : null;
 }
 
+/** HTTP status of an API failure; 0 when the API could not be reached, null for other errors. */
+export function apiStatus(error: unknown): number | null {
+  return error instanceof HttpErrorResponse ? error.status : null;
+}
+
 const MESSAGES: Record<string, string> = {
   INVALID_CREDENTIALS: "E-mail ou senha incorretos.",
   RATE_LIMITED: "Muitas tentativas. Aguarde alguns minutos e tente de novo.",

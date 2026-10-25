@@ -1,4 +1,5 @@
 import { HttpErrorResponse } from "@angular/common/http";
+import { signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
 import { Router, provideRouter } from "@angular/router";
 import { Session } from "../core/session";
@@ -12,11 +13,15 @@ describe("LoginPage", () => {
   const session = {
     login: vi.fn(),
     loginMfa: vi.fn(),
+    retryLogout: vi.fn(),
+    logoutUnconfirmed: signal(false),
   };
 
   beforeEach(() => {
     session.login.mockReset();
     session.loginMfa.mockReset();
+    session.retryLogout.mockReset();
+    session.logoutUnconfirmed.set(false);
     TestBed.configureTestingModule({
       imports: [LoginPage],
       providers: [provideRouter([]), { provide: Session, useValue: session }],
@@ -38,7 +43,7 @@ describe("LoginPage", () => {
       await settle();
       fixture.detectChanges();
     };
-    return { element, type, submit };
+    return { element, type, submit, fixture };
   };
 
   it("labels every field and shows API errors in Portuguese as an alert", async () => {
@@ -88,5 +93,37 @@ describe("LoginPage", () => {
     expect(element.querySelector('[role="alert"]')?.textContent).toContain(
       "expirou",
     );
+  });
+
+  it("warns when the last logout was not confirmed and lets the person retry it", async () => {
+    session.logoutUnconfirmed.set(true);
+    session.retryLogout.mockResolvedValue("unconfirmed");
+    const { element, fixture } = render();
+    const warning = element.querySelector('[data-testid="logout-unconfirmed"]');
+    expect(warning?.getAttribute("role")).toBe("status");
+    expect(warning?.textContent).toContain("não conseguimos confirmar");
+    expect(warning?.textContent).not.toContain("encerrada com sucesso");
+    const retry = Array.from(element.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Tentar encerrar"),
+    )!;
+    retry.click();
+    await settle();
+    fixture.detectChanges();
+    expect(session.retryLogout).toHaveBeenCalledTimes(1);
+    expect(element.querySelector('[role="alert"]')?.textContent).toContain(
+      "Ainda não foi possível",
+    );
+
+    session.retryLogout.mockImplementation(async () => {
+      session.logoutUnconfirmed.set(false);
+      return "confirmed";
+    });
+    retry.click();
+    await settle();
+    fixture.detectChanges();
+    expect(
+      element.querySelector('[data-testid="logout-unconfirmed"]'),
+    ).toBeNull();
+    expect(element.querySelector('[role="alert"]')).toBeNull();
   });
 });

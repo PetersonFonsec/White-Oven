@@ -27,9 +27,13 @@ describe("guards", () => {
     return result instanceof UrlTree ? result.toString() : result;
   };
   const signIn = (platform: PlatformAccess, role?: TenantChoice["role"]) => {
-    (session as unknown as { token: { set(v: string): void } }).token.set("t");
-    session.platform.set(platform);
-    session.store.set(role ? store(role) : null);
+    (session as unknown as { state: { set(v: unknown): void } }).state.set({
+      token: "t",
+      tenantId: role ? "t" : null,
+      lineage: 1,
+      platform,
+      store: role ? store(role) : null,
+    });
   };
 
   beforeEach(() => {

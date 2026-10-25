@@ -14,6 +14,29 @@ import { Session } from "../core/session";
       <p class="brand">WhiteOven</p>
       @if (mfaToken() === null) {
         <h1 tabindex="-1" data-page-title>Entrar no painel</h1>
+        @if (session.logoutUnconfirmed()) {
+          <p
+            class="status--warning"
+            role="status"
+            data-testid="logout-unconfirmed"
+          >
+            Você saiu do painel neste navegador, mas não conseguimos confirmar
+            com o servidor que a sessão foi encerrada. Ela não será retomada
+            automaticamente aqui e vamos tentar encerrá-la de novo na próxima
+            vez que o painel abrir. Se usou um computador compartilhado, tente
+            de novo quando a conexão voltar.
+          </p>
+          <p>
+            <button
+              class="button button--secondary"
+              type="button"
+              [disabled]="busy()"
+              (click)="retryLogout()"
+            >
+              Tentar encerrar a sessão de novo
+            </button>
+          </p>
+        }
         <form [formGroup]="credentials" (ngSubmit)="signIn()" novalidate>
           <div class="field">
             <label for="email">E-mail</label>
@@ -90,7 +113,7 @@ import { Session } from "../core/session";
   `,
 })
 export class LoginPage {
-  private readonly session = inject(Session);
+  protected readonly session = inject(Session);
   private readonly router = inject(Router);
   private readonly document = inject(DOCUMENT);
   private readonly forms = inject(FormBuilder).nonNullable;
@@ -106,6 +129,15 @@ export class LoginPage {
   protected readonly useRecovery = signal(false);
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);
+
+  protected async retryLogout(): Promise<void> {
+    await this.run(async () => {
+      if ((await this.session.retryLogout()) === "unconfirmed")
+        this.error.set(
+          "Ainda não foi possível falar com o servidor. Tente de novo em instantes.",
+        );
+    });
+  }
 
   protected async signIn(): Promise<void> {
     if (this.credentials.invalid) {

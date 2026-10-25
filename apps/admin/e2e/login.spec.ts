@@ -55,8 +55,53 @@ test("an owner signs in, picks a store and keeps the session after a reload", as
 
   await page.getByRole("button", { name: "Sair" }).click();
   await expect(page).toHaveURL(/\/entrar$/);
+  await expect(page.getByTestId("logout-unconfirmed")).toHaveCount(0);
+  expect(await page.context().cookies()).toEqual([]);
   await page.reload();
   await expect(page).toHaveURL(/\/entrar$/);
+});
+
+test("a logout the API cannot confirm is reported and never resumed by a reload", async ({
+  page,
+}) => {
+  await signIn(page, "equipe@e2e.test");
+  await expect(page).toHaveURL(/\/loja$/);
+  const refreshes: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/v1/admin/auth/refresh"))
+      refreshes.push(request.url());
+  });
+  await page.route("**/v1/admin/auth/logout", (route) => route.abort());
+
+  await page.getByRole("button", { name: "Sair" }).click();
+  await expect(page).toHaveURL(/\/entrar$/);
+  const warning = page.getByTestId("logout-unconfirmed");
+  await expect(warning).toContainText("não conseguimos confirmar");
+  // Honest state: the refresh cookie and its server session still exist.
+  expect((await page.context().cookies()).map((c) => c.name)).toEqual([
+    "__Secure-wo_staff_refresh",
+  ]);
+
+  // A reload retries the logout and does not resume the session, even though the cookie works.
+  await page.reload();
+  await expect(page).toHaveURL(/\/entrar$/);
+  await expect(warning).toBeVisible();
+  await page.goto("/loja");
+  await expect(page).toHaveURL(/\/entrar$/);
+  expect(refreshes).toEqual([]);
+  expect(
+    await page.evaluate(() => JSON.stringify({ ...localStorage })),
+  ).not.toMatch(/token|eyJ/i);
+
+  await page.unroute("**/v1/admin/auth/logout");
+  await page
+    .getByRole("button", { name: "Tentar encerrar a sessão de novo" })
+    .click();
+  await expect(warning).toHaveCount(0);
+  expect(await page.context().cookies()).toEqual([]);
+  await page.reload();
+  await expect(page).toHaveURL(/\/entrar$/);
+  await expect(warning).toHaveCount(0);
 });
 
 test("staff see only their sections and cannot open others by URL", async ({

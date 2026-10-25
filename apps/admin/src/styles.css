@@ -147,6 +147,14 @@ a {
   cursor: not-allowed;
 }
 
+.status--warning {
+  padding: var(--wo-spacing-3) var(--wo-spacing-4);
+  border-radius: var(--wo-radius-small);
+  border: 1px solid var(--wo-color-border);
+  background: var(--wo-color-orangeSoft);
+  color: var(--wo-color-text);
+}
+
 .status--error {
   padding: var(--wo-spacing-3) var(--wo-spacing-4);
   border-radius: var(--wo-radius-small);
