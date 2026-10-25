@@ -1,9 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Request } from "express";
 
-/** Who acts inside the tenant. Customer actors arrive with customer accounts (M4.2). */
+/** Who acts inside the tenant. */
 export type TenantActor =
   | { type: "anonymous" }
+  | { type: "customer"; customerId: string; sessionId: string }
   | {
       type: "staff";
       staffUserId: string;

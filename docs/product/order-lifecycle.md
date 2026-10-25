@@ -27,7 +27,7 @@ flowchart LR
 
 Validações na criação (todas no servidor, na mesma transação):
 
-1. Cliente autenticado no tenant do `storeSlug` (ou pedido sem conta, se Q-05 aprovar).
+1. Cliente autenticado no tenant do `storeSlug` (Q-05 decidida: conta obrigatória, [ADR 0017](../adr/0017-customer-identity.md)).
 2. Tenant `ACTIVE` e loja aberta (regras abaixo).
 3. Modo (`DELIVERY`/`PICKUP`) habilitado em `StoreSettings`.
 4. Entrega: endereço completo (CEP, rua, número, bairro, cidade, UF). Sem validação de área por distância; o texto da área atendida é exibido antes da confirmação e a pizzaria pode recusar com `OUT_OF_DELIVERY_AREA`.
@@ -189,12 +189,12 @@ O cliente vê um texto amigável derivado do código, nunca o texto interno de `
 
 ## Questões em aberto
 
-| ID    | Questão                                         | Recomendação                                  |
-| ----- | ----------------------------------------------- | --------------------------------------------- |
-| Q-04  | Taxa de entrega                                 | Taxa fixa única, permitindo zero              |
-| Q-05  | Pedido sem conta                                | Exigir conta no MVP; reavaliar após piloto    |
-| Q-07  | Tempo para aceite antes de recusa automática    | Configurável, padrão 10 minutos               |
-| OL-Q1 | Pizzaria pode editar itens de um pedido aceito? | Não; cancelar e o cliente refaz               |
-| OL-Q2 | Corte de pedidos antes do fechamento            | Configurável, padrão 0 minuto                 |
-| OL-Q3 | Cliente registra ocorrência pelo app            | Não no MVP                                    |
-| OL-Q4 | Prazo legal de retenção de pedidos              | Validar com contador/jurídico antes do piloto |
+| ID    | Questão                                         | Recomendação                                      |
+| ----- | ----------------------------------------------- | ------------------------------------------------- |
+| Q-04  | Taxa de entrega                                 | Taxa fixa única, permitindo zero                  |
+| Q-05  | Pedido sem conta                                | **Decidida:** conta obrigatória no MVP (ADR 0017) |
+| Q-07  | Tempo para aceite antes de recusa automática    | Configurável, padrão 10 minutos                   |
+| OL-Q1 | Pizzaria pode editar itens de um pedido aceito? | Não; cancelar e o cliente refaz                   |
+| OL-Q2 | Corte de pedidos antes do fechamento            | Configurável, padrão 0 minuto                     |
+| OL-Q3 | Cliente registra ocorrência pelo app            | Não no MVP                                        |
+| OL-Q4 | Prazo legal de retenção de pedidos              | Validar com contador/jurídico antes do piloto     |

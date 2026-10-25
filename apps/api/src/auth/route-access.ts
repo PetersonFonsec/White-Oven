@@ -15,6 +15,7 @@ import { JsonLogger } from "../logging/json-logger";
  * explicit guard). Values:
  * - `public`: no authentication (health, login, cookie-based refresh/logout).
  * - `store`: `@StoreTenant()`, tenant from the URL slug.
+ * - `customer`: customer access token whose tenant matches the URL slug (`@CustomerRoute()`).
  * - `staff`: staff access token, no tenant needed (`@StaffRoute()`).
  * - `admin`: staff access token with an ACTIVE membership in the token's tenant (`@AdminRoute()`).
  * - `platform`: operator with a second-factor session (`@PlatformRoute()`).
@@ -23,6 +24,7 @@ export const ROUTE_ACCESS = "whiteoven:route-access";
 export const ROUTE_ACCESS_VALUES = [
   "public",
   "store",
+  "customer",
   "staff",
   "admin",
   "platform",

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, it } from "node:test";
-import { AccessTokens, type StaffAccessClaims } from "../src/auth/access-token";
+import {
+  AccessTokens,
+  type CustomerAccessClaims,
+  type StaffAccessClaims,
+} from "../src/auth/access-token";
 import { LoginThrottle } from "../src/auth/login-throttle";
 import {
   hashPassword,
@@ -72,6 +76,68 @@ describe("AccessTokens", () => {
     ])
       assert.equal(
         tokens.verify(tokens.issue(bad as StaffAccessClaims).token),
+        null,
+      );
+  });
+});
+
+describe("AccessTokens for customers", () => {
+  const key = generateKeyPairSync("ed25519").privateKey;
+  const CUSTOMER: CustomerAccessClaims = {
+    sub: CLAIMS.sub,
+    typ: "customer",
+    tid: CLAIMS.tid!,
+    sid: CLAIMS.sid,
+  };
+
+  it("round-trips customer claims with their own audience and no mfa", () => {
+    let now = Date.UTC(2026, 9, 25, 12);
+    const tokens = new AccessTokens(key, () => now);
+    const { token, expiresIn } = tokens.issueCustomer(CUSTOMER);
+    assert.equal(expiresIn, 900);
+    assert.deepEqual(tokens.verifyCustomer(token), CUSTOMER);
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[1]!, "base64url").toString(),
+    );
+    assert.equal(payload.aud, "whiteoven-app");
+    assert.equal("mfa" in payload, false);
+    now += 900_000;
+    assert.equal(tokens.verifyCustomer(token), null);
+  });
+
+  it("never accepts a staff token as a customer one, nor the reverse", () => {
+    const tokens = new AccessTokens(key);
+    assert.equal(tokens.verifyCustomer(tokens.issue(CLAIMS).token), null);
+    assert.equal(tokens.verify(tokens.issueCustomer(CUSTOMER).token), null);
+    // Same claims, wrong audience either way.
+    assert.equal(
+      tokens.verify(
+        tokens.issueCustomer({
+          ...CLAIMS,
+        } as unknown as CustomerAccessClaims).token,
+      ),
+      null,
+    );
+    assert.equal(
+      tokens.verifyCustomer(
+        tokens.issue({ ...CUSTOMER } as unknown as StaffAccessClaims).token,
+      ),
+      null,
+    );
+  });
+
+  it("requires a tenant and valid ids", () => {
+    const tokens = new AccessTokens(key);
+    for (const bad of [
+      { ...CUSTOMER, tid: null },
+      { ...CUSTOMER, tid: "" },
+      { ...CUSTOMER, sid: "x" },
+      { ...CUSTOMER, typ: "staff" },
+    ])
+      assert.equal(
+        tokens.verifyCustomer(
+          tokens.issueCustomer(bad as unknown as CustomerAccessClaims).token,
+        ),
         null,
       );
   });

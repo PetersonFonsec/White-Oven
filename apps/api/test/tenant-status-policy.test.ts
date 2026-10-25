@@ -34,6 +34,8 @@ const expected: Record<
     SUSPENDED: ["CUSTOMER"],
     CLOSED: ["CUSTOMER"],
   },
+  customerSignup: { ACTIVE: ["PUBLIC"] },
+  customerAccountWrite: { ACTIVE: ["CUSTOMER"] },
   staffLogin: {
     ONBOARDING: ["OWNER", "MANAGER", "STAFF"],
     ACTIVE: ["OWNER", "MANAGER", "STAFF"],

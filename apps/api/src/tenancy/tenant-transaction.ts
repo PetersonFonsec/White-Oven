@@ -47,7 +47,9 @@ export async function runInTenant<T>(
  * For a staff actor the transaction first re-reads the session, the user and the membership with
  * row locks (FOR SHARE). The guard's check ran in an earlier transaction; this one closes the gap:
  * a logout, a disabled user, a revocation or a role change either committed before (the work is
- * refused) or waits until the work commits. No tenant work runs on an outdated role.
+ * refused) or waits until the work commits. No tenant work runs on an outdated role. A customer
+ * actor gets the same treatment for its session and account (M4.2): a logout or an account
+ * deletion is never overtaken by work started with the old token.
  */
 @Injectable()
 export class TenantTransactions {
@@ -63,11 +65,41 @@ export class TenantTransactions {
       tenantId,
       async (em) => {
         if (actor.type === "staff") await assertStaffStillAllowed(em, actor);
+        if (actor.type === "customer")
+          await assertCustomerStillAllowed(em, actor);
         return work(em);
       },
       options,
     );
   }
+}
+
+/** Live, unexpired session of an ACTIVE customer, both rows locked FOR SHARE. */
+export async function customerSessionLive(
+  em: Pick<EntityManager, "execute">,
+  actor: Extract<TenantActor, { type: "customer" }>,
+): Promise<boolean> {
+  const rows = await em.execute(
+    `select 1 from customer_sessions s join customers c
+         on c.tenant_id = s.tenant_id and c.id = s.customer_id
+      where s.id = ? and s.customer_id = ? and s.revoked_at is null
+        and s.expires_at > now() and c.status = 'ACTIVE'
+        for share of s, c`,
+    [actor.sessionId, actor.customerId],
+  );
+  return rows.length === 1;
+}
+
+async function assertCustomerStillAllowed(
+  em: EntityManager,
+  actor: Extract<TenantActor, { type: "customer" }>,
+): Promise<void> {
+  if (!(await customerSessionLive(em, actor)))
+    throw new ApiError(
+      HttpStatus.UNAUTHORIZED,
+      "SESSION_INVALID",
+      "Session expired or revoked. Sign in again.",
+    );
 }
 
 async function assertStaffStillAllowed(

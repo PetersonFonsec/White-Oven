@@ -23,11 +23,22 @@ import {
   runWithTenantContext,
 } from "./tenant-context";
 import { TENANT_SLUG, Tenant } from "./tenant.entity";
-import { TenantStatusPolicy } from "./tenant-status-policy";
+import { Reflector } from "@nestjs/core";
+import {
+  type TenantCapability,
+  TenantStatusPolicy,
+} from "./tenant-status-policy";
 
 /** Route metadata marking a tenant surface; the isolation matrix test lists every such route. */
 export const TENANT_SURFACE = "whiteoven:tenant-surface";
 export const STORE_SLUG_PARAM = "storeSlug";
+/** The `TenantStatusPolicy` capability a store route checks; `publicMenu` when absent. */
+export const STORE_CAPABILITY = "whiteoven:store-capability";
+const CUSTOMER_CAPABILITIES: readonly TenantCapability[] = [
+  "customerAccount",
+  "customerAccountWrite",
+  "createOrder",
+];
 
 const claimedTenants = new WeakMap<Request, string>();
 
@@ -51,10 +62,18 @@ const storeNotFound = () =>
  */
 @Injectable()
 export class StoreTenantGuard implements CanActivate {
-  constructor(@Inject(MikroORM) private readonly orm: MikroORM) {}
+  constructor(
+    @Inject(MikroORM) private readonly orm: MikroORM,
+    private readonly reflector: Reflector,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request>();
+    const capability =
+      this.reflector.get<TenantCapability | undefined>(
+        STORE_CAPABILITY,
+        context.getHandler(),
+      ) ?? "publicMenu";
     const slug = req.params[STORE_SLUG_PARAM];
     if (typeof slug !== "string" || !TENANT_SLUG.test(slug))
       throw storeNotFound();
@@ -64,7 +83,11 @@ export class StoreTenantGuard implements CanActivate {
     if (!tenant) throw storeNotFound();
     const claimed = claimedTenants.get(req);
     if (claimed !== undefined && claimed !== tenant.id) throw storeNotFound();
-    if (!TenantStatusPolicy.allows(tenant.status, "PUBLIC", "publicMenu"))
+    // Signing in runs before there is a customer, but checks what the customer may then do.
+    const actor = CUSTOMER_CAPABILITIES.includes(capability)
+      ? "CUSTOMER"
+      : "PUBLIC";
+    if (!TenantStatusPolicy.allows(tenant.status, actor, capability))
       throw new ApiError(
         HttpStatus.FORBIDDEN,
         "TENANT_NOT_ACTIVE",
@@ -95,9 +118,19 @@ export class TenantContextInterceptor implements NestInterceptor {
   }
 }
 
-/** Store surface: resolves the tenant from `:storeSlug` and runs the handler in its context. */
-export const StoreTenant = () =>
+/**
+ * Store surface: resolves the tenant from `:storeSlug` and runs the handler in its context. The
+ * capability decides which tenant statuses the route serves: the public menu by default, and the
+ * customer sign-up and sign-in (M4.2) with their own rows of the status matrix.
+ */
+export const StoreTenant = (
+  capability: Extract<
+    TenantCapability,
+    "publicMenu" | "customerSignup" | "customerAccount"
+  > = "publicMenu",
+) =>
   applyDecorators(
+    SetMetadata(STORE_CAPABILITY, capability),
     SetMetadata(TENANT_SURFACE, "store"),
     SetMetadata(ROUTE_ACCESS, "store"),
     UseGuards(StoreTenantGuard),

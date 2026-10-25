@@ -175,6 +175,8 @@ Invariantes:
 - O mesmo e-mail pode existir em tenants diferentes como clientes distintos (D-03). Uma pizzaria nunca enxerga clientes de outra.
 - Exclusão anonimiza: `name`, `email`, `phone` e endereços são substituídos/removidos; o `id` permanece para manter pedidos.
 
+Implementação (M4.2, [ADR 0017](../adr/0017-customer-identity.md)): e-mail e senha com conta obrigatória (Q-05). `CustomerSession` guarda só o hash do refresh token e termina 30 dias depois do login. A exclusão pede a senha de novo, torna nulos nome, e-mail, telefone e senha, apaga os endereços e revoga as sessões numa transação; o `id` fica.
+
 ### CustomerAddress
 
 `customerId`, `label`, `postalCode`, `street`, `number`, `complement`, `district`, `city`, `state`, `reference`. Sem geocodificação. O pedido copia o endereço (snapshot); alterar o endereço não altera pedidos.
