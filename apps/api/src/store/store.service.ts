@@ -21,6 +21,8 @@ export interface StorePause {
   paused: boolean;
   /** ISO instant; null while paused means "until someone reopens". */
   pausedUntil: string | null;
+  /** The store's IANA time zone (`tenants.timezone`), for showing `pausedUntil` in local time. */
+  timezone: string;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -129,16 +131,21 @@ export class StoreService {
 
   private async readPause(em: EntityManager): Promise<StorePause> {
     const [row] = await em.execute<
-      { pausedUntil: Date | null; active: boolean }[]
+      { timezone: string; pausedUntil: Date | null; active: boolean | null }[]
     >(
-      `select paused_until as "pausedUntil", (paused_until is null or paused_until > now()) as active from store_pauses`,
+      `select t.timezone, p.paused_until as "pausedUntil",
+        (p.tenant_id is not null and (p.paused_until is null or p.paused_until > now())) as active
+      from tenants t left join store_pauses p on p.tenant_id = t.id where t.id = ?`,
+      [currentTenantContext().tenantId],
     );
-    if (!row?.active) return { paused: false, pausedUntil: null };
+    const timezone = row?.timezone ?? "America/Sao_Paulo";
+    if (!row?.active) return { paused: false, pausedUntil: null, timezone };
     return {
       paused: true,
       pausedUntil: row.pausedUntil
         ? new Date(row.pausedUntil).toISOString()
         : null,
+      timezone,
     };
   }
 

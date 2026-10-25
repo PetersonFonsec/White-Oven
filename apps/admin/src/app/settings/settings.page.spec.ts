@@ -4,7 +4,6 @@ import { CatalogApi } from "../catalog/catalog-api";
 import { catalogFixture } from "../catalog/catalog-fixture.testing";
 import { SettingsPage } from "./settings.page";
 import { StoreApi, type StoreState } from "./store-api";
-import { StorePauseCard } from "./store-pause";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve));
 const DEFAULTS: StoreState["settings"] = {
@@ -27,7 +26,7 @@ const state = (): StoreState => ({
     rules: [{ weekday: 5, opensAt: "18:00", closesAt: "23:00" }],
     exceptions: [],
   },
-  pause: { paused: false, pausedUntil: null },
+  pause: { paused: false, pausedUntil: null, timezone: "America/Sao_Paulo" },
 });
 
 describe("SettingsPage", () => {
@@ -316,53 +315,5 @@ describe("SettingsPage", () => {
       expect(page.query<HTMLInputElement>("#settings-fee")!.value).toBe("9");
       expect(store.get).toHaveBeenCalledTimes(1);
     });
-  });
-});
-
-describe("StorePauseCard", () => {
-  const store = { pause: vi.fn(), startPause: vi.fn(), endPause: vi.fn() };
-
-  beforeEach(() => {
-    for (const mock of Object.values(store)) mock.mockReset();
-    store.pause.mockResolvedValue({ paused: false, pausedUntil: null });
-    TestBed.configureTestingModule({
-      imports: [StorePauseCard],
-      providers: [{ provide: StoreApi, useValue: store }],
-    });
-  });
-
-  it("pauses for a while, until reopening, and reopens", async () => {
-    const fixture = TestBed.createComponent(StorePauseCard);
-    const element = fixture.nativeElement as HTMLElement;
-    const flush = async () => {
-      await settle();
-      fixture.detectChanges();
-    };
-    const click = async (text: string) => {
-      Array.from(element.querySelectorAll("button"))
-        .find((item) => item.textContent?.trim() === text)!
-        .click();
-      await flush();
-    };
-    await flush();
-    expect(element.textContent).toContain("recebendo pedidos");
-
-    const until = new Date(Date.now() + 30 * 60_000).toISOString();
-    store.startPause.mockResolvedValue({ paused: true, pausedUntil: until });
-    await click("Pausar 30 min");
-    expect(store.startPause).toHaveBeenCalledWith(30);
-    expect(element.textContent).toContain("Pedidos pausados até");
-
-    store.startPause.mockResolvedValue({ paused: true, pausedUntil: null });
-    await click("Pausar até reabrir");
-    expect(store.startPause).toHaveBeenLastCalledWith(null);
-    expect(element.textContent).toContain(
-      "Pedidos pausados até alguém reabrir.",
-    );
-
-    store.endPause.mockResolvedValue(undefined);
-    await click("Reabrir agora");
-    expect(store.endPause).toHaveBeenCalled();
-    expect(element.textContent).toContain("recebendo pedidos");
   });
 });

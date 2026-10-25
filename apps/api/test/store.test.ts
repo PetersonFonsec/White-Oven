@@ -48,6 +48,11 @@ describe("M3.4 store settings, opening hours and pause", databaseSuite, () => {
     owner = await database.connect(database.ownerUrl);
     tenantA = await insertTenant(owner, `store-a-${randomUUID().slice(0, 8)}`);
     tenantB = await insertTenant(owner, `store-b-${randomUUID().slice(0, 8)}`);
+    await owner.em
+      .getConnection()
+      .execute("update tenants set timezone = 'America/Manaus' where id = ?", [
+        tenantB,
+      ]);
     server = await startTestServer({
       DATABASE_URL: database.appUrl,
       DATABASE_POOL_MAX: "2",
@@ -108,7 +113,11 @@ describe("M3.4 store settings, opening hours and pause", databaseSuite, () => {
       settingsSaved: false,
       settings: DEFAULT_STORE_SETTINGS,
       openingHours: { rules: [], exceptions: [] },
-      pause: { paused: false, pausedUntil: null },
+      pause: {
+        paused: false,
+        pausedUntil: null,
+        timezone: "America/Sao_Paulo",
+      },
     });
   });
 
@@ -212,20 +221,28 @@ describe("M3.4 store settings, opening hours and pause", databaseSuite, () => {
     assert.equal(pause.paused, true);
     const minutesLeft = (Date.parse(pause.pausedUntil) - Date.now()) / 60_000;
     assert.ok(minutesLeft > 29 && minutesLeft <= 30.5, String(minutesLeft));
+    assert.equal(pause.timezone, "America/Sao_Paulo");
+    // Each store answers with its own time zone, so the panel shows its local time.
     assert.deepEqual(await json(await call("ownerB", "/pause")), {
       paused: false,
       pausedUntil: null,
+      timezone: "America/Manaus",
     });
 
     const indefinite = await json(
       await call("managerA", "/pause", "PUT", { minutes: null }),
     );
-    assert.deepEqual(indefinite, { paused: true, pausedUntil: null });
+    assert.deepEqual(indefinite, {
+      paused: true,
+      pausedUntil: null,
+      timezone: "America/Sao_Paulo",
+    });
 
     assert.equal((await call("staffA", "/pause", "DELETE")).status, 204);
     assert.deepEqual(await json(await call("staffA", "/pause")), {
       paused: false,
       pausedUntil: null,
+      timezone: "America/Sao_Paulo",
     });
 
     for (const body of [{ minutes: 10 }, {}, { minutes: 15, extra: 1 }, []])
@@ -251,6 +268,7 @@ describe("M3.4 store settings, opening hours and pause", databaseSuite, () => {
     assert.deepEqual(await json(await call("ownerA", "/pause")), {
       paused: false,
       pausedUntil: null,
+      timezone: "America/Sao_Paulo",
     });
   });
 
@@ -298,5 +316,100 @@ describe("M3.4 store settings, opening hours and pause", databaseSuite, () => {
     } finally {
       await app.close();
     }
+  });
+
+  it("persists only validated hours: invalid writes change nothing and the database keeps stores apart", async () => {
+    const hours = {
+      rules: [{ weekday: 1, opensAt: "18:00", closesAt: "23:00" }],
+      exceptions: [
+        { date: "2026-12-31", closed: true, shifts: [] },
+        {
+          date: "2026-12-24",
+          closed: false,
+          shifts: [{ opensAt: "11:00", closesAt: "15:00" }],
+        },
+      ],
+    };
+    assert.equal(
+      (await call("ownerB", "/opening-hours", "PUT", hours)).status,
+      200,
+    );
+    const savedB = (await json(await call("ownerB", "/settings"))).openingHours;
+    // Saved sorted by date, as validated.
+    assert.deepEqual(
+      savedB.exceptions.map((item: { date: string }) => item.date),
+      ["2026-12-24", "2026-12-31"],
+    );
+    const auditB = (await auditActions(tenantB)).length;
+    for (const body of [
+      {
+        ...hours,
+        rules: [{ weekday: 1, opensAt: "18:00", closesAt: "18:00" }],
+      },
+      { ...hours, rules: "18:00-23:00" },
+      {
+        rules: [],
+        exceptions: [{ date: "2026-12-24", closed: false, shifts: [] }],
+      },
+    ])
+      assert.equal(
+        (await call("ownerB", "/opening-hours", "PUT", body)).status,
+        422,
+        JSON.stringify(body),
+      );
+    assert.deepEqual(
+      (await json(await call("ownerB", "/settings"))).openingHours,
+      savedB,
+    );
+    assert.equal((await auditActions(tenantB)).length, auditB);
+
+    // The app role is the only runtime writer. Without a live OWNER session the trigger refuses
+    // it, and with one, RLS keeps it inside its own store.
+    const app = await database.connect(database.appUrl);
+    try {
+      await assert.rejects(
+        runInTenant(app, tenantA, (em) =>
+          em.execute("update store_opening_hours set rules = '[]'::jsonb"),
+        ),
+        (error: { code?: string }) => error.code === "42501",
+      );
+      const [session] = await runInTenant(owner, tenantA, (em) =>
+        em.execute<{ id: string; staffUserId: string }[]>(
+          `select s.id, s.staff_user_id as "staffUserId" from staff_sessions s
+           join memberships m on m.staff_user_id = s.staff_user_id
+           where m.tenant_id = ? and m.role = 'OWNER' and s.revoked_at is null limit 1`,
+          [tenantA],
+        ),
+      );
+      assert.ok(session, "a live OWNER session");
+      const asOwnerA = (sql: string, params: unknown[] = []) =>
+        runInTenant(app, tenantA, async (em) => {
+          await em.execute(
+            "select set_config('app.catalog_actor_id', ?, true), set_config('app.catalog_session_id', ?, true)",
+            [session!.staffUserId, session!.id],
+          );
+          return em.execute(sql, params);
+        });
+      await assert.rejects(
+        asOwnerA(
+          "insert into store_opening_hours (tenant_id, rules, exceptions) values (?, '[]', '[]')",
+          [tenantB],
+        ),
+        (error: { code?: string }) => error.code === "42501",
+      );
+      assert.deepEqual(
+        await asOwnerA(
+          "update store_opening_hours set rules = '[]'::jsonb where tenant_id = ? returning tenant_id",
+          [tenantB],
+        ),
+        [],
+      );
+    } finally {
+      await app.close();
+    }
+    assert.deepEqual(
+      (await json(await call("ownerB", "/settings"))).openingHours,
+      savedB,
+    );
   });
 });

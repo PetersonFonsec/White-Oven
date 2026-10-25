@@ -43,6 +43,8 @@ export interface StorePause {
   paused: boolean;
   /** Null while paused: until someone reopens. */
   pausedUntil: string | null;
+  /** The store's IANA time zone, in which `pausedUntil` is shown. */
+  timezone: string;
 }
 
 export interface StoreState {

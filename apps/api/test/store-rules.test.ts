@@ -138,8 +138,9 @@ test("rejects substitute hours that overlap the neighbouring dates", () => {
     closed: false,
     shifts: [{ opensAt: "20:00", closesAt: "19:00" }],
   });
+  // Thursday's substitute night runs into Friday's weekly shift: reported on that shift.
   assert.deepEqual(errors(late), [
-    { code: "OPENING_HOURS_OVERLAP", path: "exceptions[0]" },
+    { code: "OPENING_HOURS_OVERLAP", path: "exceptions[0].shifts[0]" },
   ]);
   // Closing Friday removes its night, so a Saturday dawn shift becomes valid.
   const closedFriday = week();
@@ -187,6 +188,185 @@ test("rejects duplicate dates and malformed exceptions", () => {
       "exceptions[2].shifts",
     ],
   );
+});
+
+const SUNDAY = 0;
+const MONDAY = 1;
+const rule = (weekday: number, opensAt: string, closesAt: string) => ({
+  weekday,
+  opensAt,
+  closesAt,
+});
+const weekOf = (...rules: ReturnType<typeof rule>[]): OpeningHours => ({
+  rules,
+  exceptions: [],
+});
+const overlap = (...paths: string[]) =>
+  paths.map((path) => ({ code: "OPENING_HOURS_OVERLAP", path }));
+
+test("weekly overlaps across midnight and the week boundary, once per conflict", () => {
+  assert.deepEqual(
+    errors(
+      weekOf(rule(FRIDAY, "18:00", "02:00"), rule(SATURDAY, "01:00", "03:00")),
+    ),
+    overlap("rules[1]"),
+  );
+  assert.deepEqual(
+    errors(
+      weekOf(rule(SATURDAY, "23:00", "02:00"), rule(SUNDAY, "01:00", "03:00")),
+    ),
+    overlap("rules[1]"),
+  );
+  assert.deepEqual(
+    errors(
+      weekOf(rule(SUNDAY, "23:00", "02:00"), rule(MONDAY, "01:00", "03:00")),
+    ),
+    overlap("rules[1]"),
+  );
+  // Sunday listed first still reports the Sunday shift, the one that starts later.
+  assert.deepEqual(
+    errors(
+      weekOf(rule(SUNDAY, "01:00", "03:00"), rule(SATURDAY, "23:00", "02:00")),
+    ),
+    overlap("rules[0]"),
+  );
+});
+
+test("adjacent shifts and two separate shifts on one day are valid", () => {
+  valid(
+    weekOf(rule(SATURDAY, "23:00", "02:00"), rule(SUNDAY, "02:00", "06:00")),
+  );
+  valid(weekOf(rule(MONDAY, "11:00", "14:00"), rule(MONDAY, "18:00", "23:00")));
+  valid(weekOf(rule(MONDAY, "11:00", "14:00"), rule(MONDAY, "14:00", "16:00")));
+  // Every night of the week crossing midnight, each ending as the next one starts.
+  valid(
+    weekOf(...[0, 1, 2, 3, 4, 5, 6].map((day) => rule(day, "18:00", "02:00"))),
+  );
+});
+
+test("one conflict is one error, and each shift that clashes is listed once", () => {
+  // Saturday night clashes with Sunday in both weeks compared: still a single error.
+  const night = weekOf(
+    rule(SATURDAY, "22:00", "04:00"),
+    rule(SUNDAY, "01:00", "02:00"),
+    rule(SUNDAY, "03:00", "05:00"),
+  );
+  assert.deepEqual(errors(night), overlap("rules[1]", "rules[2]"));
+  // A shift that clashes with two others is reported once.
+  assert.deepEqual(
+    errors(
+      weekOf(
+        rule(MONDAY, "10:00", "20:00"),
+        rule(MONDAY, "09:00", "12:00"),
+        rule(MONDAY, "11:00", "13:00"),
+      ),
+    ),
+    overlap("rules[0]", "rules[2]"),
+  );
+});
+
+// 2026-11-02 is a Monday, 2026-11-01 a Sunday.
+const monday = "2026-11-02";
+const lunchAndDinner = () =>
+  weekOf(rule(MONDAY, "11:00", "14:00"), rule(MONDAY, "18:00", "23:00"));
+
+test("exceptions: closed date and substitute hours replace that date only", () => {
+  const closed = lunchAndDinner();
+  closed.exceptions.push({ date: monday, closed: true, shifts: [] });
+  const savedClosed = valid(closed);
+  assert.deepEqual(shiftsOfDate(savedClosed, day(monday)), []);
+  assert.equal(shiftsOfDate(savedClosed, day("2026-11-09")).length, 2);
+
+  const substitute = lunchAndDinner();
+  substitute.exceptions.push({
+    date: monday,
+    closed: false,
+    // Overlaps the weekly lunch, but the weekly lunch does not apply on this date.
+    shifts: [{ opensAt: "12:00", closesAt: "22:00" }],
+  });
+  assert.deepEqual(shiftsOfDate(valid(substitute), day(monday)), [
+    { start: 12 * 60, end: 22 * 60 },
+  ]);
+});
+
+test("exceptions: clashes with the previous night and with the next day", () => {
+  const afterSunday = weekOf(rule(SUNDAY, "18:00", "02:00"));
+  afterSunday.exceptions.push({
+    date: monday,
+    closed: false,
+    shifts: [
+      { opensAt: "11:00", closesAt: "14:00" },
+      { opensAt: "01:00", closesAt: "03:00" },
+    ],
+  });
+  assert.deepEqual(errors(afterSunday), overlap("exceptions[0].shifts[1]"));
+
+  const intoTuesday = weekOf(rule(2, "01:00", "03:00"));
+  intoTuesday.exceptions.push({
+    date: monday,
+    closed: false,
+    shifts: [{ opensAt: "22:00", closesAt: "02:00" }],
+  });
+  assert.deepEqual(errors(intoTuesday), overlap("exceptions[0].shifts[0]"));
+});
+
+test("exceptions on consecutive dates are compared with each other", () => {
+  const hours = weekOf();
+  hours.exceptions.push(
+    {
+      date: "2026-11-03",
+      closed: false,
+      shifts: [{ opensAt: "01:00", closesAt: "03:00" }],
+    },
+    {
+      date: monday,
+      closed: false,
+      shifts: [{ opensAt: "22:00", closesAt: "02:00" }],
+    },
+  );
+  assert.deepEqual(errors(hours), overlap("exceptions[0].shifts[0]"));
+  hours.exceptions[0]!.shifts[0] = { opensAt: "02:00", closesAt: "03:00" };
+  assert.deepEqual(
+    valid(hours).exceptions.map((item) => item.date),
+    [monday, "2026-11-03"],
+  );
+});
+
+test("an exception never makes an overlapping week valid", () => {
+  const hours = weekOf(
+    rule(MONDAY, "11:00", "15:00"),
+    rule(MONDAY, "14:00", "18:00"),
+  );
+  // On this Monday the clash is gone, but every other Monday still has it.
+  hours.exceptions.push({
+    date: monday,
+    closed: false,
+    shifts: [{ opensAt: "11:00", closesAt: "14:00" }],
+  });
+  assert.deepEqual(errors(hours), overlap("rules[1]"));
+});
+
+test("week and exception errors come together, in form order", () => {
+  const hours = weekOf(
+    rule(FRIDAY, "18:00", "02:00"),
+    rule(MONDAY, "11:00", "15:00"),
+    rule(MONDAY, "14:00", "18:00"),
+  );
+  hours.exceptions.push(
+    {
+      date: "2026-11-07",
+      closed: false,
+      shifts: [{ opensAt: "18:00", closesAt: "20:00" }],
+    },
+    {
+      date: saturday,
+      closed: false,
+      shifts: [{ opensAt: "01:00", closesAt: "03:00" }],
+    },
+  );
+  const twice = [errors(hours), errors(hours)];
+  assert.deepEqual(twice[0], overlap("rules[2]", "exceptions[1].shifts[0]"));
+  assert.deepEqual(twice[1], twice[0]);
 });
 
 test("store settings: defaults are valid and values are normalized", () => {

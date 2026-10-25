@@ -304,16 +304,34 @@ interface Placed extends Shift {
   path: string;
 }
 
-/** Paths of shifts that overlap an earlier one; all shifts are on one absolute minute line. */
-function overlaps(shifts: Placed[]): string[] {
+/**
+ * Each pair of overlapping shifts as `[earlier, later]`, earlier by start time. Shifts are on one
+ * absolute minute line and half-open, so a shift ending at 02:00 and one starting at 02:00 touch
+ * without overlapping.
+ */
+function overlappingPairs(shifts: Placed[]): [Placed, Placed][] {
   const sorted = [...shifts].sort((a, b) => a.start - b.start || a.end - b.end);
-  const found: string[] = [];
-  let reach: Placed | null = null;
-  for (const shift of sorted) {
-    if (reach && shift.start < reach.end) found.push(shift.path);
-    if (!reach || shift.end > reach.end) reach = shift;
+  const pairs: [Placed, Placed][] = [];
+  sorted.forEach((later, index) => {
+    for (const earlier of sorted.slice(0, index))
+      if (later.start < earlier.end) pairs.push([earlier, later]);
+  });
+  return pairs;
+}
+
+const pathOrder = (path: string) => [
+  path.startsWith("rules") ? 0 : path.startsWith("exceptions") ? 1 : -1,
+  ...(path.match(/\d+/g) ?? []).map(Number),
+];
+
+/** Rules first, then exceptions, each by index, so the panel lists errors in form order. */
+function byPath(a: OpeningHoursError, b: OpeningHoursError): number {
+  const [left, right] = [pathOrder(a.path), pathOrder(b.path)];
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const diff = (left[i] ?? -1) - (right[i] ?? -1);
+    if (diff) return diff;
   }
-  return found;
+  return a.path.localeCompare(b.path);
 }
 
 /**
@@ -412,8 +430,10 @@ export function validateOpeningHours(
         path: `rules[${index}]`,
       });
     });
-  for (const path of overlaps(weekly))
-    errors.push({ code: "OPENING_HOURS_OVERLAP", path });
+  // A conflict is reported once, on the shift that starts later. The weekly rules stand on their
+  // own: an exception only changes one date, so it never makes an overlapping week valid.
+  for (const [, later] of overlappingPairs(weekly))
+    errors.push({ code: "OPENING_HOURS_OVERLAP", path: later.path });
 
   // Each exception date against itself and its neighbours' effective shifts.
   const exceptionIndex = new Map<number, number>();
@@ -426,7 +446,9 @@ export function validateOpeningHours(
       });
     else exceptionIndex.set(day, index);
   });
-  if (!errors.length) {
+  // Exceptions are checked even when the week has errors, so the panel shows every problem at
+  // once. A duplicate date has no single effective day, so overlaps wait until it is fixed.
+  if (exceptionIndex.size === (exceptions as ClosureException[]).length) {
     const placedOf = (day: number, base: number): Placed[] => {
       const index = exceptionIndex.get(day);
       if (index !== undefined)
@@ -452,31 +474,32 @@ export function validateOpeningHours(
         ];
       });
     };
-    for (const [day] of exceptionIndex) {
-      const found = overlaps([
+    for (const [day] of exceptionIndex)
+      for (const pair of overlappingPairs([
         ...placedOf(day - 1, -DAY),
         ...placedOf(day, 0),
         ...placedOf(day + 1, DAY),
-      ]);
-      for (const path of found)
-        errors.push({
-          code: "OPENING_HOURS_OVERLAP",
-          // A clash with a weekly rule is reported on the exception that caused it.
-          path: path.startsWith("rules")
-            ? `exceptions[${exceptionIndex.get(day)}]`
-            : path,
-        });
-    }
+      ])) {
+        // Rule against rule belongs to the weekly check above. Otherwise the substitute shift is
+        // at fault: the later one when both are substitutes, the exception's when one is a rule.
+        const substitutes = pair.filter(
+          (shift) => !shift.path.startsWith("rules"),
+        );
+        const path = substitutes.at(-1)?.path;
+        if (path) errors.push({ code: "OPENING_HOURS_OVERLAP", path });
+      }
   }
 
   if (errors.length) {
     const seen = new Set<string>();
     return {
       ok: false,
-      errors: errors.filter((error) => {
-        const key = `${error.code}:${error.path}`;
-        return !seen.has(key) && Boolean(seen.add(key));
-      }),
+      errors: errors
+        .filter((error) => {
+          const key = `${error.code}:${error.path}`;
+          return !seen.has(key) && Boolean(seen.add(key));
+        })
+        .sort(byPath),
     };
   }
   return { ok: true, value };
