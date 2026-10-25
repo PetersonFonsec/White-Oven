@@ -456,6 +456,7 @@ describe("tenant isolation", databaseSuite, () => {
       // `GET /admin/me` reads only the token's own membership; covered by test 7.
       const listings = [
         "GET /public/stores/:storeSlug/isolation-probe",
+        "GET /public/stores/:storeSlug/menu",
         "GET /admin/me",
         "GET /admin/catalog/items",
         "GET /admin/catalog/audit-events",
@@ -641,6 +642,28 @@ describe("tenant isolation", databaseSuite, () => {
       assert.doesNotMatch(JSON.stringify(body), /SUSPENDED/);
     });
 
+    it("the public menu lists only the store's own catalog", async () => {
+      for (const [store, other] of [
+        [a, b],
+        [b, a],
+      ] as const) {
+        const response = await call(`/public/stores/${store.slug}/menu`, {
+          headers: { "x-tenant-id": other.id },
+        });
+        assert.equal(response.status, 200);
+        const menu = JSON.stringify(await json(response));
+        assert.match(menu, new RegExp(`${store.slug} flavor`));
+        for (const id of [
+          other.catalogFlavorId,
+          other.sizeId,
+          other.crustId,
+          other.extraId,
+          other.productId,
+        ])
+          assert.doesNotMatch(menu, new RegExp(id));
+      }
+    });
+
     it("ignores tenant hints in headers, query and body", async () => {
       const response = await call(
         `/public/stores/${a.slug}/isolation-probe?tenantId=${b.id}&tenant_id=${b.id}`,
@@ -687,6 +710,7 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "catalog_ingredients", forced: true },
         { table: "catalog_pricing_policies", forced: true },
         { table: "catalog_simple_products", forced: true },
+        { table: "catalog_versions", forced: true },
         { table: "image_assets", forced: true },
         { table: "memberships", forced: true },
         { table: "orders", forced: true },

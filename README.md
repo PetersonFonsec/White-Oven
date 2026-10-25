@@ -1,6 +1,6 @@
 # WhiteOven
 
-SaaS white label planejado para pizzarias. **M0** entregou a landing Astro, o Pizza Builder demonstrativo, a captação real de interesse com SQLite local e o empacotamento Docker/Compose. **M1.1–M1.5** entregaram fundação da API, PostgreSQL, isolamento tenant, autenticação/MFA e operações de plataforma. **M2.1–M2.4** entregaram contratos, motor de preço e catálogo administrativo; **M2.5** está em implementação com upload autenticado e storage de imagens. Nenhum deploy real foi feito. Angular, React Native/Expo, pagamentos e onboarding continuam planejados.
+SaaS white label planejado para pizzarias. **M0** entregou a landing Astro, o Pizza Builder demonstrativo, a captação real de interesse com SQLite local e o empacotamento Docker/Compose. **M1.1–M1.5** entregaram fundação da API, PostgreSQL, isolamento tenant, autenticação/MFA e operações de plataforma. **M2.1–M2.4** entregaram contratos, motor de preço e catálogo administrativo; **M2.5** está em revisão com upload autenticado e storage de imagens, e **M2.6** acrescenta o cardápio público por loja com cache por versão do catálogo. Nenhum deploy real foi feito. Angular, React Native/Expo, pagamentos e onboarding continuam planejados.
 
 ## Requisitos e início local
 
