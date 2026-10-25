@@ -190,6 +190,8 @@ test("an operator enrolls the second factor before reaching the platform", async
   page,
   browser,
 }) => {
+  // Waits up to 31 s for a fresh TOTP window below, so the default 30 s budget is not enough.
+  test.setTimeout(90_000);
   await signIn(page, "operador@e2e.test");
   await expect(page).toHaveURL(/\/seguranca\/mfa$/);
   await page.goto("/lojas");
