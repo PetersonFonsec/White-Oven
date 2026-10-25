@@ -11,6 +11,10 @@ import {
   storeSelected,
 } from "./core/guards";
 import { PlatformHomePage } from "./platform/platform-home.page";
+import {
+  InviteCompletePage,
+  InviteRedemptionPage,
+} from "./platform/invite-redemption.page";
 import { rolesOf } from "./shell/navigation";
 import { StoreHomePage } from "./shell/store-home.page";
 import { StoreShell } from "./shell/store-shell";
@@ -29,6 +33,23 @@ export const routes: Routes = [
     title: "Entrar · WhiteOven",
     canActivate: [signedOut],
     component: LoginPage,
+  },
+  {
+    path: "invite/concluido",
+    title: "Conta criada · WhiteOven",
+    component: InviteCompletePage,
+  },
+  {
+    path: "invite/aceitar",
+    title: "Aceitar convite · WhiteOven",
+    canActivate: [signedOut],
+    component: InviteRedemptionPage,
+  },
+  {
+    path: "invite/:token",
+    title: "Aceitar convite · WhiteOven",
+    canActivate: [signedOut],
+    component: InviteRedemptionPage,
   },
   {
     path: "seguranca/mfa",

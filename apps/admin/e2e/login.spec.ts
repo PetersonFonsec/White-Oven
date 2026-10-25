@@ -186,6 +186,7 @@ test("signing in works with the keyboard only", async ({ page }) => {
 
 test("an operator enrolls the second factor before reaching the platform", async ({
   page,
+  browser,
 }) => {
   await signIn(page, "operador@e2e.test");
   await expect(page).toHaveURL(/\/seguranca\/mfa$/);
@@ -213,4 +214,75 @@ test("an operator enrolls the second factor before reaching the platform", async
   await page.getByLabel("Código do aplicativo autenticador").fill(totp(secret));
   await page.getByRole("button", { name: "Verificar" }).click();
   await expect(page).toHaveURL(/\/plataforma$/);
+
+  await expect(
+    page.getByRole("heading", { name: "Área de plataforma" }),
+  ).toBeVisible();
+  await expect(page.getByRole("table")).toContainText("pizzaria-centro");
+
+  const slug = `loja-m32-${Date.now()}`;
+  const ownerEmail = `owner-${Date.now()}@e2e.test`;
+  await page.getByLabel("Nome da pizzaria").fill("Loja M3.2 E2E");
+  await page.getByLabel("Identificador da loja").fill(slug);
+  await page.getByLabel("E-mail da pessoa responsável").fill(ownerEmail);
+  await page.getByRole("button", { name: "Cadastrar e gerar convite" }).click();
+  await expect(
+    page.getByText("Pizzaria cadastrada e convite criado.", { exact: true }),
+  ).toBeVisible();
+  const inviteInput = page.getByLabel("Link de convite");
+  await expect(inviteInput).toHaveValue(
+    /^http:\/\/127\.0\.0\.1:4310\/invite\/[A-Za-z0-9_-]{43}$/,
+  );
+  const inviteUrl = await inviteInput.inputValue();
+
+  const createdTenantRow = page.getByRole("row").filter({ hasText: slug });
+  await expect(createdTenantRow).toContainText("Aguardando primeiro acesso");
+  await createdTenantRow
+    .getByRole("button", { name: "Suspender Loja M3.2 E2E" })
+    .click();
+  const suspendDialog = page.getByRole("alertdialog");
+  await expect(suspendDialog).toContainText(
+    "Pedidos aguardando aceite serão recusados",
+  );
+  await suspendDialog
+    .getByRole("button", { name: "Suspender pizzaria" })
+    .click();
+  await expect(createdTenantRow).toContainText("Suspensa");
+  await createdTenantRow
+    .getByRole("button", { name: "Reativar Loja M3.2 E2E" })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Reativar pizzaria" })
+    .click();
+  await expect(createdTenantRow).toContainText("Ativa");
+
+  // The invitation is usable on the recipient's signed-out browser and its token disappears
+  // from the address bar after one successful redemption.
+  const invitee = await browser.newPage();
+  await invitee.goto(inviteUrl);
+  await expect(
+    invitee.getByRole("heading", { name: "Aceitar convite" }),
+  ).toBeVisible();
+  await expect(invitee).toHaveURL(/\/invite\/aceitar$/);
+  await invitee.reload();
+  await expect(invitee.getByRole("alert")).toContainText(
+    "Abra novamente o link original recebido",
+  );
+  await invitee.goto(inviteUrl);
+  await expect(invitee).toHaveURL(/\/invite\/aceitar$/);
+  await invitee.getByLabel("Seu nome").fill("Pessoa Responsável E2E");
+  await invitee.getByLabel("Crie uma senha").fill("senham3_2-segura");
+  await invitee.getByLabel("Repita a senha").fill("senham3_2-segura");
+  await invitee.getByRole("button", { name: "Criar acesso de dono" }).click();
+  await expect(invitee).toHaveURL(/\/invite\/concluido$/);
+  await expect(invitee.getByRole("status")).toContainText("acesso de dono");
+  await invitee.getByRole("link", { name: "Entrar no painel" }).click();
+  await expect(invitee).toHaveURL(/\/entrar$/);
+  await invitee.getByLabel("E-mail").fill(ownerEmail);
+  await invitee.getByLabel("Senha").fill("senham3_2-segura");
+  await invitee.getByRole("button", { name: "Entrar" }).click();
+  await expect(invitee).toHaveURL(/\/loja$/);
+  await expect(invitee.getByRole("banner")).toContainText("Loja M3.2 E2E");
+  await invitee.close();
 });
