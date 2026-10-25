@@ -1,4 +1,5 @@
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
+import type { IsolationLevel } from "@mikro-orm/core";
 import { type EntityManager, MikroORM } from "@mikro-orm/postgresql";
 import { TENANT_SETTING } from "../database/tenant-isolation-sql";
 import { ApiError } from "../errors/api-error";
@@ -17,11 +18,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
  *
  * Takes `tenantId` explicitly so jobs can iterate tenants one transaction at a time; request code
  * uses `TenantTransactions`, which reads it from the `TenantContext`.
+ *
+ * `isolationLevel` defaults to PostgreSQL's READ COMMITTED; a reader that needs every statement
+ * to see the same snapshot (the public menu) asks for REPEATABLE READ.
  */
 export async function runInTenant<T>(
   orm: MikroORM,
   tenantId: string,
   work: (em: EntityManager) => Promise<T>,
+  options: { isolationLevel?: IsolationLevel } = {},
 ): Promise<T> {
   if (!UUID.test(tenantId))
     throw new Error("tenantId must be a lowercase UUID");
@@ -33,7 +38,7 @@ export async function runInTenant<T>(
     ]);
     tx.setFilterParams(TENANT_FILTER, { tenantId });
     return work(tx);
-  });
+  }, options);
 }
 
 /**
@@ -48,12 +53,20 @@ export async function runInTenant<T>(
 export class TenantTransactions {
   constructor(@Inject(MikroORM) private readonly orm: MikroORM) {}
 
-  async run<T>(work: (em: EntityManager) => Promise<T>): Promise<T> {
+  async run<T>(
+    work: (em: EntityManager) => Promise<T>,
+    options: { isolationLevel?: IsolationLevel } = {},
+  ): Promise<T> {
     const { tenantId, actor } = currentTenantContext();
-    return runInTenant(this.orm, tenantId, async (em) => {
-      if (actor.type === "staff") await assertStaffStillAllowed(em, actor);
-      return work(em);
-    });
+    return runInTenant(
+      this.orm,
+      tenantId,
+      async (em) => {
+        if (actor.type === "staff") await assertStaffStillAllowed(em, actor);
+        return work(em);
+      },
+      options,
+    );
   }
 }
 
