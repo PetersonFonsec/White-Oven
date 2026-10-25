@@ -102,6 +102,8 @@ Critério de aceite: teste parametrizado percorre a matriz (status × papel × o
 
 `fulfillmentModes` (subconjunto não vazio de `DELIVERY`, `PICKUP`), `deliveryFeeCents` (≥ 0), `minimumOrderCents` (≥ 0, aplicado ao subtotal de itens), `deliveryAreaDescription` (texto livre, sem cálculo), `estimatedPrepMinutes`, `estimatedDeliveryMinutes`, `acceptTimeoutMinutes` (Q-07), `acceptedPaymentMethods` (subconjunto não vazio de `CASH`, `CARD_ON_DELIVERY`, `PIX_ON_DELIVERY`), `pausedUntil` (pausa manual), `contactPhone`, `pickupAddress`, `privacyPolicyVersion`.
 
+Implementação (M3.4, [ADR 0013](../adr/0013-store-settings.md)): o OWNER grava as configurações; a pausa fica em tabela própria para qualquer pessoa da equipe pausar por 15, 30 ou 60 minutos ou até reabrir (`pausedUntil` nulo com pausa ativa). `privacyPolicyVersion` chega com a conta do cliente (M4.2).
+
 ### OpeningRule e ClosureException
 
 - `OpeningRule`: `weekday` (0–6, 0 = domingo), `opensAt`, `closesAt` (hora local, precisão de minuto). `closesAt` menor que `opensAt` significa que fecha no dia seguinte (ex.: 18:00–02:00). `opensAt = closesAt` é inválido (funcionamento 24 horas fora do MVP).

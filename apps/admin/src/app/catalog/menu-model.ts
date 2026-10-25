@@ -1,3 +1,4 @@
+import type { PizzaCatalog } from "@whiteoven/contracts";
 import type { CatalogSnapshot } from "./catalog-api";
 
 /** Largest amount the API stores (PostgreSQL `integer`), in cents. */
@@ -134,5 +135,57 @@ export function reconcilePreview(
     left,
     right,
     crustId: crusts.includes(selection.crustId) ? selection.crustId : "",
+  };
+}
+
+/** The pricing engine's view of a catalog snapshot. */
+export function pricingCatalog(data: CatalogSnapshot): PizzaCatalog {
+  return {
+    categories: data.categories.map(({ id, kind, archived }) => ({
+      id,
+      kind,
+      archived,
+    })),
+    sizes: data.sizes.map(
+      ({ id, name, slices, maxFlavors, available, archived }) => ({
+        id,
+        name,
+        slices,
+        maxFlavors,
+        available,
+        archived,
+      }),
+    ),
+    ingredients: data.ingredients.map(({ id, name, removable, archived }) => ({
+      id,
+      name,
+      removable,
+      archived,
+    })),
+    flavors: data.flavors.map(
+      ({ id, categoryId, name, ingredientIds, available, archived }) => ({
+        id,
+        categoryId,
+        name,
+        ingredientIds,
+        available,
+        archived,
+      }),
+    ),
+    flavorPrices: data.flavorPrices,
+    crusts: data.crusts.map(({ id, name, available, archived }) => ({
+      id,
+      name,
+      available,
+      archived,
+    })),
+    crustPrices: data.crustPrices,
+    extras: data.extras.map(({ id, name, available, archived }) => ({
+      id,
+      name,
+      available,
+      archived,
+    })),
+    extraPrices: data.extraPrices,
   };
 }

@@ -24,6 +24,7 @@ test("an owner signs in, picks a store and keeps the session after a reload", as
   await expect(nav.getByRole("link")).toHaveText([
     "Início",
     "Cardápio",
+    "Configurações",
     "Equipe",
   ]);
 
@@ -178,10 +179,11 @@ test("signing in works with the keyboard only", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/loja$/);
   await expect(page.getByRole("heading", { name: "Início" })).toBeFocused();
+  // The next stop after the page title is the home page's first control: pausing orders.
+  const pause = page.getByRole("button", { name: "Pausar 15 min" });
+  await expect(pause).toBeVisible();
   await page.keyboard.press("Tab");
-  await expect(
-    page.getByRole("link", { name: "Pular para o conteúdo" }),
-  ).toBeFocused();
+  await expect(pause).toBeFocused();
 });
 
 test("an operator enrolls the second factor before reaching the platform", async ({
