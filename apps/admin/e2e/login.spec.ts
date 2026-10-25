@@ -104,6 +104,42 @@ test("a logout the API cannot confirm is reported and never resumed by a reload"
   await expect(warning).toHaveCount(0);
 });
 
+test("signing in again while the previous logout is still pending keeps the new session", async ({
+  page,
+}) => {
+  await signIn(page, "equipe@e2e.test");
+  await expect(page).toHaveURL(/\/loja$/);
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/v1/admin/auth/logout", async (route) => {
+    await held;
+    await route.continue();
+  });
+  const signIns: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/v1/admin/auth/login"))
+      signIns.push(request.url());
+  });
+
+  await page.getByRole("button", { name: "Sair" }).click();
+  await expect(page).toHaveURL(/\/entrar$/);
+  await page.getByLabel("E-mail").fill("equipe@e2e.test");
+  await page.getByLabel("Senha").fill(PASSWORD);
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await expect(page.getByRole("button", { name: "Entrando…" })).toBeVisible();
+  // The sign-in waits for the logout: answered later, the logout would clear the new cookie.
+  expect(signIns).toEqual([]);
+
+  release();
+  await expect(page).toHaveURL(/\/loja$/);
+  expect(signIns).toHaveLength(1);
+  await page.reload();
+  await expect(page).toHaveURL(/\/loja$/);
+  await expect(page.getByRole("banner")).toContainText(
+    "Pizzaria pizzaria-centro",
+  );
+});
+
 test("staff see only their sections and cannot open others by URL", async ({
   page,
 }) => {

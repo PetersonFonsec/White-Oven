@@ -122,7 +122,8 @@ export class StoreShell {
   });
 
   protected async logout(): Promise<void> {
-    await this.session.logout();
+    // Ends the session here at once; the revocation finishes in the background (Session.logout).
+    void this.session.logout();
     await this.router.navigateByUrl("/entrar");
   }
 }

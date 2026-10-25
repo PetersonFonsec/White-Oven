@@ -1,6 +1,6 @@
 import { HttpClient, HttpHeaders } from "@angular/common/http";
 import { Injectable, computed, inject, signal } from "@angular/core";
-import { firstValueFrom } from "rxjs";
+import { type Observable, firstValueFrom, timeout } from "rxjs";
 import { AUTH, apiErrorCode, apiStatus } from "./api";
 
 export type Role = "OWNER" | "MANAGER" | "STAFF";
@@ -52,7 +52,14 @@ export type RefreshResult =
   /** A logout or a newer sign-in, store switch or MFA enrollment made this result obsolete. */
   | { status: "superseded" };
 
-export type LogoutResult = "confirmed" | "unconfirmed";
+/** `superseded`: a newer sign-in started meanwhile, so this result no longer describes the browser. */
+export type LogoutResult = "confirmed" | "unconfirmed" | "superseded";
+
+/**
+ * Longest wait for a request that sets or clears the refresh cookie. They run one at a time, so a
+ * request that never answers must not hold the others forever.
+ */
+export const COOKIE_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * The token and what it was issued for. `lineage` changes with every sign-in, store switch and MFA
@@ -92,6 +99,8 @@ export const LOGOUT_PENDING_KEY = "whiteoven.admin.logout-pending";
  *   refreshes) and start another one once published (a refresh started meanwhile may carry the
  *   previous store and must not overwrite them).
  * - A refresh keeps the generation: it renews the current session, it does not replace it.
+ * - Requests that set or clear the refresh cookie run one at a time, in call order (`exclusive`),
+ *   so an older logout can neither clear a newer sign-in's cookie nor be overtaken by it.
  *
  * The token, platform access and active store are loaded with the new token passed explicitly,
  * then published together, so the panel never sees a token without its permissions.
@@ -102,10 +111,14 @@ export class Session {
   private readonly state = signal<SignedIn | null>(null);
   private generation = 0;
   private lineages = 0;
+  /** Counts published sessions; a logout's outcome only stands while none was published. */
+  private published = 0;
   private refreshing: {
     generation: number;
     promise: Promise<RefreshResult>;
   } | null = null;
+  /** Tail of the requests that set or clear the refresh cookie (see `exclusive`). */
+  private cookieQueue: Promise<unknown> = Promise.resolve();
 
   readonly platform = computed(() => this.state()?.platform ?? null);
   readonly store = computed(() => this.state()?.store ?? null);
@@ -152,7 +165,7 @@ export class Session {
     password: string,
   ): Promise<"signed-in" | { mfaToken: string }> {
     const generation = ++this.generation;
-    const body = await firstValueFrom(
+    const body = await this.exclusive(generation, () =>
       this.http.post<TokenBody | MfaChallengeBody>(AUTH.login, {
         email,
         password,
@@ -170,7 +183,7 @@ export class Session {
     const generation = ++this.generation;
     await this.replace(
       generation,
-      await firstValueFrom(
+      await this.exclusive(generation, () =>
         this.http.post<TokenBody>(AUTH.loginMfa, { mfaToken, ...factor }),
       ),
     );
@@ -179,18 +192,16 @@ export class Session {
   /**
    * Rotates the refresh cookie. Concurrent callers share one request, because the API treats a
    * second use of a rotated refresh token as theft and revokes the whole session. A refresh of an
-   * older generation is never joined: the new one waits for it to settle, so the browser sends
-   * the latest cookie.
+   * older generation is never joined; the new one queues behind it (`exclusive`), so the browser
+   * sends the latest cookie.
    */
   refresh(): Promise<RefreshResult> {
     const generation = this.generation;
     const pending = this.refreshing;
     if (pending?.generation === generation) return pending.promise;
-    const promise = (pending?.promise ?? Promise.resolve())
-      .then(() => this.rotate(generation))
-      .finally(() => {
-        if (this.refreshing?.promise === promise) this.refreshing = null;
-      });
+    const promise = this.rotate(generation).finally(() => {
+      if (this.refreshing?.promise === promise) this.refreshing = null;
+    });
     this.refreshing = { generation, promise };
     return promise;
   }
@@ -227,16 +238,15 @@ export class Session {
   }
 
   /**
-   * Ends the session here at once, then asks the API to revoke it. A refresh in flight is awaited
-   * first, so the request carries the latest refresh cookie. When the API does not confirm, the
-   * session may still be alive on the server: the result says so, and the next start of the panel
-   * retries the logout instead of resuming the session.
+   * Ends the session here at once, then asks the API to revoke it. The request queues behind any
+   * cookie request already sent (a refresh in flight), so it carries the latest refresh cookie,
+   * and a sign-in started afterwards waits for it, so the logout never clears the new cookie.
+   * When the API does not confirm, the session may still be alive on the server: the result says
+   * so, and the next start of the panel retries the logout instead of resuming the session.
    */
-  async logout(): Promise<LogoutResult> {
-    const refreshing = this.refreshing?.promise;
+  logout(): Promise<LogoutResult> {
     this.clear();
     writeLogoutPending(true);
-    await refreshing;
     return this.revoke();
   }
 
@@ -250,17 +260,49 @@ export class Session {
     this.state.set(null);
   }
 
+  /**
+   * Revokes the session of the cookie the browser holds when the request leaves. It is always sent,
+   * even after a newer sign-in started: queued before that sign-in, it still carries the old
+   * cookie, and the sign-in's request waits for it. Its outcome describes the browser only while
+   * no session was published since it started; after that it touches neither the warning nor its
+   * marker (the published sign-in already cleared both).
+   */
   private async revoke(): Promise<LogoutResult> {
+    const published = this.published;
+    let confirmed = true;
     try {
-      await firstValueFrom(this.http.post(AUTH.logout, {}));
+      await this.exclusive(null, () => this.http.post(AUTH.logout, {}));
     } catch {
-      writeLogoutPending(true);
-      this.logoutUnconfirmed.set(true);
-      return "unconfirmed";
+      confirmed = false;
     }
-    writeLogoutPending(false);
-    this.logoutUnconfirmed.set(false);
-    return "confirmed";
+    if (published !== this.published || this.state() !== null)
+      return "superseded";
+    writeLogoutPending(!confirmed);
+    this.logoutUnconfirmed.set(!confirmed);
+    return confirmed ? "confirmed" : "unconfirmed";
+  }
+
+  /**
+   * Sends a request that sets or clears the refresh cookie (sign-in, MFA sign-in, refresh, logout)
+   * after the previous one settled, in call order. The API answers each with `Set-Cookie`, so two
+   * in flight could land in any order: a logout's cookie removal could erase a newer sign-in, or
+   * a refresh could reuse a rotated token. A request whose `generation` became obsolete while
+   * queued is not sent (a logout passes `null`: it is always sent). Each one times out after
+   * `COOKIE_REQUEST_TIMEOUT_MS`, so the queue always moves on.
+   */
+  private exclusive<T>(
+    generation: number | null,
+    request: () => Observable<T>,
+  ): Promise<T> {
+    const run = this.cookieQueue.then(() => {
+      if (generation !== null && generation !== this.generation)
+        throw new SupersededError();
+      return firstValueFrom(
+        request().pipe(timeout({ first: COOKIE_REQUEST_TIMEOUT_MS })),
+      );
+    });
+    this.cookieQueue = run.catch(() => undefined);
+    return run;
   }
 
   private async rotate(generation: number): Promise<RefreshResult> {
@@ -268,7 +310,7 @@ export class Session {
     if (!current()) return { status: "superseded" };
     let next: SignedIn | null = null;
     try {
-      const body = await firstValueFrom(
+      const body = await this.exclusive(generation, () =>
         this.http.post<TokenBody>(AUTH.refresh, {}),
       );
       if (current()) next = await this.prepare(body);
@@ -282,6 +324,7 @@ export class Session {
     }
     // A refresh renews the session it was started for; on startup it begins a new lineage.
     next.lineage = this.state()?.lineage ?? ++this.lineages;
+    this.published++;
     this.state.set(next);
     return {
       status: "renewed",
@@ -299,6 +342,7 @@ export class Session {
     const next = await this.prepare(body);
     if (generation !== this.generation) throw new SupersededError();
     next.lineage = ++this.lineages;
+    this.published++;
     this.state.set(next);
     this.generation++;
     writeLogoutPending(false);
