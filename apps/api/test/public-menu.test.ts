@@ -361,6 +361,113 @@ describe("M2.6 public menu", databaseSuite, () => {
     }
   });
 
+  it("builds the menu from the snapshot of the version it is cached under", async () => {
+    const slug = `menu-snapshot-${randomUUID().slice(0, 8)}`;
+    const tenantId = await insertTenant(owner, slug);
+    await seedSimpleStore(tenantId, "Snapshot");
+    type Build = (em: EntityManager) => unknown;
+    const service = server.app.get(PublicMenuService) as unknown as {
+      build: Build;
+    };
+    const build = service.build;
+    // The write runs from the test, outside the request's async context, so it commits on its
+    // own connection after the request read the version and before the catalog queries run.
+    let buildStarted!: () => void;
+    const started = new Promise<void>((resolve) => (buildStarted = resolve));
+    let releaseBuild!: () => void;
+    const released = new Promise<void>((resolve) => (releaseBuild = resolve));
+    service.build = async function (this: unknown, em: EntityManager) {
+      buildStarted();
+      await released;
+      return build.call(this, em);
+    };
+    try {
+      const pending = menu(slug);
+      await started;
+      await runInTenant(owner, tenantId, async (tx) => {
+        await tx.execute("update catalog_flavor_prices set price_cents=4400");
+        await tx.execute("update catalog_flavors set name='Sabor novo'");
+      });
+      releaseBuild();
+      const first = await json(await pending);
+      assert.equal(first.flavors[0].name, "Sabor Snapshot");
+      assert.equal(first.flavorPrices[0].priceCents, 4000);
+      service.build = build;
+      const second = await json(await menu(slug));
+      assert.ok(second.version > first.version);
+      assert.equal(second.flavors[0].name, "Sabor novo");
+      assert.equal(second.flavorPrices[0].priceCents, 4400);
+    } finally {
+      service.build = build;
+    }
+  });
+
+  it("bumps the version once per statement, also for batch writes", async () => {
+    const tenantId = await insertTenant(
+      owner,
+      `menu-batch-${randomUUID().slice(0, 8)}`,
+    );
+    const version = async () => {
+      const [row] = await runInTenant(owner, tenantId, (em) =>
+        em.execute<{ version: string }[]>(
+          "select coalesce((select version from catalog_versions), 0) as version",
+        ),
+      );
+      return Number(row!.version);
+    };
+    assert.equal(await version(), 0);
+    await runInTenant(owner, tenantId, (em) =>
+      em.execute(
+        "insert into catalog_categories (tenant_id,name,kind) values (?,'Um','PIZZA'),(?,'Dois','PIZZA'),(?,'Três','PRODUCT')",
+        [tenantId, tenantId, tenantId],
+      ),
+    );
+    assert.equal(await version(), 1);
+    await runInTenant(owner, tenantId, async (em) => {
+      await em.execute("update catalog_categories set sort_order = 5");
+      await em.execute(
+        "update catalog_categories set archived_at = now() where kind = 'PRODUCT'",
+      );
+    });
+    assert.equal(await version(), 3);
+  });
+
+  it("refuses to move catalog rows to another tenant", async () => {
+    for (const table of [
+      "catalog_categories",
+      "pizza_sizes",
+      "catalog_flavors",
+      "catalog_flavor_prices",
+    ]) {
+      const error = await runInTenant(owner, stores.a.id, (em) =>
+        em.execute(`update ${table} set tenant_id = ?`, [stores.b.id]),
+      ).then(
+        () => null,
+        (error: { code?: string; constraint?: string }) => error,
+      );
+      assert.equal(error?.code, "23514", table);
+      assert.equal(error?.constraint, "catalog_tenant_immutable", table);
+    }
+  });
+
+  it("every catalog table bumps the version and keeps its tenant", async () => {
+    const rows = await owner.em
+      .getConnection()
+      .execute<{ table: string; bump: boolean; guard: boolean }[]>(
+        `select c.relname as "table",
+              coalesce(bool_or(t.tgname = c.relname || '_bump_version'), false) as bump,
+              coalesce(bool_or(t.tgname = c.relname || '_guard_tenant'), false) as guard
+         from pg_class c left join pg_trigger t on t.tgrelid = c.oid
+        where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
+          and (c.relname like 'catalog\\_%' or c.relname = 'pizza_sizes')
+          and c.relname <> 'catalog_versions'
+        group by c.relname order by 1`,
+      );
+    assert.equal(rows.length, 12);
+    for (const row of rows)
+      assert.deepEqual(row, { table: row.table, bump: true, guard: true });
+  });
+
   it("keeps the catalog version read-only for the app role", async () => {
     const app = await database.connect(database.appUrl);
     try {

@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { IsolationLevel } from "@mikro-orm/core";
 import type { EntityManager } from "@mikro-orm/postgresql";
 import { currentTenantContext } from "../tenancy/tenant-context";
 import { TenantTransactions } from "../tenancy/tenant-transaction";
@@ -53,10 +54,11 @@ export interface PublicMenu extends PublicMenuCatalog {
  * ingredients are left out.
  *
  * Cache: one entry per tenant, keyed by `catalog_versions.version`, which a trigger bumps in the
- * same transaction as any catalog write. Each request reads the version (one row) before the
- * catalog, so a menu built after that read is at least as new as the version it is stored under
- * and every API instance sees writes made through any other one. The store name and slug are read
- * on every request and never cached.
+ * same transaction as any catalog write. The version and every catalog query run in one
+ * REPEATABLE READ transaction, so they all see the same snapshot: a menu is stored exactly under
+ * the version of the data it was built from, never mixed with a write committed meanwhile, and
+ * every API instance sees writes made through any other one. The store name and slug are read on
+ * every request and never cached.
  */
 @Injectable()
 export class PublicMenuService {
@@ -69,27 +71,30 @@ export class PublicMenuService {
 
   get(): Promise<PublicMenu> {
     const { tenantId } = currentTenantContext();
-    return this.transactions.run(async (em) => {
-      const [head] = await em.execute<
-        { slug: string; name: string; version: string }[]
-      >(
-        `select t.slug, t.display_name as name,
+    return this.transactions.run(
+      async (em) => {
+        const [head] = await em.execute<
+          { slug: string; name: string; version: string }[]
+        >(
+          `select t.slug, t.display_name as name,
                 coalesce((select v.version from catalog_versions v), 0) as version
            from tenants t where t.id = ?`,
-        [tenantId],
-      );
-      const version = Number(head!.version);
-      let catalog = this.cached(tenantId, version);
-      if (!catalog) {
-        catalog = await this.build(em);
-        this.store(tenantId, version, catalog);
-      }
-      return {
-        store: { slug: head!.slug, name: head!.name },
-        version,
-        ...catalog,
-      };
-    });
+          [tenantId],
+        );
+        const version = Number(head!.version);
+        let catalog = this.cached(tenantId, version);
+        if (!catalog) {
+          catalog = await this.build(em);
+          this.store(tenantId, version, catalog);
+        }
+        return {
+          store: { slug: head!.slug, name: head!.name },
+          version,
+          ...catalog,
+        };
+      },
+      { isolationLevel: IsolationLevel.REPEATABLE_READ },
+    );
   }
 
   private cached(tenantId: string, version: number) {

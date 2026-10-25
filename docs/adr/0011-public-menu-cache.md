@@ -10,8 +10,9 @@ O app do cliente lê `GET /v1/public/stores/{slug}/menu` sem autenticação. O c
 
 ## Decisão
 
-- A tabela `catalog_versions` (uma linha por tenant, RLS forçado) guarda `version`. Um trigger `AFTER INSERT OR UPDATE OR DELETE` em cada tabela do catálogo incrementa a versão na mesma transação da escrita. A função do trigger é `SECURITY DEFINER`; o papel `whiteoven_app` só tem `SELECT` na tabela. Tenant sem linha nunca alterou o catálogo (versão 0).
-- Cada requisição, dentro de `TenantTransactions.run`, lê primeiro o nome/slug da loja e a versão (uma linha) e só depois o catálogo. O cardápio montado é guardado em memória por tenant com essa versão. Como a leitura do catálogo vem depois da leitura da versão, o conteúdo guardado é sempre igual ou mais novo que a versão sob a qual está; nunca mais velho. Escritas feitas por qualquer instância ou pela migration invalidam todas.
+- A tabela `catalog_versions` (uma linha por tenant, RLS forçado) guarda `version`. Um trigger `AFTER INSERT OR UPDATE OR DELETE ... FOR EACH STATEMENT` em cada tabela do catálogo incrementa a versão do tenant da transação uma vez por comando, então uma alteração em lote de preços ou disponibilidade custa um único upsert. A função do trigger é `SECURITY DEFINER`; o papel `whiteoven_app` só tem `SELECT` na tabela. Tenant sem linha nunca alterou o catálogo (versão 0).
+- O trigger por comando usa o tenant da transação (`whiteoven_current_tenant()`): o RLS forçado só deixa um comando alterar linhas desse tenant, e um trigger `BEFORE UPDATE OF tenant_id` recusa mover linha do catálogo para outro tenant (`23514 catalog_tenant_immutable`). Sem contexto de tenant nenhuma linha muda, e não há o que incrementar.
+- Cada requisição lê nome/slug da loja, a versão e todo o catálogo numa única transação `REPEATABLE READ` (`TenantTransactions.run` aceita o nível de isolamento). Todas as consultas veem o mesmo snapshot, então o cardápio guardado em memória corresponde exatamente à versão sob a qual está, sem misturar uma escrita confirmada no meio da montagem. Escritas feitas por qualquer instância ou fora da API invalidam todas.
 - O cache é LRU com até 500 tenants por instância. Nome e slug da loja são lidos a cada requisição e não entram no cache.
 - O status da loja continua verificado a cada requisição pelo `StoreTenantGuard` (`TenantStatusPolicy`, capacidade `publicMenu`): loja que não está `ACTIVE` responde `403 TENANT_NOT_ACTIVE` mesmo com cardápio em cache.
 - A resposta usa `Cache-Control: no-cache` com o ETag padrão do Express: clientes e proxies revalidam a cada uso e recebem `304` quando nada mudou. Não há cache compartilhado de CDN, para que uma suspensão valha imediatamente.
@@ -26,6 +27,8 @@ O app do cliente lê `GET /v1/public/stores/{slug}/menu` sem autenticação. O c
 
 ## Consequências
 
-- Toda nova tabela do catálogo que afete o cardápio público precisa do trigger `whiteoven_bump_catalog_version()` na sua migration.
-- Escritas concorrentes no catálogo do mesmo tenant serializam na linha de `catalog_versions` até o commit; com o volume de edição esperado do painel, isso é aceitável.
+- Toda nova tabela do catálogo que afete o cardápio público precisa do trigger por comando `whiteoven_bump_catalog_version()` na sua migration.
+- Toda nova tabela do catálogo também recebe o trigger `BEFORE UPDATE OF tenant_id` com `whiteoven_guard_catalog_tenant()`; um teste falha se alguma tabela `catalog_*` ou `pizza_sizes` ficar sem os dois triggers.
+- Escritas concorrentes no catálogo do mesmo tenant serializam na linha de `catalog_versions` até o commit (um upsert por comando, não por linha); com o volume de edição esperado do painel, isso é aceitável.
+- Uma leitura `REPEATABLE READ` só de consulta não sofre falha de serialização no PostgreSQL.
 - A marca visual (`BrandTheme`: logotipo, ícone, cores) ainda não existe; ela entra com o editor de marca (M3.5). Até lá a "marca" do cardápio é o nome público da loja.
