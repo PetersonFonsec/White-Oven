@@ -11,7 +11,7 @@ if [[ "$revision" != "$COMMIT_SHA" ]]; then
  echo 'A imagem testada não corresponde ao commit; publicação recusada.' >&2
  exit 1
 fi
-owner="${OWNER,,}"
+owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
 image="ghcr.io/$owner/$package:sha-$COMMIT_SHA"
 if docker manifest inspect "$image" >/dev/null 2>"$work/manifest-error"; then
  echo 'Tag do commit já publicada; digest existente preservado.'
