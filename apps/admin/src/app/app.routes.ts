@@ -20,6 +20,7 @@ import { StoreHomePage } from "./shell/store-home.page";
 import { StoreShell } from "./shell/store-shell";
 import { UpcomingPage } from "./shell/upcoming.page";
 import { StoreSelectPage } from "./stores/store-select.page";
+import { MenuPage } from "./catalog/menu.page";
 
 export const routes: Routes = [
   {
@@ -85,7 +86,7 @@ export const routes: Routes = [
         path: "cardapio",
         title: "Cardápio · WhiteOven",
         data: { roles: rolesOf("cardapio"), title: "Cardápio" },
-        component: UpcomingPage,
+        component: MenuPage,
       },
       {
         path: "equipe",

@@ -221,4 +221,114 @@ describe("M2.5 tenant catalog images", databaseSuite, () => {
       await app.close();
     }
   });
+
+  it("associates the tenant's own images to flavors and products, and nothing else (M3.3)", async () => {
+    const catalog = (path: string, method = "GET", body?: unknown) =>
+      fetch(`${server.baseUrl}/v1/admin/catalog${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(body ? { "content-type": "application/json" } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    const png = await sharp({
+      create: { width: 64, height: 64, channels: 3, background: "#336699" },
+    })
+      .png()
+      .toBuffer();
+    const upload = (accessToken: string) =>
+      fetch(`${server.baseUrl}/v1/admin/catalog/images`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "image/png",
+        },
+        body: new Uint8Array(png),
+      }).then(json);
+    const asset = await upload(token);
+
+    const pizzas = await json(
+      await catalog("/categories", "POST", {
+        name: "Pizzas M3.3",
+        kind: "PIZZA",
+      }),
+    );
+    const drinks = await json(
+      await catalog("/categories", "POST", {
+        name: "Bebidas M3.3",
+        kind: "PRODUCT",
+      }),
+    );
+    const flavor = await json(
+      await catalog("/flavors", "POST", {
+        categoryId: pizzas.id,
+        name: "Margherita M3.3",
+      }),
+    );
+    const product = await json(
+      await catalog("/products", "POST", {
+        categoryId: drinks.id,
+        name: "Suco M3.3",
+        priceCents: 900,
+      }),
+    );
+    const items = async () => {
+      const snapshot = await json(await catalog("/items"));
+      return {
+        flavor: snapshot.flavors.find(
+          (item: { id: string }) => item.id === flavor.id,
+        ).imageId,
+        product: snapshot.simpleProducts.find(
+          (item: { id: string }) => item.id === product.id,
+        ).imageId,
+      };
+    };
+
+    for (const path of [`/flavors/${flavor.id}`, `/products/${product.id}`])
+      assert.equal(
+        (await catalog(path, "PATCH", { imageId: asset.id })).status,
+        200,
+      );
+    assert.deepEqual(await items(), { flavor: asset.id, product: asset.id });
+
+    // An image of another store is refused by the composite foreign key, even with a valid id.
+    const otherTenant = await insertTenant(
+      owner,
+      `images-other-${randomUUID().slice(0, 8)}`,
+    );
+    const otherEmail = `images-other-${randomUUID()}@test.invalid`;
+    const otherStaff = await insertStaffUser(
+      owner,
+      otherEmail,
+      "image-test-password",
+    );
+    await insertMembership(owner, otherTenant, otherStaff, "OWNER");
+    const otherLogin = await staffLogin(
+      server.baseUrl,
+      otherEmail,
+      "image-test-password",
+    );
+    const otherToken = (
+      await json(
+        await switchTenant(server.baseUrl, otherLogin.accessToken, otherTenant),
+      )
+    ).accessToken;
+    const foreign = await upload(otherToken);
+    for (const path of [`/flavors/${flavor.id}`, `/products/${product.id}`]) {
+      const refused = await catalog(path, "PATCH", { imageId: foreign.id });
+      assert.equal(refused.status, 409);
+      assert.equal((await json(refused)).code, "RESOURCE_CONFLICT");
+      const malformed = await catalog(path, "PATCH", { imageId: "nao-e-uuid" });
+      assert.equal(malformed.status, 422);
+    }
+    assert.deepEqual(await items(), { flavor: asset.id, product: asset.id });
+
+    for (const path of [`/flavors/${flavor.id}`, `/products/${product.id}`])
+      assert.equal(
+        (await catalog(path, "PATCH", { imageId: null })).status,
+        200,
+      );
+    assert.deepEqual(await items(), { flavor: null, product: null });
+  });
 });

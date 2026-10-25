@@ -52,6 +52,10 @@ class FlavorBody {
   @ApiPropertyOptional() description?: string | null;
   @ApiPropertyOptional({ type: [String] }) ingredientIds?: string[];
 }
+class FlavorPatchBody extends FlavorBody {
+  @ApiPropertyOptional({ format: "uuid", nullable: true }) imageId?:
+    string | null;
+}
 class PriceBody {
   @ApiProperty({ format: "uuid" }) sizeId!: string;
   @ApiProperty({ minimum: 1 }) priceCents!: number;
@@ -83,6 +87,8 @@ class SimpleProductPatchBody {
   @ApiPropertyOptional() name?: string;
   @ApiPropertyOptional({ minimum: 0 }) priceCents?: number;
   @ApiPropertyOptional() available?: boolean;
+  @ApiPropertyOptional({ format: "uuid", nullable: true }) imageId?:
+    string | null;
 }
 class PricingPolicyBody {
   @ApiProperty({ enum: ["HIGHEST", "AVERAGE"] })
@@ -282,7 +288,7 @@ export class CatalogController {
   }
   @Patch("flavors/:id")
   @AdminRoute("OWNER", "MANAGER")
-  @ApiBody({ type: FlavorBody })
+  @ApiBody({ type: FlavorPatchBody })
   updateFlavor(
     @Param("id") id: string,
     @Body() body: unknown,
@@ -298,11 +304,15 @@ export class CatalogController {
         "description",
         "ingredientIds",
         "available",
+        "imageId",
       ]) ||
       ("categoryId" in body && !UUID.test(String(body.categoryId))) ||
       ("name" in body && !name(body.name)) ||
       ("description" in body && !optionalText(body.description, 2000)) ||
       ("ingredientIds" in body && !optionalUuidList(body.ingredientIds)) ||
+      ("imageId" in body &&
+        body.imageId !== null &&
+        !UUID.test(String(body.imageId))) ||
       ("available" in body && typeof body.available !== "boolean")
     )
       throw bodyError();
@@ -535,10 +545,19 @@ export class CatalogController {
       !UUID.test(id) ||
       !isObject(body) ||
       !Object.keys(body).length ||
-      !only(body, ["categoryId", "name", "priceCents", "available"]) ||
+      !only(body, [
+        "categoryId",
+        "name",
+        "priceCents",
+        "available",
+        "imageId",
+      ]) ||
       ("categoryId" in body && !UUID.test(String(body.categoryId))) ||
       ("name" in body && !name(body.name)) ||
       ("priceCents" in body && !nonnegativeInt(body.priceCents)) ||
+      ("imageId" in body &&
+        body.imageId !== null &&
+        !UUID.test(String(body.imageId))) ||
       ("available" in body && typeof body.available !== "boolean")
     )
       throw bodyError();
