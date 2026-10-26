@@ -1,0 +1,16 @@
+{
+  "slug": "pizzaria-bairro",
+  "name": "Forno do Bairro",
+  "version": "1.0.0",
+  "ios": { "bundleIdentifier": "br.com.whiteoven.fornodobairro" },
+  "android": { "package": "br.com.whiteoven.fornodobairro" },
+  "icon": "./assets/tenants/pizzaria-bairro/icon.png",
+  "iconBackgroundColor": "#1F4D3A",
+  "fallbackColors": {
+    "primary": "#B3261E",
+    "primaryHover": "#8C1D18",
+    "primaryPressed": "#601410",
+    "onPrimary": "#FFFFFF",
+    "accentText": "#8C1D18"
+  }
+}

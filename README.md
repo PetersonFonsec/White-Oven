@@ -17,22 +17,23 @@ Abra `http://localhost:4321`. Sem configuração completa, o formulário permane
 
 ## Comandos na raiz
 
-| Comando                                           | Descrição                                                                          |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `pnpm dev`                                        | Servidor Astro de desenvolvimento.                                                 |
-| `pnpm build`                                      | Landing pré-renderizada em `apps/landing/dist/client` e servidor em `dist/server`. |
-| `pnpm start`                                      | Inicia o build Astro pelo inicializador Node com limites de conexão, após build.   |
-| `pnpm check`                                      | Formatação, ESLint e tipos strict de todos os pacotes.                             |
-| `pnpm test`                                       | Testes de todos os pacotes (landing, API) e dos scripts de operação.               |
-| `pnpm api:dev`                                    | Compila e sobe a API em `http://127.0.0.1:3000`.                                   |
-| `pnpm db:up`                                      | Sobe o PostgreSQL de desenvolvimento (`compose.dev.yaml`) em `127.0.0.1:5432`.     |
-| `pnpm api:migrate`                                | Aplica as migrations como `whiteoven_owner` (`apps/api/.env.migrate`).             |
-| `pnpm test:e2e`                                   | Build + Playwright desktop/mobile com servidor e banco sintéticos.                 |
-| `pnpm leads inspect`                              | Lista IDs, datas, plano e volume, sem nome ou WhatsApp.                            |
-| `pnpm leads export .data/lead-exports/leads.json` | Exportação JSON restrita, sem sobrescrever arquivo existente.                      |
-| `pnpm leads purge`                                | Exclui dados expirados.                                                            |
-| `pnpm leads delete <uuid>`                        | Exclui um cadastro e suas chaves de retry.                                         |
-| `pnpm leads clear-dev --confirm`                  | Limpa somente banco cujo nome é `leads.dev.sqlite`, fora de produção.              |
+| Comando                                              | Descrição                                                                          |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `pnpm dev`                                           | Servidor Astro de desenvolvimento.                                                 |
+| `pnpm build`                                         | Landing pré-renderizada em `apps/landing/dist/client` e servidor em `dist/server`. |
+| `pnpm start`                                         | Inicia o build Astro pelo inicializador Node com limites de conexão, após build.   |
+| `pnpm check`                                         | Formatação, ESLint e tipos strict de todos os pacotes.                             |
+| `pnpm test`                                          | Testes de todos os pacotes (landing, API) e dos scripts de operação.               |
+| `pnpm api:dev`                                       | Compila e sobe a API em `http://127.0.0.1:3000`.                                   |
+| `WHITEOVEN_TENANT=pizzaria-centro pnpm mobile:start` | App Expo de uma pizzaria (manifesto em `apps/mobile/manifests`).                   |
+| `pnpm db:up`                                         | Sobe o PostgreSQL de desenvolvimento (`compose.dev.yaml`) em `127.0.0.1:5432`.     |
+| `pnpm api:migrate`                                   | Aplica as migrations como `whiteoven_owner` (`apps/api/.env.migrate`).             |
+| `pnpm test:e2e`                                      | Build + Playwright desktop/mobile com servidor e banco sintéticos.                 |
+| `pnpm leads inspect`                                 | Lista IDs, datas, plano e volume, sem nome ou WhatsApp.                            |
+| `pnpm leads export .data/lead-exports/leads.json`    | Exportação JSON restrita, sem sobrescrever arquivo existente.                      |
+| `pnpm leads purge`                                   | Exclui dados expirados.                                                            |
+| `pnpm leads delete <uuid>`                           | Exclui um cadastro e suas chaves de retry.                                         |
+| `pnpm leads clear-dev --confirm`                     | Limpa somente banco cujo nome é `leads.dev.sqlite`, fora de produção.              |
 
 Instale Chromium com `pnpm exec playwright install chromium`. Alternativamente, com Chrome instalado: `WHITEOVEN_BROWSER_CHANNEL=chrome pnpm test:e2e`. A CI instala Chromium com dependências Linux. O banco E2E `.data/leads.e2e.sqlite` é separado do banco local, usa identidade sintética e pode ser removido com o servidor parado.
 
@@ -40,6 +41,7 @@ Instale Chromium com `pnpm exec playwright install chromium`. Alternativamente, 
 
 - `apps/landing`: interface, endpoint Astro `/api/leads`, política `/privacidade` e persistência temporária.
 - `apps/api`: API NestJS. Configuração em `apps/api/.env.example` (API) e `apps/api/.env.migrate.example` (migrations); OpenAPI em `/v1/openapi.json` fora de produção. Decisões nos ADRs [0004](docs/adr/0004-api-foundation.md), [0005](docs/adr/0005-database-roles-migrations.md) e [0006](docs/adr/0006-tenant-isolation.md).
+- `apps/mobile`: app Expo white label do cliente, um binário por pizzaria a partir do manifesto ([ADR 0020](docs/adr/0020-mobile-app-base.md)).
 - `packages/contracts`: contrato e validação isomórfica do lead, sem dependências de servidor.
 - `packages/design-tokens`: identidade visual reutilizável.
 - `docs/product`, `docs/architecture`, `docs/adr`: estado do produto e decisões.

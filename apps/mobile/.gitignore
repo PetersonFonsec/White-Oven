@@ -1,0 +1,14 @@
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native folders are generated per tenant at build time (M5.6)
+/ios
+/android
+
+# Metro
+.metro-health-check*
+
+*.tsbuildinfo

@@ -49,6 +49,21 @@ export interface PublicStoreStatus {
   checkedAt: string;
 }
 
+/**
+ * `GET /v1/public/stores/{slug}` (M5.1, ADR 0020): what the app needs to wear the store's brand.
+ * Colors are already resolved over the WhiteOven defaults; images arrive with the public menu
+ * images (M5.2), so nothing here points at an asset.
+ */
+export interface PublicStoreProfile {
+  slug: string;
+  name: string;
+  brand: {
+    /** `brand_themes.version`; 0 while the store uses the WhiteOven defaults. */
+    version: number;
+    colors: Record<BrandColorToken, string>;
+  };
+}
+
 export interface BrandTheme extends BrandThemeInput {
   /** Grows on every save; 0 while the store uses the WhiteOven defaults. */
   version: number;
@@ -158,6 +173,24 @@ export class StoreService {
     return this.transactions.run((em) =>
       readStoreStatus(em, currentTenantContext().tenantId),
     );
+  }
+
+  /** Name and brand colors of the store in the URL; read on every request, never cached here. */
+  getPublicProfile(): Promise<PublicStoreProfile> {
+    return this.transactions.run(async (em) => {
+      const [[tenant], brand] = await Promise.all([
+        em.execute<{ slug: string; name: string }[]>(
+          "select slug, display_name as name from tenants where id = ?",
+          [currentTenantContext().tenantId],
+        ),
+        this.readBrand(em),
+      ]);
+      return {
+        slug: tenant!.slug,
+        name: tenant!.name,
+        brand: { version: brand.theme.version, colors: brand.colors },
+      };
+    });
   }
 
   getPause(): Promise<StorePause> {
