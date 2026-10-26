@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, it } from "node:test";
-import { AccessTokens, type StaffAccessClaims } from "../src/auth/access-token";
+import {
+  AccessTokens,
+  type CustomerAccessClaims,
+  type StaffAccessClaims,
+} from "../src/auth/access-token";
 import { LoginThrottle } from "../src/auth/login-throttle";
+import {
+  CUSTOMER_IP_FAILURES_ACROSS_STORES,
+  CustomerLoginThrottle,
+} from "../src/customer/customer-login-throttle";
 import {
   hashPassword,
   passwordProblem,
@@ -77,6 +85,68 @@ describe("AccessTokens", () => {
   });
 });
 
+describe("AccessTokens for customers", () => {
+  const key = generateKeyPairSync("ed25519").privateKey;
+  const CUSTOMER: CustomerAccessClaims = {
+    sub: CLAIMS.sub,
+    typ: "customer",
+    tid: CLAIMS.tid!,
+    sid: CLAIMS.sid,
+  };
+
+  it("round-trips customer claims with their own audience and no mfa", () => {
+    let now = Date.UTC(2026, 9, 25, 12);
+    const tokens = new AccessTokens(key, () => now);
+    const { token, expiresIn } = tokens.issueCustomer(CUSTOMER);
+    assert.equal(expiresIn, 900);
+    assert.deepEqual(tokens.verifyCustomer(token), CUSTOMER);
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[1]!, "base64url").toString(),
+    );
+    assert.equal(payload.aud, "whiteoven-app");
+    assert.equal("mfa" in payload, false);
+    now += 900_000;
+    assert.equal(tokens.verifyCustomer(token), null);
+  });
+
+  it("never accepts a staff token as a customer one, nor the reverse", () => {
+    const tokens = new AccessTokens(key);
+    assert.equal(tokens.verifyCustomer(tokens.issue(CLAIMS).token), null);
+    assert.equal(tokens.verify(tokens.issueCustomer(CUSTOMER).token), null);
+    // Same claims, wrong audience either way.
+    assert.equal(
+      tokens.verify(
+        tokens.issueCustomer({
+          ...CLAIMS,
+        } as unknown as CustomerAccessClaims).token,
+      ),
+      null,
+    );
+    assert.equal(
+      tokens.verifyCustomer(
+        tokens.issue({ ...CUSTOMER } as unknown as StaffAccessClaims).token,
+      ),
+      null,
+    );
+  });
+
+  it("requires a tenant and valid ids", () => {
+    const tokens = new AccessTokens(key);
+    for (const bad of [
+      { ...CUSTOMER, tid: null },
+      { ...CUSTOMER, tid: "" },
+      { ...CUSTOMER, sid: "x" },
+      { ...CUSTOMER, typ: "staff" },
+    ])
+      assert.equal(
+        tokens.verifyCustomer(
+          tokens.issueCustomer(bad as unknown as CustomerAccessClaims).token,
+        ),
+        null,
+      );
+  });
+});
+
 describe("LoginThrottle", () => {
   it("locks after five account failures, doubling from 30 s up to 15 min", () => {
     let now = 0;
@@ -105,6 +175,62 @@ describe("LoginThrottle", () => {
     for (let i = 0; i < 6; i++) throttle.recordFailure("c@x.test", "10.0.0.3");
     throttle.recordSuccess("c@x.test");
     assert.equal(throttle.retryAfterMs("c@x.test", "10.0.0.4"), 0);
+  });
+});
+
+describe("CustomerLoginThrottle", () => {
+  const A = "11111111-1111-4111-8111-111111111111";
+  const B = "22222222-2222-4222-8222-222222222222";
+
+  it("locks an account in one store without touching the same e-mail in another", () => {
+    const throttle = new CustomerLoginThrottle(() => 0);
+    for (let i = 0; i < 6; i++)
+      throttle.recordFailure(A, "a@x.test", `10.0.0.${i}`);
+    assert.equal(throttle.retryAfterMs(A, "a@x.test", "10.9.9.9"), 30_000);
+    assert.equal(throttle.retryAfterMs(B, "a@x.test", "10.9.9.9"), 0);
+    throttle.recordFailure(A, "a@x.test", "10.0.0.7");
+    assert.equal(throttle.retryAfterMs(A, "a@x.test", "10.9.9.9"), 60_000);
+    throttle.recordSuccess(B, "a@x.test");
+    assert.equal(throttle.retryAfterMs(A, "a@x.test", "10.9.9.9"), 60_000);
+    throttle.recordSuccess(A, "a@x.test");
+    assert.equal(throttle.retryAfterMs(A, "a@x.test", "10.9.9.9"), 0);
+  });
+
+  it("limits an IP across accounts per store, not across stores", () => {
+    const throttle = new CustomerLoginThrottle(() => 0);
+    for (let i = 0; i < 31; i++)
+      throttle.recordFailure(A, `user${i}@x.test`, "10.0.0.1");
+    assert.equal(throttle.retryAfterMs(A, "new@x.test", "10.0.0.1"), 30_000);
+    assert.equal(throttle.retryAfterMs(B, "new@x.test", "10.0.0.1"), 0);
+    assert.equal(throttle.retryAfterMs(A, "new@x.test", "10.0.0.2"), 0);
+  });
+
+  it("slows down an IP everywhere once it spreads failures over many stores", () => {
+    const throttle = new CustomerLoginThrottle(() => 0);
+    // 20 failures per store (under the per-store 30) over enough stores to pass the ceiling.
+    const stores = Math.ceil((CUSTOMER_IP_FAILURES_ACROSS_STORES + 1) / 20);
+    for (let s = 0; s < stores; s++)
+      for (let i = 0; i < 20; i++)
+        throttle.recordFailure(`store-${s}`, `user${i}@x.test`, "10.0.0.1");
+    assert.ok(
+      throttle.retryAfterMs("fresh-store", "new@x.test", "10.0.0.1") > 0,
+    );
+    assert.equal(
+      throttle.retryAfterMs("fresh-store", "new@x.test", "10.0.0.2"),
+      0,
+    );
+  });
+
+  it("is apart from the staff throttle, whose limits stay 5 per account and 30 per IP", () => {
+    const customers = new CustomerLoginThrottle(() => 0);
+    const staff = new LoginThrottle(() => 0);
+    for (let i = 0; i < 40; i++)
+      customers.recordFailure(A, `user${i}@x.test`, "10.0.0.1");
+    assert.equal(staff.retryAfterMs("owner@x.test", "10.0.0.1"), 0);
+    for (let i = 0; i < 5; i++) staff.recordFailure("owner@x.test", "10.0.0.9");
+    assert.equal(staff.retryAfterMs("owner@x.test", "10.0.0.9"), 0);
+    staff.recordFailure("owner@x.test", "10.0.0.9");
+    assert.equal(staff.retryAfterMs("owner@x.test", "10.0.0.9"), 30_000);
   });
 });
 

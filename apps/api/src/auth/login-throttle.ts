@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 /** Failures tolerated per key before any delay. */
 export const FREE_FAILURES = { account: 5, ip: 30 } as const;
+export type FailureLimits = { account: number; ip: number };
 const BASE_LOCK_MS = 30_000;
 const MAX_LOCK_MS = 15 * 60_000;
 /** Failures older than this are forgotten. */
@@ -26,7 +27,11 @@ interface Entry {
 export class LoginThrottle {
   private readonly entries = new Map<string, Entry>();
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly now: () => number = Date.now,
+    /** Staff use the defaults; customers add a wider per-IP ceiling across stores (ADR 0017). */
+    private readonly limits: FailureLimits = FREE_FAILURES,
+  ) {}
 
   /** Milliseconds until a login may be attempted for this account and IP; 0 when allowed. */
   retryAfterMs(email: string, ip: string): number {
@@ -40,8 +45,8 @@ export class LoginThrottle {
   }
 
   recordFailure(email: string, ip: string): void {
-    this.bump(accountKey(email), FREE_FAILURES.account);
-    this.bump(ipKey(ip), FREE_FAILURES.ip);
+    this.bump(accountKey(email), this.limits.account);
+    this.bump(ipKey(ip), this.limits.ip);
   }
 
   /** A successful login clears the account's history; the IP's stays until it ages out. */

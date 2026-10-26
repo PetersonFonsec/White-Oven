@@ -5,6 +5,8 @@ export type TenantCapability =
   | "publicMenu"
   | "createOrder"
   | "customerAccount"
+  | "customerSignup"
+  | "customerAccountWrite"
   | "staffLogin"
   | "storeRead"
   | "catalogWrite"
@@ -47,6 +49,10 @@ export const TenantStatusPolicy = {
           actor === "CUSTOMER" &&
           ["ACTIVE", "SUSPENDED", "CLOSED"].includes(status)
         );
+      case "customerSignup":
+        return status === "ACTIVE" && actor === "PUBLIC";
+      case "customerAccountWrite":
+        return status === "ACTIVE" && actor === "CUSTOMER";
       case "staffLogin":
         return (
           isStaffRole(actor) &&

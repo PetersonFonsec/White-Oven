@@ -13,6 +13,7 @@ import { CatalogModule } from "./catalog/catalog.module";
 import { ImageModule } from "./images/image.module";
 import { StoreModule } from "./store/store.module";
 import { TeamModule } from "./team/team.module";
+import { CustomerModule } from "./customer/customer.module";
 
 @Module({})
 export class AppModule {
@@ -33,6 +34,7 @@ export class AppModule {
         ImageModule,
         StoreModule,
         TeamModule,
+        CustomerModule,
       ],
       controllers: [HealthController],
       providers: [

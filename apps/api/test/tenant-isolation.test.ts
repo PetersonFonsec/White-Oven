@@ -66,6 +66,7 @@ interface Fixture {
   imageAssetId: string;
   membershipId: string;
   inviteId: string;
+  addressId: string;
 }
 
 /** Staff membership cache TTL of this suite's server; production allows at most 60 s. */
@@ -189,7 +190,20 @@ describe("tenant isolation", databaseSuite, () => {
       );
       return { membershipId: membership!.id, inviteId: invite!.id };
     });
-    return { id, slug, flavorId: row!.id, ...catalog, ...team };
+    const addressId = await runInTenant(owner, id, async (em) => {
+      const [customer] = await em.execute<{ id: string }[]>(
+        `insert into customers (tenant_id,name,email,password_hash,privacy_policy_version,accepted_at)
+         values (?,?,?,'x','2026-10',now()) returning id`,
+        [id, `Cliente ${slug}`, `cliente-${slug}@isolamento.test`],
+      );
+      const [address] = await em.execute<{ id: string }[]>(
+        `insert into customer_addresses (tenant_id,customer_id,label,postal_code,street,number,district,city,state)
+         values (?,?,'Casa','01310100','Rua A','1','Centro','São Paulo','SP') returning id`,
+        [id, customer!.id],
+      );
+      return address!.id;
+    });
+    return { id, slug, flavorId: row!.id, ...catalog, ...team, addressId };
   };
 
   const appCount = async (sql: string, params: unknown[] = []) => {
@@ -260,6 +274,46 @@ describe("tenant isolation", databaseSuite, () => {
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
+  };
+
+  /** A new customer of `store`, signed up through the API, calling `path` with its token. */
+  const customerCall = async (
+    store: Fixture,
+    path: string,
+    method: string,
+    requestBody?: unknown,
+  ) => {
+    const registered = await call(
+      `/customer/stores/${store.slug}/auth/register`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "Atacante",
+          email: `atacante-${randomUUID()}@isolamento.test`,
+          password: STAFF_PASSWORD,
+          privacyPolicyVersion: "2026-10",
+        }),
+      },
+    );
+    const { accessToken } = await json(registered);
+    return call(path, {
+      method,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        ...(requestBody ? { "content-type": "application/json" } : {}),
+      },
+      ...(requestBody ? { body: JSON.stringify(requestBody) } : {}),
+    });
+  };
+  const addressLabel = async (store: Fixture) => {
+    const [row] = await runInTenant(owner, store.id, (em) =>
+      em.execute<{ label: string }[]>(
+        "select label from customer_addresses where id = ?",
+        [store.addressId],
+      ),
+    );
+    return row?.label;
   };
 
   describe("1. isolation matrix", () => {
@@ -467,6 +521,39 @@ describe("tenant isolation", databaseSuite, () => {
           `/admin/team/invites/${victim.inviteId}`,
           "DELETE",
         ),
+      "PUT /customer/stores/:storeSlug/me/addresses/:addressId": async (
+        attacker,
+        victim,
+      ) => {
+        const response = await customerCall(
+          attacker,
+          `/customer/stores/${attacker.slug}/me/addresses/${victim.addressId}`,
+          "PUT",
+          {
+            label: "hijacked",
+            postalCode: "01310100",
+            street: "Rua B",
+            number: "2",
+            district: "Centro",
+            city: "São Paulo",
+            state: "SP",
+          },
+        );
+        assert.equal(await addressLabel(victim), "Casa");
+        return response;
+      },
+      "DELETE /customer/stores/:storeSlug/me/addresses/:addressId": async (
+        attacker,
+        victim,
+      ) => {
+        const response = await customerCall(
+          attacker,
+          `/customer/stores/${attacker.slug}/me/addresses/${victim.addressId}`,
+          "DELETE",
+        );
+        assert.equal(await addressLabel(victim), "Casa");
+        return response;
+      },
     };
 
     it("lists every tenant route of the API (new routes must join the matrix)", () => {
@@ -521,6 +608,15 @@ describe("tenant isolation", databaseSuite, () => {
         // The store's own team and a new invite; covered in team.test.ts.
         "GET /admin/team",
         "POST /admin/team/invites",
+        // The customer's own account, sessions and addresses; covered in customer.test.ts.
+        "POST /customer/stores/:storeSlug/auth/register",
+        "POST /customer/stores/:storeSlug/auth/login",
+        "POST /customer/stores/:storeSlug/auth/refresh",
+        "POST /customer/stores/:storeSlug/auth/logout",
+        "GET /customer/stores/:storeSlug/me",
+        "DELETE /customer/stores/:storeSlug/me",
+        "GET /customer/stores/:storeSlug/me/addresses",
+        "POST /customer/stores/:storeSlug/me/addresses",
       ];
       assert.deepEqual(
         routes.filter((route) => !listings.includes(route)).sort(),
@@ -782,6 +878,9 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "catalog_pricing_policies", forced: true },
         { table: "catalog_simple_products", forced: true },
         { table: "catalog_versions", forced: true },
+        { table: "customer_addresses", forced: true },
+        { table: "customer_sessions", forced: true },
+        { table: "customers", forced: true },
         { table: "image_assets", forced: true },
         { table: "memberships", forced: true },
         { table: "orders", forced: true },

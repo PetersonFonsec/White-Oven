@@ -47,27 +47,85 @@ export async function runInTenant<T>(
  * For a staff actor the transaction first re-reads the session, the user and the membership with
  * row locks (FOR SHARE). The guard's check ran in an earlier transaction; this one closes the gap:
  * a logout, a disabled user, a revocation or a role change either committed before (the work is
- * refused) or waits until the work commits. No tenant work runs on an outdated role.
+ * refused) or waits until the work commits. No tenant work runs on an outdated role. A customer
+ * actor gets the same treatment for its session and account (M4.2): a logout or an account
+ * deletion is never overtaken by work started with the old token.
  */
 @Injectable()
 export class TenantTransactions {
   constructor(@Inject(MikroORM) private readonly orm: MikroORM) {}
 
+  /**
+   * `lockCustomer` (customer actors only) first takes the customer's transaction advisory lock,
+   * before the session check locks any row: writes that must not interleave for one account
+   * (address limit, account deletion, a new session) serialize there, always in the same order.
+   */
   async run<T>(
     work: (em: EntityManager) => Promise<T>,
-    options: { isolationLevel?: IsolationLevel } = {},
+    options: { isolationLevel?: IsolationLevel; lockCustomer?: boolean } = {},
   ): Promise<T> {
     const { tenantId, actor } = currentTenantContext();
+    const { lockCustomer: serialize, ...transaction } = options;
+    if (serialize && actor.type !== "customer")
+      throw new Error("lockCustomer requires a customer actor");
     return runInTenant(
       this.orm,
       tenantId,
       async (em) => {
         if (actor.type === "staff") await assertStaffStillAllowed(em, actor);
+        if (actor.type === "customer") {
+          if (serialize) await lockCustomer(em, actor.customerId);
+          await assertCustomerStillAllowed(em, actor);
+        }
         return work(em);
       },
-      options,
+      transaction,
     );
   }
+}
+
+/**
+ * Serializes, until commit or rollback, the transactions that change one customer's account:
+ * creating an address (the limit is counted under it), deleting the account and starting a
+ * session. It is the first lock those transactions take, before any row lock, so they never
+ * wait on each other in opposite orders. Other customers use other keys and never wait.
+ */
+export async function lockCustomer(
+  em: Pick<EntityManager, "execute">,
+  customerId: string,
+): Promise<void> {
+  await em.execute(
+    "select pg_advisory_xact_lock(hashtextextended('whiteoven:customer:' || ?, 0))",
+    [customerId],
+  );
+}
+
+/** Live, unexpired session of an ACTIVE customer, both rows locked FOR SHARE. */
+export async function customerSessionLive(
+  em: Pick<EntityManager, "execute">,
+  actor: Extract<TenantActor, { type: "customer" }>,
+): Promise<boolean> {
+  const rows = await em.execute(
+    `select 1 from customer_sessions s join customers c
+         on c.tenant_id = s.tenant_id and c.id = s.customer_id
+      where s.id = ? and s.customer_id = ? and s.revoked_at is null
+        and s.expires_at > now() and c.status = 'ACTIVE'
+        for share of s, c`,
+    [actor.sessionId, actor.customerId],
+  );
+  return rows.length === 1;
+}
+
+async function assertCustomerStillAllowed(
+  em: EntityManager,
+  actor: Extract<TenantActor, { type: "customer" }>,
+): Promise<void> {
+  if (!(await customerSessionLive(em, actor)))
+    throw new ApiError(
+      HttpStatus.UNAUTHORIZED,
+      "SESSION_INVALID",
+      "Session expired or revoked. Sign in again.",
+    );
 }
 
 async function assertStaffStillAllowed(
