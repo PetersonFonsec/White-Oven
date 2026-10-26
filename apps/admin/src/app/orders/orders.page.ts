@@ -11,7 +11,7 @@ import {
 } from "@angular/core";
 import { takeUntilDestroyed } from "@angular/core/rxjs-interop";
 import { interval } from "rxjs";
-import { errorMessage } from "../core/api";
+import { apiStatus, errorMessage } from "../core/api";
 import {
   isUncertainTransitionError,
   OrdersApi,
@@ -80,6 +80,35 @@ const PAYMENT_LABELS: Record<string, string> = {
       @if (error()) {
         <p class="status--error" role="alert">{{ error() }}</p>
       }
+      @if (pendingOrderIds().length > 0) {
+        <aside class="pending-intents" aria-label="Operações pendentes">
+          <h2>Operações aguardando confirmação</h2>
+          @for (orderId of pendingOrderIds(); track orderId) {
+            <div class="pending-intent" role="status">
+              <span>{{ pendingOrderLabel(orderId) }}</span>
+              @if (api.requiresReconciliation(orderId)) {
+                <button
+                  class="button button--secondary"
+                  type="button"
+                  [disabled]="busyId() === orderId"
+                  (click)="reconcilePending(orderId)"
+                >
+                  Reconciliar estado
+                </button>
+              } @else {
+                <button
+                  class="button"
+                  type="button"
+                  [disabled]="busyId() === orderId"
+                  (click)="retryPending(orderId)"
+                >
+                  Verificar / repetir ação
+                </button>
+              }
+            </div>
+          }
+        </aside>
+      }
       @if (loading() && orders().length === 0) {
         <p role="status">Carregando pedidos…</p>
       }
@@ -138,17 +167,9 @@ const PAYMENT_LABELS: Record<string, string> = {
                 }
                 @if (api.hasUncertainIntent(order.id)) {
                   <p role="status">
-                    A confirmação desta ação não chegou. Repita para verificar
-                    com segurança.
+                    A confirmação desta ação não chegou. Consulte as operações
+                    pendentes para reconciliar ou repetir com segurança.
                   </p>
-                  <button
-                    class="button"
-                    type="button"
-                    [disabled]="busyId() === order.id"
-                    (click)="retry(order)"
-                  >
-                    Verificar / repetir ação
-                  </button>
                 }
                 @if (
                   order.status === "PLACED" ||
@@ -445,6 +466,26 @@ const PAYMENT_LABELS: Record<string, string> = {
       background: var(--wo-color-orangeSoft);
       border-radius: var(--wo-radius-small);
     }
+    .pending-intents {
+      display: grid;
+      gap: var(--wo-spacing-2);
+      margin-bottom: var(--wo-spacing-4);
+      padding: var(--wo-spacing-3);
+      border: 1px solid var(--wo-color-border);
+      border-radius: var(--wo-radius-small);
+      background: var(--wo-color-orangeSoft);
+    }
+    .pending-intents h2 {
+      margin: 0;
+      font-size: 1rem;
+    }
+    .pending-intent {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--wo-spacing-3);
+      flex-wrap: wrap;
+    }
     .pagination {
       display: flex;
       gap: var(--wo-spacing-3);
@@ -534,6 +575,7 @@ const PAYMENT_LABELS: Record<string, string> = {
       .orders-heading,
       .board,
       .new-orders,
+      .pending-intents,
       .status--error {
         display: none !important;
       }
@@ -580,6 +622,10 @@ export class OrdersPage {
       orders: this.orders().filter((order) => order.status === column.id),
     })),
   );
+  protected readonly pendingOrderIds = computed(() => {
+    this.api.pendingVersion();
+    return this.api.pendingOrderIds();
+  });
 
   constructor() {
     effect(() => {
@@ -647,41 +693,41 @@ export class OrdersPage {
 
   private async refreshLoadedPages(): Promise<void> {
     const version = this.mutationVersion;
-    const requests = [
-      ...this.activeCursors.map((cursor) =>
-        this.api
-          .list("active", cursor)
-          .then((page) => ({ section: "active" as const, page })),
-      ),
-      ...this.closedCursors.map((cursor) =>
-        this.api
-          .list("closed", cursor)
-          .then((page) => ({ section: "closed" as const, page })),
-      ),
-    ];
-    const results = await Promise.allSettled(requests);
+    const results = await Promise.allSettled([
+      this.refreshSection("active", this.activeCursors.length),
+      this.refreshSection("closed", this.closedCursors.length),
+    ]);
     if (this.destroyed || this.busyId() || version !== this.mutationVersion) {
       this.refreshQueued = true;
       return;
     }
-    const successful = results
-      .filter(
-        (
-          result,
-        ): result is PromiseFulfilledResult<
-          Awaited<(typeof requests)[number]>
-        > => result.status === "fulfilled",
-      )
-      .map((result) => result.value);
+    const successfulSections = results.filter(
+      (
+        result,
+      ): result is PromiseFulfilledResult<{
+        section: "active" | "closed";
+        pages: {
+          cursor: number | undefined;
+          page: Awaited<ReturnType<OrdersApi["list"]>>;
+        }[];
+      }> => result.status === "fulfilled",
+    );
     const failures = results.filter((result) => result.status === "rejected");
     if (failures.length)
       this.error.set(
         errorMessage((failures[0] as PromiseRejectedResult).reason),
       );
     else this.error.set("");
-    if (!successful.length) return;
+    if (!successfulSections.length) return;
+    const successful = successfulSections.flatMap(
+      (result) => result.value.pages,
+    );
     const incoming = successful.flatMap(({ page }) => page.orders);
-    const map = new Map(this.orders().map((order) => [order.id, order]));
+    // A partial response cannot prove that missing rows changed status. Retain the previous
+    // snapshot until every loaded page in both independent queues has been reconciled.
+    const map = new Map(
+      failures.length ? this.orders().map((order) => [order.id, order]) : [],
+    );
     for (const order of incoming) map.set(order.id, order);
     const merged = [...map.values()];
     const known = new Set(this.orders().map((order) => order.id));
@@ -706,15 +752,68 @@ export class OrdersPage {
     merged.sort((a, b) => a.number - b.number);
     this.orders.set(merged);
     const selectedId = this.selected()?.id;
-    if (selectedId)
-      this.selected.set(
-        merged.find((order) => order.id === selectedId) ?? null,
-      );
-    for (const result of successful) {
-      if (result.section === "active" && this.activeCursors.length === 1)
-        this.activeCursor.set(result.page.nextCursor);
-      if (result.section === "closed" && this.closedCursors.length === 1)
-        this.closedCursor.set(result.page.nextCursor);
+    if (selectedId) {
+      const selectedOrder = merged.find((order) => order.id === selectedId);
+      if (selectedOrder) this.selected.set(selectedOrder);
+      else if (!failures.length)
+        await this.reconcileSelected(selectedId, version);
+    }
+    for (const result of successfulSections.map((item) => item.value)) {
+      const cursors = result.pages.map((page) => page.cursor);
+      const lastCursor = result.pages.at(-1)?.page.nextCursor ?? null;
+      if (result.section === "active") {
+        this.activeCursors = cursors.length ? cursors : [undefined];
+        this.activeCursor.set(lastCursor);
+      } else {
+        this.closedCursors = cursors.length ? cursors : [undefined];
+        this.closedCursor.set(lastCursor);
+      }
+    }
+  }
+
+  private async refreshSection(
+    section: "active" | "closed",
+    loadedPageCount: number,
+  ): Promise<{
+    section: "active" | "closed";
+    pages: {
+      cursor: number | undefined;
+      page: Awaited<ReturnType<OrdersApi["list"]>>;
+    }[];
+  }> {
+    const pages: {
+      cursor: number | undefined;
+      page: Awaited<ReturnType<OrdersApi["list"]>>;
+    }[] = [];
+    let cursor: number | undefined;
+    for (let index = 0; index < loadedPageCount; index++) {
+      const page = await this.api.list(section, cursor);
+      pages.push({ cursor, page });
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+    }
+    return { section, pages };
+  }
+
+  private async reconcileSelected(
+    orderId: string,
+    version: number,
+  ): Promise<void> {
+    try {
+      const order = await this.api.get(orderId);
+      if (
+        !this.destroyed &&
+        version === this.mutationVersion &&
+        this.selected()?.id === orderId
+      )
+        this.selected.set(order);
+    } catch (error) {
+      if (this.destroyed || version !== this.mutationVersion) return;
+      if (apiStatus(error) === 404) {
+        if (this.selected()?.id === orderId) this.selected.set(null);
+      } else {
+        this.error.set(errorMessage(error));
+      }
     }
   }
 
@@ -921,11 +1020,21 @@ export class OrdersPage {
     }
   }
   protected async retry(order: StaffOrder): Promise<void> {
+    await this.retryPending(order.id);
+  }
+
+  protected pendingOrderLabel(orderId: string): string {
+    const order = this.orders().find((item) => item.id === orderId);
+    return order ? `Pedido #${order.number}` : `Pedido …${orderId.slice(-6)}`;
+  }
+
+  protected async retryPending(orderId: string): Promise<void> {
     if (this.busyId()) return;
     this.mutationVersion++;
-    this.busyId.set(order.id);
+    this.busyId.set(orderId);
     try {
-      await this.api.retryPending(order.id);
+      const result = await this.api.retryPending(orderId);
+      this.replaceOrder(result.order);
       this.error.set("");
     } catch (error) {
       if (isUncertainTransitionError(error))
@@ -938,6 +1047,34 @@ export class OrdersPage {
       this.refreshQueued = true;
       await this.load();
     }
+  }
+
+  protected async reconcilePending(orderId: string): Promise<void> {
+    if (this.busyId()) return;
+    this.mutationVersion++;
+    this.busyId.set(orderId);
+    try {
+      const result = await this.api.reconcilePending(orderId);
+      this.replaceOrder(result.order);
+      this.error.set(
+        result.canRetry
+          ? "O pedido ainda está no estado original. A operação pode ser repetida com a mesma chave."
+          : "O pedido mudou de estado. O quadro foi atualizado; confira antes de iniciar outra ação.",
+      );
+    } catch (error) {
+      this.error.set(errorMessage(error));
+    } finally {
+      this.busyId.set(null);
+      this.refreshQueued = true;
+      await this.load();
+    }
+  }
+
+  private replaceOrder(order: StaffOrder): void {
+    const byId = new Map(this.orders().map((item) => [item.id, item]));
+    byId.set(order.id, order);
+    this.orders.set([...byId.values()].sort((a, b) => a.number - b.number));
+    if (this.selected()?.id === order.id) this.selected.set(order);
   }
   protected print(order: StaffOrder): void {
     this.printOrder.set(order);

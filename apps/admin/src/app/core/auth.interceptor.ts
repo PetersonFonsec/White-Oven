@@ -10,7 +10,10 @@ import { API, CREDENTIAL_ROUTES, apiErrorCode } from "./api";
 import { type Credentials, Session } from "./session";
 
 const sameSession = (a: Credentials, b: Credentials) =>
-  a.lineage === b.lineage && a.tenantId === b.tenantId;
+  a.lineage === b.lineage &&
+  a.tenantId === b.tenantId &&
+  a.userId === b.userId &&
+  a.sessionId === b.sessionId;
 
 /**
  * Adds the in-memory access token to API calls. An expired token (401 `UNAUTHORIZED`) is renewed

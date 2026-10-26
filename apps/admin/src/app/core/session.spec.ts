@@ -22,6 +22,8 @@ import {
 
 const CENTRO = "11111111-1111-4111-8111-111111111111";
 const BAIRRO = "22222222-2222-4222-8222-222222222222";
+const STAFF_ID = "33333333-3333-4333-8333-333333333333";
+const SESSION_ID = "44444444-4444-4444-8444-444444444444";
 const tokens = (accessToken: string, activeTenantId: string | null = null) => ({
   accessToken,
   tokenType: "Bearer",
@@ -103,7 +105,12 @@ describe("Session", () => {
       me,
       tenants,
       flush: () => {
-        me.flush({ tenantId, role: "OWNER" });
+        me.flush({
+          staffUserId: STAFF_ID,
+          sessionId: SESSION_ID,
+          tenantId,
+          role: "OWNER",
+        });
         tenants.flush([choice(CENTRO, "Centro"), choice(BAIRRO, "Bairro")]);
       },
     };
@@ -206,7 +213,12 @@ describe("Session", () => {
       refresh.flush(tokens("token-3", CENTRO));
       await notOperator("token-3");
       const loads = await storeLoads(CENTRO, "token-3");
-      loads.me.flush({ tenantId: CENTRO, role: "MANAGER" });
+      loads.me.flush({
+        staffUserId: STAFF_ID,
+        sessionId: SESSION_ID,
+        tenantId: CENTRO,
+        role: "MANAGER",
+      });
       await drain();
       // Half-loaded: nothing is visible yet.
       expect(session.signedIn()).toBe(false);

@@ -133,6 +133,11 @@ export class TenantChoiceBody {
 export class AdminMeBody {
   @ApiProperty({ format: "uuid" })
   staffUserId!: string;
+  @ApiProperty({
+    format: "uuid",
+    description: "Verified staff session identifier",
+  })
+  sessionId!: string;
   @ApiProperty({ format: "uuid" })
   tenantId!: string;
   @ApiProperty({ enum: ["OWNER", "MANAGER", "STAFF"] })
@@ -405,6 +410,7 @@ export class AdminMeController {
     // StaffGuard verified the ACTIVE membership in the token's tenant on this request.
     return {
       staffUserId: staff.access.staffUserId,
+      sessionId: staff.access.sessionId,
       tenantId: staff.access.tenantId!,
       role: staff.access.role!,
     };
