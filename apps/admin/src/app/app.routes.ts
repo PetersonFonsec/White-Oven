@@ -112,6 +112,20 @@ export const routes: Routes = [
           import("./orders/orders.page").then((m) => m.OrdersPage),
       },
       {
+        path: "historico",
+        title: "Histórico · WhiteOven",
+        data: { roles: rolesOf("historico"), title: "Histórico" },
+        loadComponent: () =>
+          import("./orders/order-history.page").then((m) => m.OrderHistoryPage),
+      },
+      {
+        path: "relatorio",
+        title: "Relatório diário · WhiteOven",
+        data: { roles: rolesOf("relatorio"), title: "Relatório diário" },
+        loadComponent: () =>
+          import("./reports/daily-report.page").then((m) => m.DailyReportPage),
+      },
+      {
         path: "configuracoes",
         title: "Configurações · WhiteOven",
         data: { roles: rolesOf("configuracoes"), title: "Configurações" },

@@ -12,6 +12,7 @@ import {
 import { takeUntilDestroyed } from "@angular/core/rxjs-interop";
 import { interval } from "rxjs";
 import { apiStatus, errorMessage } from "../core/api";
+import { PAYMENT_LABELS, itemDetails, itemName } from "./order-labels";
 import {
   isUncertainTransitionError,
   OrdersApi,
@@ -38,12 +39,6 @@ const REASONS = [
   { code: "SUSPECTED_FRAUD", label: "Suspeita de fraude" },
   { code: "OTHER", label: "Outro motivo" },
 ];
-
-const PAYMENT_LABELS: Record<string, string> = {
-  CASH: "Dinheiro",
-  CARD_ON_DELIVERY: "Cartão na entrega ou retirada",
-  PIX_ON_DELIVERY: "Pix presencial",
-};
 
 @Component({
   selector: "wo-orders-page",
@@ -908,42 +903,10 @@ export class OrdersPage {
     return REASONS.find((reason) => reason.code === code)?.label ?? code;
   }
   protected itemName(item: StaffOrder["items"][number]): string {
-    const snap = item.snapshot;
-    if (item.kind === "PRODUCT") {
-      const product = snap["product"] as { name?: unknown } | undefined;
-      return typeof product?.name === "string" ? product.name : "Produto";
-    }
-    const size = snap["size"] as { name?: unknown } | undefined;
-    const flavors = snap["flavors"] as
-      Record<string, { name?: unknown } | undefined> | undefined;
-    const names = [flavors?.["LEFT"]?.name, flavors?.["RIGHT"]?.name].filter(
-      (name): name is string => typeof name === "string",
-    );
-    return `${typeof size?.name === "string" ? size.name : "Pizza"} · ${names.join(" / ") || "Sabores"}`;
+    return itemName(item);
   }
   protected itemDetails(item: StaffOrder["items"][number]): string {
-    if (item.kind !== "PIZZA") return "";
-    const snapshot = item.snapshot;
-    const crust = snapshot["crust"] as { name?: unknown } | null;
-    const extras = snapshot["extras"] as { name?: unknown }[] | undefined;
-    const removals = snapshot["removals"] as { name?: unknown }[] | undefined;
-    return [
-      typeof crust?.name === "string" ? `Borda: ${crust.name}` : "",
-      extras?.length
-        ? `Adicionais: ${extras
-            .map((item) => item.name)
-            .filter((name): name is string => typeof name === "string")
-            .join(", ")}`
-        : "",
-      removals?.length
-        ? `Sem: ${removals
-            .map((item) => item.name)
-            .filter((name): name is string => typeof name === "string")
-            .join(", ")}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    return itemDetails(item);
   }
 
   protected async advance(order: StaffOrder): Promise<void> {

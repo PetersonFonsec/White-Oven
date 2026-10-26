@@ -24,6 +24,8 @@ test("an owner signs in, picks a store and keeps the session after a reload", as
   await expect(nav.getByRole("link")).toHaveText([
     "Início",
     "Pedidos",
+    "Histórico",
+    "Relatório",
     "Cardápio",
     "Configurações",
     "Marca",
@@ -150,8 +152,14 @@ test("staff see only their sections and cannot open others by URL", async ({
   // A single store is entered directly.
   await expect(page).toHaveURL(/\/loja$/);
   const nav = page.getByRole("navigation", { name: "Seções da loja" });
-  await expect(nav.getByRole("link")).toHaveText(["Início", "Pedidos"]);
+  await expect(nav.getByRole("link")).toHaveText([
+    "Início",
+    "Pedidos",
+    "Histórico",
+  ]);
   await page.goto("/loja/cardapio");
+  await expect(page).toHaveURL(/\/loja$/);
+  await page.goto("/loja/relatorio");
   await expect(page).toHaveURL(/\/loja$/);
   await page.goto("/plataforma");
   await expect(page).toHaveURL(/\/loja$/);

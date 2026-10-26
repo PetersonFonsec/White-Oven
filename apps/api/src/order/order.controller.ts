@@ -37,6 +37,19 @@ import {
   type RejectionReason,
 } from "./order-lifecycle-rules";
 import { AdminRoute } from "../auth/staff.guard";
+import { OrderHistoryService } from "./order-history.service";
+import {
+  DAILY_REPORT_MAX_DAYS,
+  INCIDENT_REPORTERS,
+  INCIDENT_TEXT_MAX_LENGTH,
+  INCIDENT_TYPES,
+  INCIDENT_WINDOW_DAYS,
+  ORDER_HISTORY_PAGE_SIZE,
+  parseDailyReportQuery,
+  parseOrderHistoryQuery,
+  validateIncident,
+  validateResolution,
+} from "./order-history-rules";
 
 class QuoteBody {
   @ApiProperty({ enum: FULFILLMENTS }) fulfillment!: string;
@@ -88,6 +101,26 @@ class TransitionBody {
   reasonCode?: RejectionReason;
   @ApiPropertyOptional({ maxLength: 280 }) reasonText?: string;
 }
+
+class IncidentBody {
+  @ApiProperty({ enum: INCIDENT_TYPES }) type!: string;
+  @ApiProperty({ minLength: 1, maxLength: INCIDENT_TEXT_MAX_LENGTH })
+  description!: string;
+  @ApiProperty({
+    enum: INCIDENT_REPORTERS,
+    description: "CUSTOMER when the customer told the store; STAFF otherwise",
+  })
+  reportedBy!: string;
+}
+
+class ResolutionBody {
+  @ApiPropertyOptional({ maxLength: INCIDENT_TEXT_MAX_LENGTH, nullable: true })
+  resolutionNote?: string | null;
+}
+
+/** A request id worth keeping in the audit, or null. */
+const auditRequestId = (value: string | undefined) =>
+  typeof value === "string" && UUID.test(value) ? value : null;
 
 function parseTransition(raw: unknown): TransitionBody {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
@@ -218,7 +251,77 @@ export class OrderController {
 @ApiTags("admin")
 @Controller("admin/orders")
 export class AdminOrderController {
-  constructor(private readonly orders: OrderService) {}
+  constructor(
+    private readonly orders: OrderService,
+    private readonly orderHistory: OrderHistoryService,
+  ) {}
+
+  @Post(":orderId/incidents")
+  @AdminRoute("OWNER", "MANAGER", "STAFF")
+  @ApiBody({ type: IncidentBody })
+  @ApiHeader({
+    name: "Idempotency-Key",
+    required: true,
+    description:
+      "A UUID per incident the person records; a retry reuses it with the same body.",
+  })
+  @ApiOperation({
+    summary: "Record an incident on an order",
+    description: `201 with the new incident; 200 with the same incident when the key and body repeat (nothing else is written). 409 IDEMPOTENCY_CONFLICT when the key was used for another body on this order. The order's state and values never change. Ended orders accept incidents for ${INCIDENT_WINDOW_DAYS} days (422 INCIDENT_WINDOW_CLOSED after). A suspended store accepts them from the OWNER only (403 TENANT_NOT_ACTIVE).`,
+  })
+  async reportIncident(
+    @Param("orderId") orderId: string,
+    @Body() raw: unknown,
+    @Headers("idempotency-key") key: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+    @Headers("x-request-id") requestId?: string,
+  ) {
+    const result = validateIncident(raw);
+    const paths = [
+      ...(UUID.test(orderId) ? [] : ["orderId"]),
+      ...(typeof key === "string" && UUID.test(key) ? [] : ["Idempotency-Key"]),
+      ...(result.ok ? [] : result.paths),
+    ];
+    if (paths.length || !result.ok) throw invalid(paths);
+    const { created, incident } = await this.orderHistory.reportIncident(
+      orderId,
+      result.value,
+      key!.toLowerCase(),
+      auditRequestId(requestId),
+    );
+    res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
+    return incident;
+  }
+
+  @Post(":orderId/incidents/:incidentId/resolve")
+  @AdminRoute("OWNER", "MANAGER", "STAFF")
+  @HttpCode(HttpStatus.OK)
+  @ApiBody({ type: ResolutionBody })
+  @ApiOperation({
+    summary: "Resolve an open incident",
+    description:
+      "Once: a resolved incident is 409 INCIDENT_ALREADY_RESOLVED and keeps its first resolution.",
+  })
+  resolveIncident(
+    @Param("orderId") orderId: string,
+    @Param("incidentId") incidentId: string,
+    @Body() raw: unknown,
+    @Headers("x-request-id") requestId?: string,
+  ) {
+    const ids = [
+      ...(UUID.test(orderId) ? [] : ["orderId"]),
+      ...(UUID.test(incidentId) ? [] : ["incidentId"]),
+    ];
+    if (ids.length) throw invalid(ids);
+    const result = validateResolution(raw);
+    if (!result.ok) throw invalid(result.paths);
+    return this.orderHistory.resolveIncident(
+      orderId,
+      incidentId,
+      result.value.resolutionNote,
+      auditRequestId(requestId),
+    );
+  }
 
   @Get()
   @AdminRoute("OWNER", "MANAGER", "STAFF")
@@ -242,9 +345,30 @@ export class AdminOrderController {
     return this.orders.listForStaff(section as StaffOrderSection, cursor);
   }
 
+  // Declared before ":orderId" so "history" is not read as an order id.
+  @Get("history")
+  @AdminRoute("OWNER", "MANAGER", "STAFF")
+  @ApiOperation({
+    summary: "Search the order history of the active store",
+    description: `Newest first, ${ORDER_HISTORY_PAGE_SIZE} per page; pass nextCursor as cursor for the next page. Optional filters: from and to (YYYY-MM-DD, the store's local days of placedAt, both included), status, fulfillment and number. Unknown or malformed filters are 422 VALIDATION_FAILED.`,
+  })
+  history(
+    @Query() query: Record<string, unknown>,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = parseOrderHistoryQuery(query);
+    if (!result.ok) throw invalid(result.paths);
+    res.setHeader("Cache-Control", "no-store");
+    return this.orderHistory.history(result.value);
+  }
+
   @Get(":orderId")
   @AdminRoute("OWNER", "MANAGER", "STAFF")
-  @ApiOperation({ summary: "Read an order in the active store" })
+  @ApiOperation({
+    summary: "Read an order in the active store",
+    description:
+      "With its items, every transition with the author's name for staff changes, and its incidents.",
+  })
   get(
     @Param("orderId") orderId: string,
     @Res({ passthrough: true }) res: Response,
@@ -282,5 +406,27 @@ export class AdminOrderController {
       idempotencyKey: key.toLowerCase(),
       requestId,
     });
+  }
+}
+
+@ApiTags("admin")
+@Controller("admin/reports")
+export class AdminReportController {
+  constructor(private readonly history: OrderHistoryService) {}
+
+  @Get("daily")
+  @AdminRoute("OWNER")
+  @ApiOperation({
+    summary: "Daily sales of the active store",
+    description: `Count and sum of COMPLETED orders per local day of completion, split by fulfillment and payment method, from and to included (YYYY-MM-DD, at most ${DAILY_REPORT_MAX_DAYS} days). Rejected and canceled orders never count. OWNER only.`,
+  })
+  daily(
+    @Query() query: Record<string, unknown>,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = parseDailyReportQuery(query);
+    if (!result.ok) throw invalid(result.paths);
+    res.setHeader("Cache-Control", "no-store");
+    return this.history.dailyReport(result.value);
   }
 }

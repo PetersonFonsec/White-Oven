@@ -1,6 +1,6 @@
 # Ciclo de vida do pedido
 
-Status: especificação de produto M0.3; checkout e criação estão implementados em M4.3, máquina de estados/transições em M4.4 e quadro da equipe em desenvolvimento no M4.5. Define carrinho, checkout, estados, transições, cancelamento, histórico, ocorrências e regras de funcionamento da loja. Entidades em [domain-model](../architecture/domain-model.md); preços em [pizza-builder-rules](pizza-builder-rules.md).
+Status: especificação de produto M0.3; checkout e criação estão implementados em M4.3, máquina de estados/transições em M4.4, quadro da equipe em M4.5 e histórico, relatório diário e ocorrências em M4.6. Define carrinho, checkout, estados, transições, cancelamento, histórico, ocorrências e regras de funcionamento da loja. Entidades em [domain-model](../architecture/domain-model.md); preços em [pizza-builder-rules](pizza-builder-rules.md).
 
 ## Carrinho
 
@@ -187,11 +187,28 @@ O cliente vê um texto amigável derivado do código, nunca o texto interno de `
 - Cliente: lista dos próprios pedidos, mais recentes primeiro, com paginação por cursor, detalhe com itens (do snapshot), totais e linha do tempo. Botão “pedir novamente” recria o carrinho com as configurações, revalidadas no catálogo atual.
 - Equipe: listagem com filtros por data, estado, modo e número; detalhe com histórico completo de transições e autores.
 - Relatório diário simples: quantidade e soma de `COMPLETED` por dia, separados por modo e forma de pagamento.
+- Implementação da equipe (M4.6, [ADR 0019](../adr/0019-order-history-report-incidents.md)):
+  - `GET /v1/admin/orders/history` lista 50 pedidos por página, do número mais alto para o mais baixo, com `nextCursor`. Filtros opcionais: `from` e `to` (dias locais da loja do `placedAt`, inclusive), `status`, `fulfillment` e `number`. Filtro desconhecido ou malformado é `422`.
+  - O detalhe (`GET /v1/admin/orders/{id}`) traz o autor (`actorName`) de cada transição da equipe e as ocorrências.
+  - `GET /v1/admin/reports/daily?from&to` é só do OWNER: até 31 dias, todos os dias do período, contando cada pedido no dia local da conclusão.
 - Retenção: pedidos são mantidos enquanto o tenant estiver ativo e pelo prazo fiscal aplicável depois do encerramento (questão jurídica aberta). Exclusão de conta do cliente anonimiza os dados pessoais do pedido.
 
 ## Ocorrências
 
 - Registradas pela equipe em qualquer pedido, até 30 dias depois de terminal, com tipo, descrição e estado (`OPEN`/`RESOLVED`).
+- Implementação (M4.6, [ADR 0019](../adr/0019-order-history-report-incidents.md)):
+  - `POST /v1/admin/orders/{id}/incidents` registra uma ocorrência e exige o cabeçalho `Idempotency-Key` (UUID, um por intenção de registro, repetido nos retries):
+    - primeira vez: `201` com a ocorrência;
+    - mesma chave e mesmo corpo no mesmo pedido: `200` com a ocorrência original, sem segunda ocorrência nem segundo evento de auditoria, mesmo depois do prazo de 30 dias;
+    - mesma chave com outro corpo: `409 IDEMPOTENCY_CONFLICT`;
+    - chave ausente ou que não é UUID: `422 VALIDATION_FAILED`;
+    - a chave vale por loja e pedido e não se mistura com as chaves de criação de pedido nem de transição.
+  - Depois do prazo, um registro novo é `422 INCIDENT_WINDOW_CLOSED`.
+  - `POST .../incidents/{incidentId}/resolve` resolve uma vez, com nota opcional; uma segunda vez é `409 INCIDENT_ALREADY_RESOLVED`.
+  - Loja suspensa: só o OWNER registra ou resolve.
+  - O banco não permite apagar, reabrir nem reescrever uma ocorrência.
+  - A auditoria (`order.incident_reported` e `order.incident_resolved`) é gravada por gatilho na mesma transação, a partir da própria linha: autor, pedido e tipo, nunca a descrição nem a nota. O banco só aceita a escrita quando o autor da linha é a pessoa da sessão de equipe ativa da transação, com vínculo `ACTIVE` na loja da linha.
+  - O painel guarda a intenção de registro (com a chave) no `sessionStorage` da sessão, como o quadro da M4.5. Se a resposta se perde, nada é reenviado sozinho: o painel mostra o registro pendente e a pessoa usa "Verificar / repetir registro", que repete com a mesma chave.
 - Não mudam o estado nem os valores do pedido e não geram reembolso; servem para atendimento e histórico.
 - O cliente relata problemas pelos contatos da pizzaria; relato pelo app é questão aberta (OL-Q3).
 - Não são ferramenta de logística: sem rastreio, roteirização ou gestão de entregador.
