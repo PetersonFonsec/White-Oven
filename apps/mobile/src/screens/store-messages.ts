@@ -5,8 +5,11 @@ export interface StoreMessage {
   screen: "store" | "closed" | "unavailable";
   title: string;
   body: string;
-  /** Shown above the screen when the app could not reach the API. */
-  offlineNotice: string | null;
+  /**
+   * Non-blocking notice above the screen: no answer from the API at all, or the store answered
+   * but its name and colors could not be updated.
+   */
+  notice: string | null;
 }
 
 function localTime(instant: string, timezone: string): string | null {
@@ -25,19 +28,23 @@ function localTime(instant: string, timezone: string): string | null {
 
 /** Texts of the first screen, in Portuguese, from what `loadStore` found. Pure, for tests. */
 export function storeMessage(view: StoreView): StoreMessage {
-  const offlineNotice =
-    view.availability.kind !== "offline"
-      ? null
-      : view.brandSource === "manifest"
+  const notice =
+    view.availability.kind === "offline"
+      ? view.brandSource === "manifest"
         ? "Sem conexão com a pizzaria. Confira a internet e tente de novo."
-        : "Sem conexão. Mostrando a última versão salva da pizzaria.";
+        : view.brandSource === "cache"
+          ? "Sem conexão. Mostrando a última versão salva da pizzaria."
+          : "A conexão com a pizzaria falhou. Tente atualizar em instantes."
+      : view.brandStale
+        ? "Não conseguimos atualizar a aparência da pizzaria agora. Tente atualizar em instantes."
+        : null;
   switch (view.availability.kind) {
     case "open":
       return {
         screen: "store",
         title: view.name,
         body: "Aberta agora.",
-        offlineNotice,
+        notice,
       };
     case "closed": {
       const { reason, pausedUntil, timezone } = view.availability;
@@ -54,7 +61,7 @@ export function storeMessage(view: StoreView): StoreMessage {
               ? `${view.name} pausou os pedidos até ${until}.`
               : `${view.name} pausou os pedidos por enquanto.`
             : `${view.name} está fora do horário de funcionamento.`,
-        offlineNotice,
+        notice,
       };
     }
     case "unavailable":
@@ -62,14 +69,14 @@ export function storeMessage(view: StoreView): StoreMessage {
         screen: "unavailable",
         title: "Pizzaria indisponível",
         body: `${view.name} não está recebendo pedidos por este aplicativo no momento.`,
-        offlineNotice,
+        notice,
       };
     case "offline":
       return {
         screen: "store",
         title: view.name,
         body: "Não foi possível confirmar se a loja está aberta.",
-        offlineNotice,
+        notice,
       };
   }
 }

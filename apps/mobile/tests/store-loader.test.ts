@@ -5,6 +5,7 @@ import {
   type BrandCache,
   type LoadStoreOptions,
   cachedBrand,
+  createStoreRefresher,
   loadStore,
 } from "../src/brand/store-loader.ts";
 import { storeMessage } from "../src/screens/store-messages.ts";
@@ -49,14 +50,26 @@ const memoryCache = (initial: string | null = null) => {
   return cache satisfies BrandCache;
 };
 
-type Route = { status: number; body?: unknown } | "offline";
+type Route = { status: number; body?: unknown } | "offline" | "hang";
 /** A fetch double answering the profile and the status routes; records the URLs it got. */
-const api = (routes: { profile: Route; status: Route }) => {
+const api = (
+  routes: { profile: Route; status: Route },
+  /** Holds every answer until it resolves, to interleave loads in a test. */
+  gate: Promise<void> = Promise.resolve(),
+) => {
   const urls: string[] = [];
-  const fetch = (async (input: RequestInfo | URL) => {
+  const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     urls.push(url);
     const route = url.endsWith("/status") ? routes.status : routes.profile;
+    if (route === "hang")
+      return new Promise((_resolve, reject) =>
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")),
+        ),
+      );
+    await gate;
+    if (init?.signal?.aborted) throw new DOMException("aborted", "AbortError");
     if (route === "offline") throw new TypeError("Network request failed");
     return new Response(JSON.stringify(route.body ?? {}), {
       status: route.status,
@@ -93,6 +106,7 @@ describe("store brand and status", () => {
       colors: RED,
       brandVersion: 3,
       brandSource: "api",
+      brandStale: false,
       availability: { kind: "open" },
     });
     assert.deepEqual(await cachedBrand(cache, SLUG), {
@@ -104,7 +118,7 @@ describe("store brand and status", () => {
       screen: "store",
       title: "Forno do Bairro Oficial",
       body: "Aberta agora.",
-      offlineNotice: null,
+      notice: null,
     });
   });
 
@@ -123,6 +137,7 @@ describe("store brand and status", () => {
       colors: RED,
       brandVersion: 3,
       brandSource: "cache",
+      brandStale: true,
       availability: { kind: "offline" },
     });
     assert.equal(
@@ -130,14 +145,14 @@ describe("store brand and status", () => {
       1,
       "an offline start does not rewrite the cache",
     );
-    assert.match(storeMessage(view).offlineNotice!, /última versão salva/);
+    assert.match(storeMessage(view).notice!, /última versão salva/);
     assert.match(storeMessage(view).body, /Não foi possível confirmar/);
 
     const firstStart = await loadStore(options(offline.fetch, memoryCache()));
     assert.equal(firstStart.brandSource, "manifest");
     assert.equal(firstStart.name, "Forno do Bairro");
     assert.deepEqual(firstStart.colors, DEFAULT_BRAND_COLORS);
-    assert.match(storeMessage(firstStart).offlineNotice!, /Confira a internet/);
+    assert.match(storeMessage(firstStart).notice!, /Confira a internet/);
   });
 
   it("treats server errors and timeouts like being offline", async () => {
@@ -208,8 +223,10 @@ describe("store brand and status", () => {
       });
       const view = await loadStore(options(fetch, cache));
       assert.equal(view.brandSource, "manifest");
+      assert.equal(view.brandStale, true);
       assert.equal(cache.writes, 0);
       assert.deepEqual(view.availability, { kind: "open" });
+      assert.match(storeMessage(view).notice!, /atualizar a aparência/);
     }
   });
 
@@ -238,7 +255,7 @@ describe("store brand and status", () => {
         screen: "closed",
         title: "Loja fechada",
         body: "Forno do Bairro Oficial pausou os pedidos até 19:30.",
-        offlineNotice: null,
+        notice: null,
       },
     );
     assert.match(
@@ -290,5 +307,268 @@ describe("store brand and status", () => {
       ),
     );
     assert.doesNotMatch(cache.value!, /open|reason/);
+  });
+});
+
+const deferred = () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  return { gate, release };
+};
+const CLOSED = { ...OPEN, open: false, reason: "OUTSIDE_HOURS" };
+const cachedRed = () =>
+  memoryCache(JSON.stringify({ version: 1, profile: profile() }));
+
+describe("partial answers: the profile and the status decide separately", () => {
+  const load = (
+    routes: { profile: Route; status: Route },
+    cache: BrandCache = memoryCache(),
+  ) => loadStore({ ...options(api(routes).fetch, cache), timeoutMs: 20 });
+
+  it("keeps a valid status when only the profile fails, with a non-blocking notice", async () => {
+    const cases: [Route, Route, string][] = [
+      [{ status: 500 }, { status: 200, body: OPEN }, "open"],
+      [{ status: 429 }, { status: 200, body: OPEN }, "open"],
+      ["hang", { status: 200, body: OPEN }, "open"],
+      [
+        { status: 200, body: { slug: SLUG } },
+        { status: 200, body: CLOSED },
+        "closed",
+      ],
+      ["offline", { status: 200, body: CLOSED }, "closed"],
+    ];
+    for (const [profileRoute, statusRoute, kind] of cases) {
+      const label = JSON.stringify([profileRoute, kind]);
+      const withCache = await load(
+        { profile: profileRoute, status: statusRoute },
+        cachedRed(),
+      );
+      assert.equal(withCache.availability.kind, kind, label);
+      assert.equal(withCache.brandSource, "cache", label);
+      assert.deepEqual(withCache.colors, RED, label);
+      assert.equal(withCache.brandStale, true, label);
+      const message = storeMessage(withCache);
+      assert.equal(message.screen, kind === "open" ? "store" : "closed");
+      assert.equal(
+        message.notice,
+        "Não conseguimos atualizar a aparência da pizzaria agora. Tente atualizar em instantes.",
+        label,
+      );
+      if (kind === "open") assert.equal(message.body, "Aberta agora.");
+
+      const withoutCache = await load({
+        profile: profileRoute,
+        status: statusRoute,
+      });
+      assert.equal(withoutCache.availability.kind, kind, label);
+      assert.equal(withoutCache.brandSource, "manifest", label);
+      assert.equal(withoutCache.name, "Forno do Bairro");
+      assert.equal(withoutCache.brandStale, true, label);
+    }
+  });
+
+  it("never claims the store is open without a valid status", async () => {
+    for (const statusRoute of [
+      "hang",
+      "offline",
+      { status: 500 },
+      { status: 200, body: { open: "sim" } },
+    ] as Route[]) {
+      const cache = memoryCache();
+      const view = await load(
+        { profile: { status: 200, body: profile() }, status: statusRoute },
+        cache,
+      );
+      const label = JSON.stringify(statusRoute);
+      assert.deepEqual(view.availability, { kind: "offline" }, label);
+      assert.equal(view.brandSource, "api", label);
+      assert.equal(view.brandStale, false, label);
+      assert.equal(cache.writes, 1, "the fresh brand is still saved");
+      const message = storeMessage(view);
+      assert.equal(message.screen, "store");
+      assert.notEqual(message.body, "Aberta agora.");
+      assert.match(message.body, /Não foi possível confirmar/);
+      assert.match(message.notice!, /conexão com a pizzaria falhou/);
+    }
+    const both = await load(
+      { profile: "offline", status: "hang" },
+      cachedRed(),
+    );
+    assert.deepEqual(both.availability, { kind: "offline" });
+    assert.equal(both.brandSource, "cache");
+    assert.match(storeMessage(both).notice!, /última versão salva/);
+  });
+
+  it("shows the store as unavailable on a 403 or 404 from either request", async () => {
+    for (const routes of [
+      { profile: { status: 403 }, status: { status: 200, body: OPEN } },
+      { profile: { status: 200, body: profile() }, status: { status: 404 } },
+      { profile: { status: 404 }, status: "offline" },
+      { profile: "offline", status: { status: 403 } },
+    ] as { profile: Route; status: Route }[]) {
+      const view = await load(routes, cachedRed());
+      assert.deepEqual(view.availability, { kind: "unavailable" });
+      assert.equal(
+        view.brandStale,
+        false,
+        "no brand notice over the unavailable screen",
+      );
+      assert.deepEqual(storeMessage(view), {
+        screen: "unavailable",
+        title: "Pizzaria indisponível",
+        body: "Forno do Bairro Oficial não está recebendo pedidos por este aplicativo no momento.",
+        notice: null,
+      });
+    }
+  });
+
+  it("recovers after a partial failure", async () => {
+    const cache = cachedRed();
+    const stale = await load(
+      { profile: { status: 503 }, status: { status: 200, body: OPEN } },
+      cache,
+    );
+    assert.equal(stale.brandStale, true);
+    const blue = {
+      ...RED,
+      primary: "#0B4F8A",
+      primaryHover: "#083D6B",
+      primaryPressed: "#062C4E",
+    };
+    const fresh = await load(
+      {
+        profile: {
+          status: 200,
+          body: profile({ brand: { version: 4, colors: blue } }),
+        },
+        status: { status: 200, body: OPEN },
+      },
+      cache,
+    );
+    assert.equal(fresh.brandStale, false);
+    assert.equal(fresh.brandSource, "api");
+    assert.deepEqual(fresh.colors, blue);
+    assert.equal(storeMessage(fresh).notice, null);
+    assert.equal((await cachedBrand(cache, SLUG))!.version, 4);
+  });
+});
+
+describe("refresh: one load at a time, never an old answer over a new one", () => {
+  it("joins taps while a load runs: one pair of requests and one answer", async () => {
+    const { gate, release } = deferred();
+    const { fetch, urls } = api(
+      {
+        profile: { status: 200, body: profile() },
+        status: { status: 200, body: OPEN },
+      },
+      gate,
+    );
+    const cache = memoryCache();
+    const refresher = createStoreRefresher(options(fetch, cache));
+    const first = refresher.refresh();
+    const second = refresher.refresh();
+    const third = refresher.refresh();
+    assert.equal(second, first);
+    assert.equal(third, first);
+    assert.equal(urls.length, 2);
+    assert.equal(refresher.refreshing, true);
+    await Promise.resolve();
+    assert.equal(
+      refresher.refreshing,
+      true,
+      "still running until the answer arrives",
+    );
+    release();
+    const view = await first;
+    assert.equal(view!.brandSource, "api");
+    assert.equal(refresher.refreshing, false);
+    assert.equal(cache.writes, 1);
+  });
+
+  it("lets a later load replace the brand, in order", async () => {
+    const cache = memoryCache();
+    let version = 1;
+    const fetch = (async (input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify(
+          String(input).endsWith("/status")
+            ? OPEN
+            : profile({ brand: { version, colors: RED } }),
+        ),
+        { status: 200 },
+      )) as typeof globalThis.fetch;
+    const refresher = createStoreRefresher(options(fetch, cache));
+    assert.equal((await refresher.refresh())!.brandVersion, 1);
+    version = 2;
+    assert.equal((await refresher.refresh())!.brandVersion, 2);
+    assert.equal((await cachedBrand(cache, SLUG))!.version, 2);
+  });
+
+  it("does not block new attempts after a failure", async () => {
+    let online = false;
+    const fetch = (async (input: RequestInfo | URL) => {
+      if (!online) throw new TypeError("Network request failed");
+      return new Response(
+        JSON.stringify(String(input).endsWith("/status") ? OPEN : profile()),
+        { status: 200 },
+      );
+    }) as typeof globalThis.fetch;
+    const refresher = createStoreRefresher(options(fetch, memoryCache()));
+    const failed = await refresher.refresh();
+    assert.deepEqual(failed!.availability, { kind: "offline" });
+    assert.equal(refresher.refreshing, false);
+    online = true;
+    const view = await refresher.refresh();
+    assert.deepEqual(view!.availability, { kind: "open" });
+    assert.equal(view!.brandSource, "api");
+  });
+
+  it("drops a load abandoned on unmount: no answer and nothing written to the cache", async () => {
+    const { gate, release } = deferred();
+    const { fetch } = api(
+      {
+        profile: { status: 200, body: profile() },
+        status: { status: 200, body: OPEN },
+      },
+      gate,
+    );
+    const cache = cachedRed();
+    const before = cache.value;
+    const refresher = createStoreRefresher(options(fetch, cache));
+    const pending = refresher.refresh();
+    refresher.dispose();
+    release();
+    assert.equal(await pending, null);
+    assert.equal(cache.writes, 0);
+    assert.equal(cache.value, before);
+    assert.equal(refresher.refreshing, false);
+
+    const urls = api({ profile: "offline", status: "offline" });
+    const afterwards = createStoreRefresher(options(urls.fetch, cache));
+    afterwards.dispose();
+    assert.equal(await afterwards.refresh(), null);
+    assert.equal(urls.urls.length, 0, "a disposed refresher sends nothing");
+  });
+
+  it("never writes the cache from an aborted load, even when its answer arrives", async () => {
+    const controller = new AbortController();
+    const { gate, release } = deferred();
+    // A fetch that ignores the abort signal and answers anyway, like a response already in flight.
+    const fetch = (async (input: RequestInfo | URL) => {
+      await gate;
+      return new Response(
+        JSON.stringify(String(input).endsWith("/status") ? OPEN : profile()),
+        { status: 200 },
+      );
+    }) as typeof globalThis.fetch;
+    const cache = memoryCache();
+    const loading = loadStore({
+      ...options(fetch, cache),
+      signal: controller.signal,
+    });
+    controller.abort();
+    release();
+    assert.equal((await loading).brandSource, "api");
+    assert.equal(cache.writes, 0);
   });
 });

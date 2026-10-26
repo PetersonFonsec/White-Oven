@@ -21,7 +21,7 @@ export function StoreScreen({ message, refreshing, onRetry }: Props) {
       style={{ backgroundColor: theme.colors.cream }}
       contentContainerStyle={[styles.content, { padding: theme.spacing(5) }]}
     >
-      {message.offlineNotice ? (
+      {message.notice ? (
         <View
           accessibilityRole="alert"
           style={[
@@ -35,7 +35,7 @@ export function StoreScreen({ message, refreshing, onRetry }: Props) {
           ]}
         >
           <Text style={[styles.body, { color: theme.colors.text }]}>
-            {message.offlineNotice}
+            {message.notice}
           </Text>
         </View>
       ) : null}

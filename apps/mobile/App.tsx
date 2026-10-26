@@ -1,12 +1,13 @@
 import Constants from "expo-constants";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { fileBrandCache } from "./src/brand/file-cache.ts";
 import {
+  type StoreRefresher,
   type StoreView,
   cachedBrand,
-  loadStore,
+  createStoreRefresher,
 } from "./src/brand/store-loader.ts";
 import { ThemeProvider, themeFor } from "./src/brand/theme.tsx";
 import { parseRuntimeConfig } from "./src/config/manifest.ts";
@@ -26,35 +27,43 @@ export default function App() {
     ReturnType<typeof cachedBrand>
   > | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const cache = useMemo(
-    () => (runtime ? fileBrandCache(runtime.storeSlug) : null),
-    [],
-  );
+  const refresher = useRef<StoreRefresher | null>(null);
 
+  /**
+   * One load at a time (ADR 0020): a tap while a load runs joins it. The refresher of an
+   * unmounted screen is disposed, so its answer neither reaches the state nor the cache.
+   */
   const refresh = useCallback(async () => {
-    if (!runtime || !cache) return;
+    const current = refresher.current;
+    if (!current) return;
     setRefreshing(true);
-    try {
-      setView(
-        await loadStore({
-          apiUrl: runtime.apiUrl,
-          storeSlug: runtime.storeSlug,
-          fallback: { name: runtime.storeName, colors: runtime.fallbackColors },
-          cache,
-          fetch,
-        }),
-      );
-    } finally {
-      setRefreshing(false);
-    }
-  }, [cache]);
+    const next = await current.refresh();
+    if (refresher.current !== current) return;
+    if (next) setView(next);
+    setRefreshing(current.refreshing);
+  }, []);
 
   useEffect(() => {
+    if (!runtime) return;
+    const cache = fileBrandCache(runtime.storeSlug);
+    const current = createStoreRefresher({
+      apiUrl: runtime.apiUrl,
+      storeSlug: runtime.storeSlug,
+      fallback: { name: runtime.storeName, colors: runtime.fallbackColors },
+      cache,
+      fetch,
+    });
+    refresher.current = current;
     // The cached brand paints the first frame; the API answer replaces it when it arrives.
-    if (runtime && cache)
-      void cachedBrand(cache, runtime.storeSlug).then(setCached);
+    void cachedBrand(cache, runtime.storeSlug).then((brand) => {
+      if (refresher.current === current) setCached(brand);
+    });
     void refresh();
-  }, [cache, refresh]);
+    return () => {
+      refresher.current = null;
+      current.dispose();
+    };
+  }, [refresh]);
 
   if (!runtime)
     return (

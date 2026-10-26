@@ -36,6 +36,12 @@ export interface StoreView {
   colors: BrandColors;
   brandVersion: number;
   brandSource: BrandSource;
+  /**
+   * The profile request failed (network, timeout, 429, 5xx or an invalid body) while the store
+   * still answers: the brand on screen is the cached or manifest one and may be out of date.
+   * Independent of `availability`, so a valid status is still shown as it is.
+   */
+  brandStale: boolean;
   availability: Availability;
 }
 
@@ -56,6 +62,11 @@ export interface LoadStoreOptions {
   cache: BrandCache;
   fetch: typeof globalThis.fetch;
   timeoutMs?: number;
+  /**
+   * Cancels the load: requests are aborted and, once aborted, nothing is written to the cache,
+   * so an abandoned load never replaces what a later one saved.
+   */
+  signal?: AbortSignal;
 }
 
 /** Validates a profile from the API or the cache; it must be of this app's store. */
@@ -146,6 +157,9 @@ async function get<T>(
   // AbortController and a timer, not AbortSignal.timeout, which React Native does not provide.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 8000);
+  const cancel = () => controller.abort();
+  options.signal?.addEventListener("abort", cancel);
+  if (options.signal?.aborted) controller.abort();
   try {
     const response = await options.fetch(
       `${options.apiUrl}/v1/public/stores/${encodeURIComponent(options.storeSlug)}${path}`,
@@ -161,21 +175,28 @@ async function get<T>(
     return { kind: "failed" };
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener("abort", cancel);
   }
 }
 
 /**
- * Brand and status of the app's store. The API is the authority: a valid profile replaces the
- * cache and is shown at once. Without an answer, the last cached brand (or the manifest's) opens
- * the app, marked offline. The status is never cached: an old "open" could take an order to a
- * closed store.
+ * Brand and status of the app's store, from two independent requests:
+ *
+ * - 403 or 404 on either one: the store is unavailable.
+ * - Otherwise the status alone decides open or closed; without a valid status the app is offline
+ *   and never claims the store is open.
+ * - A valid profile replaces the cache and is shown at once. Any other profile answer keeps the
+ *   cached brand (or the manifest's) and sets `brandStale`, whatever the status said.
+ *
+ * The status is never cached: an old "open" could take an order to a closed store. Nothing is
+ * written once `signal` is aborted.
  */
 export async function loadStore(options: LoadStoreOptions): Promise<StoreView> {
   const [profile, status] = await Promise.all([
     get(options, "", (body) => parseProfile(body, options.storeSlug)),
     get(options, "/status", parseStatus),
   ]);
-  if (profile.kind === "ok") {
+  if (profile.kind === "ok" && !options.signal?.aborted) {
     try {
       await options.cache.write(
         JSON.stringify({ version: CACHE_VERSION, profile: profile.body }),
@@ -212,6 +233,56 @@ export async function loadStore(options: LoadStoreOptions): Promise<StoreView> {
     colors: brand?.profile.brand.colors ?? options.fallback.colors,
     brandVersion: brand?.profile.brand.version ?? 0,
     brandSource: brand?.source ?? "manifest",
+    brandStale:
+      profile.kind === "failed" && availability.kind !== "unavailable",
     availability,
+  };
+}
+
+export interface StoreRefresher {
+  /**
+   * Loads the store once at a time: a call while a load runs gets that same load, so repeated
+   * taps never send duplicate requests and an older answer can never land after a newer one.
+   * Resolves null once disposed.
+   */
+  refresh(): Promise<StoreView | null>;
+  /** True while a load runs. */
+  readonly refreshing: boolean;
+  /** Aborts the running load; it writes nothing to the cache and resolves null. */
+  dispose(): void;
+}
+
+export function createStoreRefresher(
+  options: LoadStoreOptions,
+): StoreRefresher {
+  const lifetime = new AbortController();
+  let running: Promise<StoreView | null> | null = null;
+  const offline = (): StoreView => ({
+    name: options.fallback.name,
+    colors: options.fallback.colors,
+    brandVersion: 0,
+    brandSource: "manifest",
+    brandStale: true,
+    availability: { kind: "offline" },
+  });
+  return {
+    refresh() {
+      if (lifetime.signal.aborted) return Promise.resolve(null);
+      running ??= loadStore({ ...options, signal: lifetime.signal })
+        // loadStore catches what it expects; anything else still ends the load, so the user can
+        // try again instead of waiting forever.
+        .catch(offline)
+        .then((view) => (lifetime.signal.aborted ? null : view))
+        .finally(() => {
+          running = null;
+        });
+      return running;
+    },
+    get refreshing() {
+      return running !== null;
+    },
+    dispose() {
+      lifetime.abort();
+    },
   };
 }

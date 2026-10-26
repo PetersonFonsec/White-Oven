@@ -39,11 +39,26 @@ A [ADR 0014](0014-brand-theme.md) deixou para M5.1 o endpoint público de marca.
   - O cabeçalho é `Cache-Control: no-cache`, para que um tema novo ou uma suspensão apareçam na próxima abertura.
   - Nenhum id de imagem é exposto. O logotipo entra com a rota pública de imagens do cardápio em M5.2, para que as duas compartilhem a mesma política de cache e de autorização.
 - **Carregamento** (`loadStore`, puro e testado com `fetch` e cache em memória):
-  - Pede o perfil e o status (`/status`, ADR 0016) em paralelo, com tempo-limite de 8 s.
-  - Um perfil válido e da própria loja substitui o cache e aparece na hora. Um perfil de outra loja ou com cores que falham o contraste é descartado.
-  - Sem resposta (rede, tempo-limite, 5xx ou 429), o app usa a última marca em cache ou, sem cache, a do manifesto, e mostra o aviso de sem conexão.
-  - `403` e `404` mostram "Pizzaria indisponível", mantendo a última marca.
+  - Pede o perfil e o status (`/status`, ADR 0016) em paralelo, com tempo-limite de 8 s cada.
+  - Os dois resultados são independentes:
+
+    | Perfil                 | Status            | O app mostra                                                                                               |
+    | ---------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------- |
+    | 200 válido             | 200               | aberta ou fechada, com a marca nova                                                                        |
+    | falha transitória      | 200               | aberta ou fechada, com a marca do cache (ou do manifesto) e um aviso de que a aparência não foi atualizada |
+    | 200 válido             | falha transitória | sem confirmar se está aberta (estado offline), com a marca nova                                            |
+    | falha transitória      | falha transitória | offline, com a marca do cache (ou do manifesto)                                                            |
+    | 403/404 em qualquer um | qualquer          | "Pizzaria indisponível"                                                                                    |
+
+  - Falha transitória é rede, tempo-limite, 429, 5xx ou corpo fora do contrato. O app só diz "aberta" com um status válido.
+  - A atualização parcial é a flag `brandStale`, separada da disponibilidade, para não multiplicar estados. O aviso não bloqueia e não traz detalhe técnico.
+  - Um perfil válido e da própria loja substitui o cache e aparece na hora. Um perfil de outra loja ou com cores que falham o contraste conta como falha transitória.
   - O status nunca vai para o cache: um "aberta" antigo poderia levar um pedido a uma loja fechada.
+- **Concorrência** (`createStoreRefresher`):
+  - Uma carga por vez: um toque em "Atualizar" durante uma carga recebe a mesma carga. Não há requisição duplicada, e uma resposta antiga nunca chega depois de uma nova.
+  - `refreshing` fica ligado até essa carga terminar. Uma falha termina a carga e libera a próxima tentativa.
+  - Ao desmontar a tela, o app descarta a carga: as requisições são abortadas, a resposta não muda o estado e nada é gravado no cache. `loadStore` confere o sinal de cancelamento logo antes de gravar, então uma resposta que chega depois do cancelamento também não grava.
+  - Sem polling nem atualização em segundo plano em M5.1.
 - **Cache:** um arquivo JSON por loja no diretório de documentos do app (`expo-file-system`), com versão de formato e no máximo 16 KiB.
   - Guarda só o perfil público. Token e dado pessoal nunca vão para esse arquivo; o refresh token do cliente (M5.3) irá para `expo-secure-store`.
   - Um cache quebrado ou de outra loja é ignorado.
