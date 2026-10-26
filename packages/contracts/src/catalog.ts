@@ -191,7 +191,7 @@ export function validatePizzaCatalog(raw: unknown): CatalogResult {
       if (!plain(entry)) return void paths.push(path);
       paths.push(...keyIssues(entry, fields, path));
       for (const field of fields)
-        if (Object.hasOwn(entry, field) && !checks[field](entry[field]))
+        if (Object.hasOwn(entry, field) && !checks[field]!(entry[field]))
           paths.push(`${path}.${field}`);
     });
   }

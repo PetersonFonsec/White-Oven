@@ -1,6 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
-import { MikroORM } from "@mikro-orm/postgresql";
+import { type EntityManager, MikroORM } from "@mikro-orm/postgresql";
+import type {
+  CatalogCategory,
+  CatalogCrust,
+  CatalogCrustPrice,
+  CatalogExtra,
+  CatalogExtraPrice,
+  CatalogFlavor,
+  CatalogFlavorPrice,
+  CatalogIngredient,
+  CatalogManagementSnapshot,
+  CatalogPizzaSize,
+  CatalogSimpleProduct,
+  PricingPolicy,
+} from "@whiteoven/contracts";
 import { TenantTransactions } from "../tenancy/tenant-transaction";
 import { currentTenantContext } from "../tenancy/tenant-context";
 import { ApiError } from "../errors/api-error";
@@ -33,6 +47,76 @@ const notFound = () =>
     "Catalog resource not found.",
   );
 
+/**
+ * The tenant's whole catalog, archived and unavailable items included, as the pricing engine
+ * expects it (@whiteoven/contracts `PizzaCatalog`): the panel edits it and orders (M4.3) price
+ * against it, inside the caller's transaction.
+ */
+export async function readCatalogSnapshot(
+  em: EntityManager,
+): Promise<CatalogManagementSnapshot> {
+  const [
+    categories,
+    sizes,
+    ingredients,
+    flavors,
+    prices,
+    crusts,
+    crustPrices,
+    extras,
+    extraPrices,
+    simpleProducts,
+    pricingPolicy,
+  ] = await Promise.all([
+    em.execute<CatalogCategory[]>(
+      `select id, name, kind, sort_order as "sortOrder", (archived_at is not null) as archived from catalog_categories order by sort_order, name`,
+    ),
+    em.execute<CatalogPizzaSize[]>(
+      `select id, name, slices, max_flavors as "maxFlavors", sort_order as "sortOrder", available, (archived_at is not null) as archived from pizza_sizes order by sort_order, slices`,
+    ),
+    em.execute<CatalogIngredient[]>(
+      `select id, name, removable, (archived_at is not null) as archived from catalog_ingredients order by name`,
+    ),
+    em.execute<CatalogFlavor[]>(
+      `select f.id, f.category_id as "categoryId", f.image_asset_id as "imageId", f.name, f.description, f.available, (f.archived_at is not null) as archived, coalesce(array_agg(fi.ingredient_id) filter (where fi.ingredient_id is not null), '{}') as "ingredientIds" from catalog_flavors f left join catalog_flavor_ingredients fi on fi.tenant_id = f.tenant_id and fi.flavor_id = f.id group by f.id order by f.name`,
+    ),
+    em.execute<CatalogFlavorPrice[]>(
+      `select flavor_id as "flavorId", size_id as "sizeId", price_cents as "priceCents" from catalog_flavor_prices order by flavor_id, size_id`,
+    ),
+    em.execute<CatalogCrust[]>(
+      `select id,name,available,(archived_at is not null) as archived from catalog_crusts order by name`,
+    ),
+    em.execute<CatalogCrustPrice[]>(
+      `select crust_id as "crustId",size_id as "sizeId",price_cents as "priceCents" from catalog_crust_prices order by crust_id,size_id`,
+    ),
+    em.execute<CatalogExtra[]>(
+      `select id,name,available,(archived_at is not null) as archived from catalog_extras order by name`,
+    ),
+    em.execute<CatalogExtraPrice[]>(
+      `select extra_id as "extraId",size_id as "sizeId",whole_price_cents as "wholePriceCents",half_price_cents as "halfPriceCents" from catalog_extra_prices order by extra_id,size_id`,
+    ),
+    em.execute<CatalogSimpleProduct[]>(
+      `select id,category_id as "categoryId",image_asset_id as "imageId",name,price_cents as "priceCents",available,(archived_at is not null) as archived from catalog_simple_products order by name`,
+    ),
+    em.execute<PricingPolicy[]>(
+      `select half_and_half_strategy as "halfAndHalfStrategy",half_and_half_surcharge_cents as "halfAndHalfSurchargeCents",max_extras_per_half as "maxExtrasPerHalf" from catalog_pricing_policies limit 1`,
+    ),
+  ]);
+  return {
+    categories,
+    sizes,
+    ingredients,
+    flavors,
+    flavorPrices: prices,
+    crusts,
+    crustPrices,
+    extras,
+    extraPrices,
+    simpleProducts,
+    pricingPolicy: pricingPolicy[0] ?? null,
+  };
+}
+
 @Injectable()
 export class CatalogService {
   constructor(
@@ -41,68 +125,7 @@ export class CatalogService {
   ) {}
 
   get() {
-    return this.transactions.run(async (em) => {
-      const [
-        categories,
-        sizes,
-        ingredients,
-        flavors,
-        prices,
-        crusts,
-        crustPrices,
-        extras,
-        extraPrices,
-        simpleProducts,
-        pricingPolicy,
-      ] = await Promise.all([
-        em.execute(
-          `select id, name, kind, sort_order as "sortOrder", (archived_at is not null) as archived from catalog_categories order by sort_order, name`,
-        ),
-        em.execute(
-          `select id, name, slices, max_flavors as "maxFlavors", sort_order as "sortOrder", available, (archived_at is not null) as archived from pizza_sizes order by sort_order, slices`,
-        ),
-        em.execute(
-          `select id, name, removable, (archived_at is not null) as archived from catalog_ingredients order by name`,
-        ),
-        em.execute(
-          `select f.id, f.category_id as "categoryId", f.image_asset_id as "imageId", f.name, f.description, f.available, (f.archived_at is not null) as archived, coalesce(array_agg(fi.ingredient_id) filter (where fi.ingredient_id is not null), '{}') as "ingredientIds" from catalog_flavors f left join catalog_flavor_ingredients fi on fi.tenant_id = f.tenant_id and fi.flavor_id = f.id group by f.id order by f.name`,
-        ),
-        em.execute(
-          `select flavor_id as "flavorId", size_id as "sizeId", price_cents as "priceCents" from catalog_flavor_prices order by flavor_id, size_id`,
-        ),
-        em.execute(
-          `select id,name,available,(archived_at is not null) as archived from catalog_crusts order by name`,
-        ),
-        em.execute(
-          `select crust_id as "crustId",size_id as "sizeId",price_cents as "priceCents" from catalog_crust_prices order by crust_id,size_id`,
-        ),
-        em.execute(
-          `select id,name,available,(archived_at is not null) as archived from catalog_extras order by name`,
-        ),
-        em.execute(
-          `select extra_id as "extraId",size_id as "sizeId",whole_price_cents as "wholePriceCents",half_price_cents as "halfPriceCents" from catalog_extra_prices order by extra_id,size_id`,
-        ),
-        em.execute(
-          `select id,category_id as "categoryId",image_asset_id as "imageId",name,price_cents as "priceCents",available,(archived_at is not null) as archived from catalog_simple_products order by name`,
-        ),
-        em.execute(
-          `select half_and_half_strategy as "halfAndHalfStrategy",half_and_half_surcharge_cents as "halfAndHalfSurchargeCents",max_extras_per_half as "maxExtrasPerHalf" from catalog_pricing_policies limit 1`,
-        ),
-      ]);
-      return {
-        categories,
-        sizes,
-        ingredients,
-        flavors,
-        flavorPrices: prices,
-        crusts,
-        crustPrices,
-        extras,
-        extraPrices,
-        simpleProducts,
-        pricingPolicy: pricingPolicy[0] ?? null,
-      };
-    });
+    return this.transactions.run(readCatalogSnapshot);
   }
 
   listAudit() {

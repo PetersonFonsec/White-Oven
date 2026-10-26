@@ -10,6 +10,7 @@ import {
   type TestDatabase,
 } from "./postgres";
 import { insertTenant } from "./staff-fixtures";
+import { insertOrder } from "./order-fixtures";
 import type { ApiConfig } from "../src/config/config";
 
 const REQUEST_ID = "0a0b0c0d-1111-4222-8333-444455556666";
@@ -241,12 +242,7 @@ describe("M1.5 platform operations", databaseSuite, () => {
         "insert into staff_sessions (staff_user_id, active_tenant_id, refresh_token_hash, idle_expires_at) values (?, ?, ?, now() + interval '1 hour') returning id",
         [manager!.id, otherTenantId, Buffer.alloc(32, 2)],
       );
-    const [order] = await runInTenant(owner, created.tenantId, (em) =>
-      em.execute<{ id: string }[]>(
-        "insert into orders (tenant_id) values (?) returning id",
-        [created.tenantId],
-      ),
-    );
+    const order = await insertOrder(owner, created.tenantId);
     await runInTenant(owner, created.tenantId, (em) =>
       em.execute(
         "insert into memberships (tenant_id, staff_user_id, role, status) values (?, ?, 'MANAGER', 'ACTIVE')",

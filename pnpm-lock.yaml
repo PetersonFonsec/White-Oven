@@ -126,6 +126,12 @@ importers:
       '@node-rs/argon2':
         specifier: ^2.2.2
         version: 2.2.2
+      '@whiteoven/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@whiteoven/pizza-pricing':
+        specifier: workspace:*
+        version: link:../../packages/pizza-pricing
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2

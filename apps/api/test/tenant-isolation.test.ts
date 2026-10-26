@@ -617,6 +617,10 @@ describe("tenant isolation", databaseSuite, () => {
         "DELETE /customer/stores/:storeSlug/me",
         "GET /customer/stores/:storeSlug/me/addresses",
         "POST /customer/stores/:storeSlug/me/addresses",
+        // Other stores' ids can only travel in the body (catalog items, address); covered in
+        // order.test.ts, where they are unavailable and a token of A at B is a 404.
+        "POST /customer/stores/:storeSlug/me/orders/quote",
+        "POST /customer/stores/:storeSlug/me/orders",
       ];
       assert.deepEqual(
         routes.filter((route) => !listings.includes(route)).sort(),
@@ -883,6 +887,8 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "customers", forced: true },
         { table: "image_assets", forced: true },
         { table: "memberships", forced: true },
+        { table: "order_creation_keys", forced: true },
+        { table: "order_items", forced: true },
         { table: "orders", forced: true },
         { table: "owner_invites", forced: true },
         { table: "pizza_sizes", forced: true },
@@ -890,6 +896,7 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "store_opening_hours", forced: true },
         { table: "store_pauses", forced: true },
         { table: "store_settings", forced: true },
+        { table: "tenant_order_counters", forced: true },
       ]);
     });
 

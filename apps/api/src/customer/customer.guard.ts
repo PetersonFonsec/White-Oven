@@ -94,12 +94,12 @@ export class CustomerSessionGuard implements CanActivate {
 /**
  * `/v1/customer/stores/{storeSlug}` with a customer token (`CustomerGuard` of system-overview.md).
  * `capability` is the row of the status matrix the route needs: reading the account and deleting
- * it work in SUSPENDED and CLOSED stores too; writing addresses only in ACTIVE ones.
+ * it work in SUSPENDED and CLOSED stores too; writing addresses and ordering only in ACTIVE ones.
  */
 export const CustomerRoute = (
   capability: Extract<
     TenantCapability,
-    "customerAccount" | "customerAccountWrite"
+    "customerAccount" | "customerAccountWrite" | "createOrder"
   > = "customerAccount",
 ) =>
   applyDecorators(
