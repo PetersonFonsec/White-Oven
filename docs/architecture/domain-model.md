@@ -337,6 +337,12 @@ Invariantes do agregado Pedido:
 
 `orderId`, `type` (`MISSING_ITEM`, `WRONG_ITEM`, `LATE_DELIVERY`, `QUALITY`, `DELIVERY_PROBLEM`, `OTHER`), `description`, `reportedBy` (`CUSTOMER` via contato com a loja ou `STAFF`), `status` (`OPEN`, `RESOLVED`), `resolutionNote`, datas. Registro de atendimento; não altera valores do pedido nem dispara reembolso no MVP.
 
+Implementação (M4.6, [ADR 0019](../adr/0019-order-history-report-incidents.md)):
+
+- Tabela `order_incidents` com RLS forçada, descrição e nota de 1 a 1000 caracteres, e autor e data de criação e de resolução.
+- A app insere ocorrências e só altera as colunas de resolução. Um gatilho permite apenas `OPEN → RESOLVED`, uma vez, e não há `DELETE`.
+- Registro só até 30 dias depois da transição terminal do pedido.
+
 ## Planos e cobrança
 
 ### PlanSubscription

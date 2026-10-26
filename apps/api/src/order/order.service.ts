@@ -28,6 +28,7 @@ import {
   type PaymentMethod,
   orderRequestHash,
 } from "./order-rules";
+import { type OrderIncidentView, readIncidents } from "./order-history.service";
 import {
   reasonRequired,
   transitionAllowed,
@@ -70,6 +71,11 @@ export interface AdminOrderView extends OrderView {
   customerName: string;
   customerPhone: string | null;
   history: Record<string, unknown>[];
+}
+
+/** The staff detail also carries the order's incidents (M4.6). */
+export interface AdminOrderDetail extends AdminOrderView {
+  incidents: OrderIncidentView[];
 }
 
 export type StaffOrderSection = "active" | "closed";
@@ -231,7 +237,7 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  getForStaff(orderId: string): Promise<AdminOrderView> {
+  getForStaff(orderId: string): Promise<AdminOrderDetail> {
     return this.transactions.run(async (em) => {
       const [row] = await em.execute<
         (Omit<AdminOrderView, "items" | "placedAt" | "history"> & {
@@ -257,10 +263,14 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
            from order_items where order_id = ? order by position`,
         [orderId],
       );
+      // The author of each staff transition (M4.6); customer and system changes have none.
       const history = await em.execute<Record<string, unknown>[]>(
-        `select from_status as "from", to_status as "to", actor_type as "actorType",
-                reason_code as "reasonCode", reason_text as "reasonText", at
-           from order_status_changes where order_id = ? order by at asc`,
+        `select h.from_status as "from", h.to_status as "to", h.actor_type as "actorType",
+                case when h.actor_type = 'STAFF' then u.name end as "actorName",
+                h.reason_code as "reasonCode", h.reason_text as "reasonText", h.at
+           from order_status_changes h
+           left join staff_users u on h.actor_type = 'STAFF' and u.id = h.actor_id
+          where h.order_id = ? order by h.at asc`,
         [orderId],
       );
       return {
@@ -268,6 +278,7 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
         placedAt: new Date(row.placedAt).toISOString(),
         items,
         history,
+        incidents: await readIncidents(em, orderId),
       };
     });
   }

@@ -1,5 +1,6 @@
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config/config";
+import { runInTenant } from "../src/tenancy/tenant-transaction";
 import { createTestDatabase } from "./postgres";
 import {
   insertMembership,
@@ -36,6 +37,50 @@ async function main(): Promise<void> {
     .execute("update staff_users set platform_role = 'OPERATOR' where id = ?", [
       operador,
     ]);
+
+  // Orders of pizzaria-centro for the history and the daily report (M4.6): one completed now,
+  // one canceled and one in preparation, with the history the API would have written.
+  await runInTenant(owner, centro, async (em) => {
+    const [customer] = await em.execute<{ id: string }[]>(
+      `insert into customers (tenant_id, name, email, password_hash, privacy_policy_version, accepted_at)
+       values (?, 'Cliente E2E', 'cliente@e2e.test', '$argon2id$fixture', '2026-10', now()) returning id`,
+      [centro],
+    );
+    for (const [number, status, fulfillment, payment, total, reason] of [
+      [1, "COMPLETED", "PICKUP", "CASH", 4500, null],
+      [2, "CANCELED", "DELIVERY", "PIX_ON_DELIVERY", 5200, "ITEM_UNAVAILABLE"],
+      [3, "PREPARING", "PICKUP", "CARD_ON_DELIVERY", 3800, null],
+    ] as const) {
+      const fee = fulfillment === "DELIVERY" ? 700 : 0;
+      const [order] = await em.execute<{ id: string }[]>(
+        `insert into orders (tenant_id, number, customer_id, customer_name, fulfillment,
+           delivery_address, payment_method, items_subtotal_cents, delivery_fee_cents,
+           total_cents, status, placed_at)
+         values (?, ?, ?, 'Cliente E2E', ?, ?::jsonb, ?, ?, ?, ?, ?, now() - interval '1 hour')
+         returning id`,
+        [
+          centro,
+          number,
+          customer!.id,
+          fulfillment,
+          fulfillment === "DELIVERY"
+            ? JSON.stringify({ street: "Rua E2E", number: "1" })
+            : null,
+          payment,
+          total - fee,
+          fee,
+          total,
+          status,
+        ],
+      );
+      await em.execute(
+        `insert into order_status_changes (tenant_id, order_id, from_status, to_status,
+           actor_type, actor_id, reason_code)
+         values (?, ?, 'PLACED', ?, 'STAFF', ?, ?)`,
+        [centro, order!.id, status, equipe, reason],
+      );
+    }
+  });
 
   const app = await createApp(
     loadConfig({

@@ -68,6 +68,7 @@ interface Fixture {
   inviteId: string;
   addressId: string;
   orderId: string;
+  incidentId: string;
 }
 
 /** Staff membership cache TTL of this suite's server; production allows at most 60 s. */
@@ -208,7 +209,16 @@ describe("tenant isolation", databaseSuite, () => {
          values (?,1,?,?,'PICKUP','PIX_ON_DELIVERY',1000,0,0,1000) returning id`,
         [id, customer!.id, `Cliente ${slug}`],
       );
-      return { addressId: address!.id, orderId: order!.id };
+      const [incident] = await em.execute<{ id: string }[]>(
+        `insert into order_incidents (tenant_id,order_id,type,description,reported_by,created_by)
+         values (?,?,'LATE_DELIVERY','Atrasou','STAFF',?) returning id`,
+        [id, order!.id, memberId],
+      );
+      return {
+        addressId: address!.id,
+        orderId: order!.id,
+        incidentId: incident!.id,
+      };
     });
     return {
       id,
@@ -335,6 +345,41 @@ describe("tenant isolation", databaseSuite, () => {
       headers: { authorization: `Bearer ${accessToken}` },
     });
   };
+
+  /** A staff call of `store` to `path` (incidents of M4.6). */
+  const adminIncidentCall = async (
+    store: Fixture,
+    path: string,
+    body: unknown,
+  ): Promise<Response> => {
+    const login = await staffLogin(
+      server.baseUrl,
+      `fixture-${store.slug}@isolamento.test`,
+      STAFF_PASSWORD,
+    );
+    const switched = await switchTenant(
+      server.baseUrl,
+      login.accessToken,
+      store.id,
+    );
+    const { accessToken } = await json(switched);
+    return call(path, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  };
+
+  const incidentsOf = (store: Fixture) =>
+    runInTenant(owner, store.id, (em) =>
+      em.execute<{ count: number; open: number }[]>(
+        `select count(*)::int as count, count(*) filter (where status = 'OPEN')::int as open
+           from order_incidents`,
+      ),
+    ).then(([row]) => row!);
 
   /** A new customer of `store`, signed up through the API, calling `path` with its token. */
   const customerCall = async (
@@ -587,6 +632,27 @@ describe("tenant isolation", databaseSuite, () => {
         adminOrderCall(attacker, victim),
       "GET /admin/orders/:orderId": (attacker, victim) =>
         adminOrderReadCall(attacker, victim),
+      "POST /admin/orders/:orderId/incidents": async (attacker, victim) => {
+        const response = await adminIncidentCall(
+          attacker,
+          `/admin/orders/${victim.orderId}/incidents`,
+          { type: "OTHER", description: "intrusão", reportedBy: "STAFF" },
+        );
+        assert.deepEqual(await incidentsOf(victim), { count: 1, open: 1 });
+        return response;
+      },
+      "POST /admin/orders/:orderId/incidents/:incidentId/resolve": async (
+        attacker,
+        victim,
+      ) => {
+        const response = await adminIncidentCall(
+          attacker,
+          `/admin/orders/${victim.orderId}/incidents/${victim.incidentId}/resolve`,
+          {},
+        );
+        assert.deepEqual(await incidentsOf(victim), { count: 1, open: 1 });
+        return response;
+      },
       "POST /customer/stores/:storeSlug/me/orders/:orderId/transitions": (
         attacker,
         victim,
@@ -664,6 +730,9 @@ describe("tenant isolation", databaseSuite, () => {
         "GET /admin/me",
         "GET /admin/catalog/items",
         "GET /admin/orders",
+        // The store's own history and report, no id in the path; covered in order-history.test.ts.
+        "GET /admin/orders/history",
+        "GET /admin/reports/daily",
         "GET /admin/catalog/audit-events",
         "POST /admin/catalog/categories",
         "POST /admin/catalog/sizes",
@@ -967,6 +1036,7 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "image_assets", forced: true },
         { table: "memberships", forced: true },
         { table: "order_creation_keys", forced: true },
+        { table: "order_incidents", forced: true },
         { table: "order_items", forced: true },
         { table: "order_status_changes", forced: true },
         { table: "orders", forced: true },
