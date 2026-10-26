@@ -16,6 +16,8 @@ interface PublicMenuCatalog {
     categoryId: string;
     name: string;
     description: string | null;
+    /** Readable at `/v1/public/stores/{slug}/images/{imageId}/{variant}` (M5.2). */
+    imageId: string | null;
     ingredientIds: string[];
   }[];
   flavorPrices: { flavorId: string; sizeId: string; priceCents: number }[];
@@ -33,12 +35,22 @@ interface PublicMenuCatalog {
     categoryId: string;
     name: string;
     priceCents: number;
+    imageId: string | null;
   }[];
   pricingPolicy: {
     halfAndHalfStrategy: "HIGHEST" | "AVERAGE";
     halfAndHalfSurchargeCents: number;
     maxExtrasPerHalf: number;
   } | null;
+}
+
+/** The images the public menu shows: the only catalog images readable without a session. */
+export function publicMenuImageIds(menu: PublicMenuCatalog): Set<string> {
+  return new Set(
+    [...menu.flavors, ...menu.simpleProducts].flatMap((item) =>
+      item.imageId ? [item.imageId] : [],
+    ),
+  );
 }
 
 export interface PublicMenu extends PublicMenuCatalog {
@@ -141,7 +153,7 @@ export class PublicMenuService {
         `select id, name, removable from catalog_ingredients where archived_at is null order by name`,
       ),
       em.execute<PublicMenuCatalog["flavors"]>(
-        `select f.id, f.category_id as "categoryId", f.name, f.description,
+        `select f.id, f.category_id as "categoryId", f.name, f.description, f.image_asset_id as "imageId",
                 coalesce(array_agg(i.id order by i.name) filter (where i.id is not null), '{}') as "ingredientIds"
            from catalog_flavors f
            join catalog_categories c on c.tenant_id = f.tenant_id and c.id = f.category_id and c.archived_at is null
@@ -170,7 +182,8 @@ export class PublicMenuService {
            from catalog_extra_prices order by extra_id, size_id`,
       ),
       em.execute<PublicMenuCatalog["simpleProducts"]>(
-        `select p.id, p.category_id as "categoryId", p.name, p.price_cents as "priceCents"
+        `select p.id, p.category_id as "categoryId", p.name, p.price_cents as "priceCents",
+                p.image_asset_id as "imageId"
            from catalog_simple_products p
            join catalog_categories c on c.tenant_id = p.tenant_id and c.id = p.category_id and c.archived_at is null
           where p.archived_at is null and p.available order by p.name`,

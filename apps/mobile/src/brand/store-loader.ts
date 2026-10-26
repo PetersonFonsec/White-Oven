@@ -1,11 +1,16 @@
 import { type BrandColors, parseBrandColors } from "./colors.ts";
 
-/** `GET /v1/public/stores/{slug}` (ADR 0020). */
+/** `GET /v1/public/stores/{slug}` (ADR 0020; the logo since ADR 0021). */
 export interface PublicStoreProfile {
   slug: string;
   name: string;
-  brand: { version: number; colors: BrandColors };
+  brand: { version: number; colors: BrandColors; logoImageId: string | null };
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A public image id, or null for anything else: the app builds a URL with it. */
+export const imageIdOf = (value: unknown): string | null =>
+  typeof value === "string" && UUID.test(value) ? value : null;
 
 /** `GET /v1/public/stores/{slug}/status` (ADR 0016). */
 export interface PublicStoreStatus {
@@ -34,6 +39,8 @@ export type Availability =
 export interface StoreView {
   name: string;
   colors: BrandColors;
+  /** The brand logo, from the same source as `colors`; null when the store has none. */
+  logoImageId: string | null;
   brandVersion: number;
   brandSource: BrandSource;
   /**
@@ -89,10 +96,13 @@ export function parseProfile(
     !colors
   )
     return null;
+  // A cache written before the logo existed has no logoImageId: the same as no logo.
+  const logo = brand!.logoImageId ?? null;
+  if (logo !== null && !imageIdOf(logo)) return null;
   return {
     slug: profile.slug,
     name: profile.name,
-    brand: { version: brand!.version!, colors },
+    brand: { version: brand!.version!, colors, logoImageId: logo },
   };
 }
 
@@ -135,22 +145,37 @@ async function readCache(
 export async function cachedBrand(
   cache: BrandCache,
   storeSlug: string,
-): Promise<{ name: string; colors: BrandColors; version: number } | null> {
+): Promise<{
+  name: string;
+  colors: BrandColors;
+  logoImageId: string | null;
+  version: number;
+} | null> {
   const profile = await readCache(cache, storeSlug);
   return profile
     ? {
         name: profile.name,
         colors: profile.brand.colors,
+        logoImageId: profile.brand.logoImageId,
         version: profile.brand.version,
       }
     : null;
 }
 
-type Answer<T> =
+export type Answer<T> =
   { kind: "ok"; body: T } | { kind: "unavailable" } | { kind: "failed" };
 
-async function get<T>(
-  options: LoadStoreOptions,
+export type PublicGetOptions = Pick<
+  LoadStoreOptions,
+  "apiUrl" | "storeSlug" | "fetch" | "timeoutMs" | "signal"
+>;
+
+/**
+ * GET of a public store route. 403 and 404 mean the store is not serving; anything else that is
+ * not a valid body (network, timeout, 429, 5xx) is a failure the user can retry.
+ */
+export async function publicGet<T>(
+  options: PublicGetOptions,
   path: string,
   parse: (body: unknown) => T | null,
 ): Promise<Answer<T>> {
@@ -193,8 +218,8 @@ async function get<T>(
  */
 export async function loadStore(options: LoadStoreOptions): Promise<StoreView> {
   const [profile, status] = await Promise.all([
-    get(options, "", (body) => parseProfile(body, options.storeSlug)),
-    get(options, "/status", parseStatus),
+    publicGet(options, "", (body) => parseProfile(body, options.storeSlug)),
+    publicGet(options, "/status", parseStatus),
   ]);
   if (profile.kind === "ok" && !options.signal?.aborted) {
     try {
@@ -231,6 +256,7 @@ export async function loadStore(options: LoadStoreOptions): Promise<StoreView> {
   return {
     name: brand?.profile.name ?? options.fallback.name,
     colors: brand?.profile.brand.colors ?? options.fallback.colors,
+    logoImageId: brand?.profile.brand.logoImageId ?? null,
     brandVersion: brand?.profile.brand.version ?? 0,
     brandSource: brand?.source ?? "manifest",
     brandStale:
@@ -260,6 +286,7 @@ export function createStoreRefresher(
   const offline = (): StoreView => ({
     name: options.fallback.name,
     colors: options.fallback.colors,
+    logoImageId: null,
     brandVersion: 0,
     brandSource: "manifest",
     brandStale: true,

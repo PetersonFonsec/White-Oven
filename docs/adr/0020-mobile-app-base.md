@@ -1,6 +1,6 @@
 # ADR 0020: base do app Expo white label
 
-- **Status:** em desenvolvimento em M5.1
+- **Status:** implementado em M5.1 (PR #33)
 - **Data:** 2026-10-26
 - **Milestone:** M5.1
 
@@ -20,7 +20,7 @@ A [ADR 0014](0014-brand-theme.md) deixou para M5.1 o endpoint público de marca.
 
 - **Pilha:** `apps/mobile` usa Expo SDK 58, com React Native 0.88 e React 19.3, nas versões do template oficial `blank-typescript` do SDK.
   - As dependências diretas são `expo`, `expo-constants`, `expo-file-system`, `expo-status-bar`, `react` e `react-native`. Nenhuma biblioteca fora do Expo entra.
-  - Não há navegação nem estado global: o app tem uma tela até o cardápio (M5.2).
+  - Não há navegação nem estado global: o app tem uma tela até o cardápio (M5.2, [ADR 0021](0021-mobile-menu-pizza-builder.md)).
   - Pastas nativas (`ios/`, `android/`) não são versionadas. São geradas por build a partir do manifesto (M5.6).
 - **Manifesto por loja** (`apps/mobile/manifests/{slug}.json`), validado por `parseManifest`. Uma chave desconhecida recusa o manifesto. Campos:
   - `slug`, igual ao da API;
@@ -37,7 +37,7 @@ A [ADR 0014](0014-brand-theme.md) deixou para M5.1 o endpoint público de marca.
 - **API:** `GET /v1/public/stores/{slug}` devolve `{ slug, name, brand: { version, colors } }`.
   - As cores já vêm resolvidas sobre os padrões. O endpoint usa a mesma capacidade `publicMenu` do cardápio: loja `ACTIVE`; outra loja recebe `403 TENANT_NOT_ACTIVE`; slug desconhecido recebe `404`.
   - O cabeçalho é `Cache-Control: no-cache`, para que um tema novo ou uma suspensão apareçam na próxima abertura.
-  - Nenhum id de imagem é exposto. O logotipo entra com a rota pública de imagens do cardápio em M5.2, para que as duas compartilhem a mesma política de cache e de autorização.
+  - Nenhum id de imagem é exposto. O logotipo entra com a rota pública de imagens do cardápio em M5.2, para que as duas compartilhem a mesma política de cache e de autorização. M5.2 acrescentou `brand.logoImageId` ([ADR 0021](0021-mobile-menu-pizza-builder.md)); um cache gravado antes disso abre sem logotipo.
 - **Carregamento** (`loadStore`, puro e testado com `fetch` e cache em memória):
   - Pede o perfil e o status (`/status`, ADR 0016) em paralelo, com tempo-limite de 8 s cada.
   - Os dois resultados são independentes:

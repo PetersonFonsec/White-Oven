@@ -41,7 +41,7 @@ Instale Chromium com `pnpm exec playwright install chromium`. Alternativamente, 
 
 - `apps/landing`: interface, endpoint Astro `/api/leads`, política `/privacidade` e persistência temporária.
 - `apps/api`: API NestJS. Configuração em `apps/api/.env.example` (API) e `apps/api/.env.migrate.example` (migrations); OpenAPI em `/v1/openapi.json` fora de produção. Decisões nos ADRs [0004](docs/adr/0004-api-foundation.md), [0005](docs/adr/0005-database-roles-migrations.md) e [0006](docs/adr/0006-tenant-isolation.md).
-- `apps/mobile`: app Expo white label do cliente, um binário por pizzaria a partir do manifesto ([ADR 0020](docs/adr/0020-mobile-app-base.md)).
+- `apps/mobile`: app Expo white label do cliente, um binário por pizzaria a partir do manifesto ([ADR 0020](docs/adr/0020-mobile-app-base.md)), com cardápio e Pizza Builder ([ADR 0021](docs/adr/0021-mobile-menu-pizza-builder.md)).
 - `packages/contracts`: contrato e validação isomórfica do lead, sem dependências de servidor.
 - `packages/design-tokens`: identidade visual reutilizável.
 - `docs/product`, `docs/architecture`, `docs/adr`: estado do produto e decisões.

@@ -9,8 +9,9 @@ interface Props {
 }
 
 /**
- * First screen of the app (M5.1): the store with its brand, or the closed or unavailable notice.
- * The menu arrives in M5.2. Text scales with the system font size; touch targets are 48 dp.
+ * The store with its brand and a notice (M5.1). Since M5.2 it shows only for a store that is not
+ * serving; open, closed and unconfirmed stores show the menu. Text scales with the system font
+ * size; touch targets are 48 dp.
  */
 export function StoreScreen({ message, refreshing, onRetry }: Props) {
   const theme = useTheme();

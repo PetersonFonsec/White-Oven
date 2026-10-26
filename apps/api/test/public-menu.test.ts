@@ -234,6 +234,7 @@ describe("M2.6 public menu", databaseSuite, () => {
     });
     assert.deepEqual(names(body.flavors), ["Marguerita"]);
     assert.equal(body.flavors[0].description, "Marguerita descrição");
+    assert.equal(body.flavors[0].imageId, null);
     assert.deepEqual(names(body.ingredients), ["Tomate"]);
     assert.deepEqual(body.flavors[0].ingredientIds, [body.ingredients[0].id]);
     assert.deepEqual(body.flavorPrices, [
@@ -261,6 +262,7 @@ describe("M2.6 public menu", databaseSuite, () => {
       },
     ]);
     assert.deepEqual(names(body.simpleProducts), ["Refrigerante"]);
+    assert.equal(body.simpleProducts[0].imageId, null);
     assert.deepEqual(body.pricingPolicy, {
       halfAndHalfStrategy: "HIGHEST",
       halfAndHalfSurchargeCents: 0,

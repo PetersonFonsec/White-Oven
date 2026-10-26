@@ -11,6 +11,10 @@ import type { TenantStatus } from "../tenancy/tenant.entity";
 import { ApiError } from "../errors/api-error";
 import { JsonLogger } from "../logging/json-logger";
 import {
+  PublicMenuService,
+  publicMenuImageIds,
+} from "../catalog/public-menu.service";
+import {
   IMAGE_PROCESSOR,
   IMAGE_STORAGE,
   type ImageStorage,
@@ -41,6 +45,7 @@ export class ImageService {
     @Inject(IMAGE_STORAGE) private readonly storage: ImageStorage,
     @Inject(IMAGE_PROCESSOR) private readonly processImage: ImageProcessor,
     @Inject(JsonLogger) private readonly logger: JsonLogger,
+    private readonly publicMenu: PublicMenuService,
   ) {}
 
   async upload(bytes: Buffer, contentType: string, requestId: string) {
@@ -117,6 +122,34 @@ export class ImageService {
       return row;
     });
     if (!found) throw notFound();
+    return this.readStored(assetId, variant, "read");
+  }
+
+  /**
+   * An image of the store's public surface (M5.2, ADR 0021): one shown by the public menu, or the
+   * brand logo. Any other id answers the same 404 as an unknown one, so an upload that is not
+   * published yet, the image of an archived item or another store's image never leaves the API.
+   */
+  async readPublic(assetId: string, variant: ImageVariant) {
+    const menu = await this.publicMenu.get();
+    if (!publicMenuImageIds(menu).has(assetId)) {
+      const [logo] = await this.transactions.run((em) =>
+        em.execute<{ id: string }[]>(
+          "select logo_asset_id as id from brand_themes where logo_asset_id = ?",
+          [assetId],
+        ),
+      );
+      if (!logo) throw notFound();
+    }
+    return this.readStored(assetId, variant, "public_read");
+  }
+
+  private async readStored(
+    assetId: string,
+    variant: ImageVariant,
+    operation: string,
+  ) {
+    const context = currentTenantContext();
     try {
       return await this.storage.read(context.tenantId, assetId, variant);
     } catch (error) {
@@ -126,7 +159,7 @@ export class ImageService {
         "image metadata exists without stored variant",
         {
           event: "image_storage.variant_missing",
-          operation: "read",
+          operation,
           tenantId: context.tenantId,
           assetId,
           variant,

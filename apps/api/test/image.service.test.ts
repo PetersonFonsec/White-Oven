@@ -9,6 +9,7 @@ import { JsonLogger } from "../src/logging/json-logger";
 import type { TenantStatus } from "../src/tenancy/tenant.entity";
 import type { ImageStorage, ProcessedImage } from "../src/images/image-storage";
 import { ImageService } from "../src/images/image.service";
+import type { PublicMenuService } from "../src/catalog/public-menu.service";
 
 const TENANT_ID = "51b7cf37-828a-4d18-8f60-804ab23e05e5";
 const STAFF_ID = "842bb248-718f-4e0f-85ee-43d0c522e233";
@@ -107,6 +108,10 @@ function harness(options: HarnessOptions = {}) {
     storage,
     processor,
     logger,
+    // Staff uploads and reads never consult the public menu.
+    {
+      get: () => assert.fail("the public menu is for public reads only"),
+    } as unknown as PublicMenuService,
   );
   const withActor = <T>(
     work: () => Promise<T>,

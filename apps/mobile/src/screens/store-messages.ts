@@ -80,3 +80,20 @@ export function storeMessage(view: StoreView): StoreMessage {
       };
   }
 }
+
+/**
+ * Lines above the menu (M5.2): why the store is not taking orders now, if so, and the connection
+ * notice. Empty for an open store with a fresh brand.
+ */
+export function menuNotices(view: StoreView): string[] {
+  const message = storeMessage(view);
+  const status =
+    view.availability.kind === "closed"
+      ? `${message.title}. ${message.body}`
+      : view.availability.kind === "offline"
+        ? message.body
+        : null;
+  return [status, message.notice].filter(
+    (line): line is string => line !== null,
+  );
+}
