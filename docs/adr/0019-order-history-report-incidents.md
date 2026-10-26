@@ -49,13 +49,30 @@ Três pontos não estavam decididos: o que é "dia" no histórico e no relatóri
     - duas pessoas resolvendo juntas: a segunda recebe `409 INCIDENT_ALREADY_RESOLVED`.
   - **Prazo:** pedidos em andamento aceitam ocorrência a qualquer momento. Pedidos encerrados aceitam até 30 dias depois da transição terminal; depois disso, `422 INCIDENT_WINDOW_CLOSED`.
   - **Status do tenant:** a capacidade `incidentWrite` vale para todos os papéis em loja `ACTIVE` e só para o OWNER em loja `SUSPENDED`. A escrita trava a linha do tenant `FOR SHARE`, como as transições, então uma suspensão em andamento entra antes ou depois, nunca no meio.
-  - **Auditoria:** registrar e resolver gravam `AuditEvent` (`order.incident_reported` e `order.incident_resolved`) com o pedido e o tipo, **sem o texto livre**, que pode citar o cliente.
-  - Registrar ocorrência não usa `Idempotency-Key`. Um retry pode duplicar uma ocorrência, mas a duplicata é visível, não tem efeito em valores e pode ser resolvida com uma nota.
+  - **Quem escreve, conferido no banco:** um gatilho `BEFORE INSERT OR UPDATE` (`whiteoven_order_incident_guard`) recusa a escrita com `42501` quando:
+    - a linha não é da loja do contexto RLS da transação;
+    - faltam `app.incident_actor_id` e `app.incident_session_id`, que o serviço define com `set_config(..., true)` a partir do token já validado (`staffUserId` e `sessionId`), nunca do corpo;
+    - o autor da linha (`created_by` ao registrar, `resolved_by` ao resolver) não é a pessoa dessas configurações;
+    - a sessão não está viva (não revogada, sem expirar, com a loja ativa igual à da linha), a pessoa não está `ACTIVE`, o vínculo não está `ACTIVE`, ou a loja está suspensa e o papel não é OWNER.
+      É o mesmo padrão da auditoria do catálogo (sessão e vínculo vivos), com a mesma regra de `incidentWrite`. Um UUID de autor sozinho não basta: ele precisa ter a sessão.
+  - **Auditoria:** um gatilho `AFTER INSERT OR UPDATE OF status` (`whiteoven_order_incident_audit`) grava `AuditEvent` (`order.incident_reported` e `order.incident_resolved`) na mesma transação, a partir da linha: loja, autor, id da ocorrência, pedido e tipo, **sem o texto livre**, que pode citar o cliente. O `request_id` só entra se for UUID.
+    - Não há função de auditoria chamável: a `whiteoven_incident_audit(...)` da primeira versão desta ADR, que recebia dados do chamador, foi removida. As duas funções de gatilho são `SECURITY DEFINER` (precisam escrever em `audit_events` e ler sessões), com `search_path = pg_catalog, public`, nomes qualificados, nenhum SQL dinâmico e `EXECUTE` revogado de `PUBLIC`.
+    - Se a escrita falha, a transação inteira volta e nenhuma auditoria fica.
+  - **Idempotência do registro:** `POST .../incidents` exige `Idempotency-Key` (UUID).
+    - A linha guarda `key_hash` (SHA-256 da chave) e `request_hash` (SHA-256 de tipo, descrição e `reportedBy`), com `unique (tenant_id, order_id, key_hash)`. As chaves ficam isoladas por loja e pedido e não se misturam com `order_creation_keys` nem com as chaves de transição.
+    - Fluxo: procura a chave; se existe, mesmo `request_hash` responde `200` com a ocorrência original e outro corpo responde `409 IDEMPOTENCY_CONFLICT`. Senão, valida pedido e prazo e insere com `on conflict do nothing`; se outra requisição com a mesma chave venceu a corrida, repete a busca. Requisições simultâneas com a mesma chave criam uma ocorrência e um evento de auditoria.
+    - O replay vem antes do prazo: um retry de um registro aceito no 30º dia responde `200` mesmo depois que o prazo fechou.
+    - Chave ausente ou inválida: `422 VALIDATION_FAILED` com o caminho `Idempotency-Key`. A chave é permanente enquanto a ocorrência existir.
+    - Alternativa descartada: reaproveitar `order_creation_keys`, que tem outro escopo (cliente e loja) e outro ciclo de vida.
 - **Autores** vêm do nome atual em `staff_users`. Transições do cliente aparecem como "pelo cliente" e as do sistema como "automático".
 - **Painel:**
   - Páginas `/loja/historico` (todos os papéis) e `/loja/relatorio` (OWNER), carregadas sob demanda.
   - O detalhe do histórico mostra itens, transições com autor e ocorrências, com os formulários de registrar e resolver.
   - O texto de ajuda pede para evitar dados pessoais desnecessários na descrição.
+  - A intenção de registro (pedido, tipo, descrição, `reportedBy`, chave e data) fica no `sessionStorage` com o mesmo escopo do quadro da M4.5 (loja, pessoa e sessão), validada ao restaurar e apagada ao trocar de sessão. Nenhum token é guardado.
+    - Resposta definitiva (2xx ou 4xx que não seja 408): a intenção é apagada.
+    - Resposta incerta (rede, 408 ou 5xx): a intenção fica. O painel não reenvia sozinho; mostra o registro pendente no lugar do formulário e oferece "Verificar / repetir registro", que repete com a mesma chave. Como o servidor responde ao replay com a ocorrência original, repetir é sempre seguro.
+    - A descrição fica no `sessionStorage` só enquanto o registro está pendente, porque o retry precisa do mesmo corpo.
 
 ## Consequências
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { HttpStatus, Injectable } from "@nestjs/common";
 import type { EntityManager } from "@mikro-orm/postgresql";
 import { ApiError } from "../errors/api-error";
@@ -72,6 +73,13 @@ export interface DailyReport extends DailyReportRange {
   days: (DailySales & { date: string })[];
   totals: DailySales;
 }
+
+const sha256 = (value: string) => createHash("sha256").update(value).digest();
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** SHA-256 of a validated incident, the body an `Idempotency-Key` stands for. */
+export const incidentRequestHash = (input: IncidentInput) =>
+  sha256(JSON.stringify([input.type, input.description, input.reportedBy]));
 
 const iso = (value: Date | string | null) =>
   value === null ? null : new Date(value).toISOString();
@@ -242,13 +250,41 @@ export class OrderHistoryService {
   /**
    * Records an incident on an order of this store: open orders, or ended ones up to
    * `INCIDENT_WINDOW_DAYS` after they ended. The order itself is not changed.
+   *
+   * Idempotent per store, order and `Idempotency-Key`: the same key and body return the incident
+   * the key created (`created: false`), even after the window closed; another body is a 409
+   * IDEMPOTENCY_CONFLICT. Two requests with one key insert once: the second waits for the
+   * first's unique key and then reads its incident.
    */
   reportIncident(
     orderId: string,
     input: IncidentInput,
+    idempotencyKey: string,
     requestId: string | null,
-  ): Promise<OrderIncidentView> {
-    return this.write(async (em, staffUserId) => {
+  ): Promise<{ created: boolean; incident: OrderIncidentView }> {
+    const keyHash = sha256(idempotencyKey);
+    const requestHash = incidentRequestHash(input);
+    return this.write(requestId, async (em, staffUserId) => {
+      const replay = async () => {
+        const [prior] = await em.execute<{ id: string; requestHash: Buffer }[]>(
+          `select id, request_hash as "requestHash" from order_incidents
+            where order_id = ? and key_hash = ?`,
+          [orderId, keyHash],
+        );
+        if (!prior) return null;
+        if (!prior.requestHash.equals(requestHash))
+          throw new ApiError(
+            HttpStatus.CONFLICT,
+            "IDEMPOTENCY_CONFLICT",
+            "Idempotency key was used for a different incident.",
+          );
+        return {
+          created: false,
+          incident: await this.readIncident(em, orderId, prior.id),
+        };
+      };
+      const repeated = await replay();
+      if (repeated) return repeated;
       const [order] = await em.execute<{ windowClosed: boolean }[]>(
         `select o.status in ('COMPLETED','REJECTED','CANCELED') and coalesce(
                   (select max(c.at) from order_status_changes c
@@ -270,20 +306,32 @@ export class OrderHistoryService {
           `Incidents are recorded up to ${INCIDENT_WINDOW_DAYS} days after the order ended.`,
           { windowDays: INCIDENT_WINDOW_DAYS },
         );
+      // A concurrent request with the same key makes this insert wait and then skip.
       const [created] = await em.execute<{ id: string }[]>(
-        `insert into order_incidents (tenant_id, order_id, type, description, reported_by, created_by)
-         values (current_setting('app.tenant_id')::uuid, ?, ?, ?, ?, ?) returning id`,
-        [orderId, input.type, input.description, input.reportedBy, staffUserId],
+        `insert into order_incidents (tenant_id, order_id, type, description, reported_by,
+           created_by, key_hash, request_hash)
+         values (current_setting('app.tenant_id')::uuid, ?, ?, ?, ?, ?, ?, ?)
+         on conflict (tenant_id, order_id, key_hash) do nothing
+         returning id`,
+        [
+          orderId,
+          input.type,
+          input.description,
+          input.reportedBy,
+          staffUserId,
+          keyHash,
+          requestHash,
+        ],
       );
-      await em.execute("select whiteoven_incident_audit(?,?,?,?,?,?)", [
-        staffUserId,
-        orderId,
-        created!.id,
-        "order.incident_reported",
-        input.type,
-        requestId,
-      ]);
-      return this.readIncident(em, orderId, created!.id);
+      if (!created) {
+        const raced = await replay();
+        if (!raced) throw new Error("Incident key conflict without a row.");
+        return raced;
+      }
+      return {
+        created: true,
+        incident: await this.readIncident(em, orderId, created.id),
+      };
     });
   }
 
@@ -294,12 +342,12 @@ export class OrderHistoryService {
     resolutionNote: string | null,
     requestId: string | null,
   ): Promise<OrderIncidentView> {
-    return this.write(async (em, staffUserId) => {
-      const [resolved] = await em.execute<{ type: IncidentType }[]>(
+    return this.write(requestId, async (em, staffUserId) => {
+      const [resolved] = await em.execute<{ id: string }[]>(
         `update order_incidents
             set status = 'RESOLVED', resolution_note = ?, resolved_by = ?, resolved_at = now()
           where id = ? and order_id = ? and status = 'OPEN'
-          returning type`,
+          returning id`,
         [resolutionNote, staffUserId, incidentId, orderId],
       );
       if (!resolved) {
@@ -319,29 +367,34 @@ export class OrderHistoryService {
               "Incident not found.",
             );
       }
-      await em.execute("select whiteoven_incident_audit(?,?,?,?,?,?)", [
-        staffUserId,
-        orderId,
-        incidentId,
-        "order.incident_resolved",
-        resolved.type,
-        requestId,
-      ]);
       return this.readIncident(em, orderId, incidentId);
     });
   }
 
   /**
    * An incident write: the tenant row is locked FOR SHARE (`whiteoven_lock_tenant_status`), so a
-   * suspension either commits first and the policy sees it, or waits for this write.
+   * suspension either commits first and the policy sees it, or waits for this write. The staff
+   * session goes into transaction settings: the database checks the author against it and the
+   * audit trigger records it (ADR 0019).
    */
   private write<T>(
+    requestId: string | null,
     work: (em: EntityManager, staffUserId: string) => Promise<T>,
   ): Promise<T> {
     return this.transactions.run(async (em) => {
       const { tenantId, actor } = currentTenantContext();
       if (actor.type !== "staff")
         throw new Error("incident writes require staff");
+      await em.execute(
+        `select set_config('app.incident_actor_id', ?, true),
+                set_config('app.incident_session_id', ?, true),
+                set_config('app.incident_request_id', ?, true)`,
+        [
+          actor.staffUserId,
+          actor.sessionId,
+          requestId && UUID.test(requestId) ? requestId : "",
+        ],
+      );
       const [tenant] = await em.execute<{ status: TenantStatus | null }[]>(
         "select whiteoven_lock_tenant_status(?) as status",
         [tenantId],

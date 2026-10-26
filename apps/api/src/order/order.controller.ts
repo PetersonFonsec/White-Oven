@@ -259,23 +259,38 @@ export class AdminOrderController {
   @Post(":orderId/incidents")
   @AdminRoute("OWNER", "MANAGER", "STAFF")
   @ApiBody({ type: IncidentBody })
+  @ApiHeader({
+    name: "Idempotency-Key",
+    required: true,
+    description:
+      "A UUID per incident the person records; a retry reuses it with the same body.",
+  })
   @ApiOperation({
     summary: "Record an incident on an order",
-    description: `201 with the incident. The order's state and values never change. Ended orders accept incidents for ${INCIDENT_WINDOW_DAYS} days (422 INCIDENT_WINDOW_CLOSED after). A suspended store accepts them from the OWNER only (403 TENANT_NOT_ACTIVE).`,
+    description: `201 with the new incident; 200 with the same incident when the key and body repeat (nothing else is written). 409 IDEMPOTENCY_CONFLICT when the key was used for another body on this order. The order's state and values never change. Ended orders accept incidents for ${INCIDENT_WINDOW_DAYS} days (422 INCIDENT_WINDOW_CLOSED after). A suspended store accepts them from the OWNER only (403 TENANT_NOT_ACTIVE).`,
   })
-  reportIncident(
+  async reportIncident(
     @Param("orderId") orderId: string,
     @Body() raw: unknown,
+    @Headers("idempotency-key") key: string | undefined,
+    @Res({ passthrough: true }) res: Response,
     @Headers("x-request-id") requestId?: string,
   ) {
-    if (!UUID.test(orderId)) throw invalid(["orderId"]);
     const result = validateIncident(raw);
-    if (!result.ok) throw invalid(result.paths);
-    return this.orderHistory.reportIncident(
+    const paths = [
+      ...(UUID.test(orderId) ? [] : ["orderId"]),
+      ...(typeof key === "string" && UUID.test(key) ? [] : ["Idempotency-Key"]),
+      ...(result.ok ? [] : result.paths),
+    ];
+    if (paths.length || !result.ok) throw invalid(paths);
+    const { created, incident } = await this.orderHistory.reportIncident(
       orderId,
       result.value,
+      key!.toLowerCase(),
       auditRequestId(requestId),
     );
+    res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
+    return incident;
   }
 
   @Post(":orderId/incidents/:incidentId/resolve")

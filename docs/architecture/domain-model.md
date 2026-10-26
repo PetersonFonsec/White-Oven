@@ -342,6 +342,8 @@ Implementação (M4.6, [ADR 0019](../adr/0019-order-history-report-incidents.md)
 - Tabela `order_incidents` com RLS forçada, descrição e nota de 1 a 1000 caracteres, e autor e data de criação e de resolução.
 - A app insere ocorrências e só altera as colunas de resolução. Um gatilho permite apenas `OPEN → RESOLVED`, uma vez, e não há `DELETE`.
 - Registro só até 30 dias depois da transição terminal do pedido.
+- `keyHash` (SHA-256 da `Idempotency-Key`) e `requestHash` (SHA-256 de tipo, descrição e `reportedBy`), com `unique (tenant_id, order_id, key_hash)`.
+- Gatilhos conferem que o autor é a pessoa da sessão de equipe da transação e gravam a auditoria a partir da linha, sem o texto livre.
 
 ## Planos e cobrança
 

@@ -71,6 +71,7 @@ describe("OrderHistoryPage", () => {
     detail: ReturnType<typeof vi.fn>;
     reportIncident: ReturnType<typeof vi.fn>;
     resolveIncident: ReturnType<typeof vi.fn>;
+    pendingIncident: ReturnType<typeof vi.fn>;
   };
   const drain = async () => {
     for (let i = 0; i < 20; i++) await Promise.resolve();
@@ -95,6 +96,7 @@ describe("OrderHistoryPage", () => {
       detail: vi.fn(() => Promise.resolve(detail())),
       reportIncident: vi.fn(() => Promise.resolve(incident)),
       resolveIncident: vi.fn(() => Promise.resolve(incident)),
+      pendingIncident: vi.fn(() => undefined),
     };
     TestBed.configureTestingModule({
       imports: [OrderHistoryPage],
@@ -211,6 +213,58 @@ describe("OrderHistoryPage", () => {
     );
     expect(text()).toContain("Resolvida por Marcos");
     expect(text()).toContain("Cupom");
+  });
+
+  it("offers to repeat an unconfirmed record with its key instead of a new form", async () => {
+    const pending = {
+      orderId: entry(7).id,
+      type: "WRONG_ITEM" as const,
+      description: "Veio calabresa",
+      reportedBy: "STAFF" as const,
+      idempotencyKey: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      createdAt: Date.now(),
+      uncertain: true,
+    };
+    api.pendingIncident.mockReturnValue(pending);
+    button("#9").click();
+    await drain();
+    expect(text()).toContain("Registro aguardando confirmação");
+    expect(text()).toContain("Item errado: Veio calabresa");
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        "#incident-description",
+      ),
+    ).toBeNull();
+
+    api.reportIncident.mockImplementationOnce(() => {
+      api.pendingIncident.mockReturnValue(undefined);
+      return Promise.resolve(incident);
+    });
+    api.detail.mockResolvedValueOnce(detail({ incidents: [incident] }));
+    button("Verificar / repetir registro").click();
+    await drain();
+    expect(api.reportIncident).toHaveBeenCalledWith(entry(7).id, {
+      type: "WRONG_ITEM",
+      description: "Veio calabresa",
+      reportedBy: "STAFF",
+    });
+    expect(text()).not.toContain("Registro aguardando confirmação");
+    expect(element("#incident-description")).toBeTruthy();
+  });
+
+  it("says a record whose answer was lost is kept for a retry", async () => {
+    button("#9").click();
+    await drain();
+    api.reportIncident.mockRejectedValueOnce(
+      new HttpErrorResponse({ status: 0 }),
+    );
+    const description = element<HTMLTextAreaElement>("#incident-description");
+    description.value = "Sem resposta";
+    description.dispatchEvent(new Event("input"));
+    fixture.detectChanges();
+    button("Registrar ocorrência").click();
+    await drain();
+    expect(text()).toContain("ficou guardado com a mesma chave");
   });
 
   it("explains an incident refused for an order that ended long ago", async () => {

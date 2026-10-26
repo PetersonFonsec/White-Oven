@@ -209,16 +209,9 @@ describe("tenant isolation", databaseSuite, () => {
          values (?,1,?,?,'PICKUP','PIX_ON_DELIVERY',1000,0,0,1000) returning id`,
         [id, customer!.id, `Cliente ${slug}`],
       );
-      const [incident] = await em.execute<{ id: string }[]>(
-        `insert into order_incidents (tenant_id,order_id,type,description,reported_by,created_by)
-         values (?,?,'LATE_DELIVERY','Atrasou','STAFF',?) returning id`,
-        [id, order!.id, memberId],
-      );
-      return {
-        addressId: address!.id,
-        orderId: order!.id,
-        incidentId: incident!.id,
-      };
+      // The incident is recorded through the API once the server runs (its author must be a
+      // live staff session, checked by the database).
+      return { addressId: address!.id, orderId: order!.id, incidentId: "" };
     });
     return {
       id,
@@ -255,6 +248,15 @@ describe("tenant isolation", databaseSuite, () => {
       },
       { imports: [TenantProbeModule], entities: [ProbeFlavor] },
     );
+    for (const store of [a, b]) {
+      const created = await adminIncidentCall(
+        store,
+        `/admin/orders/${store.orderId}/incidents`,
+        { type: "LATE_DELIVERY", description: "Atrasou", reportedBy: "STAFF" },
+      );
+      assert.equal(created.status, 201);
+      store.incidentId = (await json(created)).id;
+    }
   });
   after(async () => {
     await server?.close();
@@ -368,6 +370,7 @@ describe("tenant isolation", databaseSuite, () => {
       headers: {
         authorization: `Bearer ${accessToken}`,
         "content-type": "application/json",
+        "idempotency-key": randomUUID(),
       },
       body: JSON.stringify(body),
     });

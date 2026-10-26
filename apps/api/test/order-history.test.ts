@@ -134,12 +134,60 @@ describe(
 
     const get = (token: string, path: string) =>
       fetch(`${server.baseUrl}/v1/admin/${path}`, { headers: bearer(token) });
-    const post = (token: string, path: string, body: unknown) =>
+    /** A POST; recording an incident gets a new `Idempotency-Key` unless `key` names one. */
+    const post = (
+      token: string,
+      path: string,
+      body: unknown,
+      key: string | null = path.endsWith("/incidents") ? randomUUID() : null,
+    ) =>
       fetch(`${server.baseUrl}/v1/admin/${path}`, {
         method: "POST",
-        headers: { "content-type": "application/json", ...bearer(token) },
+        headers: {
+          "content-type": "application/json",
+          ...bearer(token),
+          ...(key ? { "idempotency-key": key } : {}),
+        },
         body: JSON.stringify(body),
       });
+    /** The live session of a staff member, as the guard binds it to the token. */
+    const sessionOf = (userId: string) =>
+      owner.em
+        .getConnection()
+        .execute<{ id: string }[]>(
+          `select id from staff_sessions where staff_user_id = ? and revoked_at is null
+            order by created_at desc limit 1`,
+          [userId],
+        )
+        .then(([row]) => row!.id);
+    /**
+     * Runs `query` as the app role in `tenantId`, as `actor` with `session` in the transaction
+     * settings the incident triggers read; the SQLSTATE of a refusal, or undefined.
+     */
+    const asStaff = (
+      tenantId: string,
+      actor: { userId: string; sessionId: string } | null,
+      query: string,
+      params: unknown[] = [],
+    ) =>
+      sqlState(() =>
+        runInTenant(app, tenantId, async (em) => {
+          if (actor)
+            await em.execute(
+              `select set_config('app.incident_actor_id', ?, true),
+                      set_config('app.incident_session_id', ?, true)`,
+              [actor.userId, actor.sessionId],
+            );
+          await em.execute(query, params);
+        }),
+      );
+    const auditCount = () =>
+      owner.em
+        .getConnection()
+        .execute<{ count: number }[]>(
+          `select count(*)::int as count from audit_events where entity_type = 'order_incident'`,
+        )
+        .then(([row]) => row!.count);
     const numbers = async (token: string, query: string) => {
       const response = await get(token, `orders/history?${query}`);
       assert.equal(response.status, 200, query);
@@ -686,10 +734,19 @@ describe(
           reportedBy: "CUSTOMER",
         }),
       );
+      const actor = {
+        userId: incident.createdBy ?? "",
+        sessionId: "",
+      };
+      const [{ createdBy }] = (await sql<{ createdBy: string }>(
+        store.id,
+        `select created_by as "createdBy" from order_incidents where id = ?`,
+        [incident.id],
+      )) as [{ createdBy: string }];
+      actor.userId = createdBy;
+      actor.sessionId = await sessionOf(createdBy);
       const asApp = (query: string) =>
-        sqlState(() =>
-          runInTenant(app, store.id, (em) => em.execute(query, [incident.id])),
-        );
+        asStaff(store.id, actor, query, [incident.id]);
       assert.equal(
         await asApp("delete from order_incidents where id = ?"),
         INSUFFICIENT_PRIVILEGE,
@@ -704,10 +761,20 @@ describe(
         await asApp("update order_incidents set order_id = id where id = ?"),
         INSUFFICIENT_PRIVILEGE,
       );
-      // Resolving needs the author and the time; reopening is refused by the trigger.
+      // Without the session settings the database does not know the author at all.
+      assert.equal(
+        await asStaff(
+          store.id,
+          null,
+          "update order_incidents set status = 'RESOLVED', resolved_by = created_by, resolved_at = now() where id = ?",
+          [incident.id],
+        ),
+        INSUFFICIENT_PRIVILEGE,
+      );
+      // Resolving needs the time too; reopening or rewriting is refused by the trigger.
       assert.equal(
         await asApp(
-          "update order_incidents set status = 'RESOLVED' where id = ?",
+          "update order_incidents set status = 'RESOLVED', resolved_by = created_by where id = ?",
         ),
         CHECK_VIOLATION,
       );
@@ -723,7 +790,7 @@ describe(
       );
       assert.equal(
         await asApp(
-          "update order_incidents set status = 'OPEN', resolved_by = null, resolved_at = null where id = ?",
+          "update order_incidents set status = 'OPEN', resolved_by = created_by where id = ?",
         ),
         CHECK_VIOLATION,
       );
@@ -733,6 +800,296 @@ describe(
         ),
         CHECK_VIOLATION,
       );
+    });
+
+    it("audits incidents from the row, only for the author of the live staff session", async () => {
+      const orderId = await seed(store.id, {
+        number: 2501,
+        placedAt: new Date().toISOString(),
+      });
+      const otherOrderId = await seed(other.id, {
+        number: 2501,
+        placedAt: new Date().toISOString(),
+      });
+      const member = await staff(store.id, "STAFF", "Dora Caixa");
+      const colleague = await staff(store.id, "MANAGER", "Edu Gerente");
+      const stranger = await staff(other.id, "OWNER", "Fábio Outra Loja");
+      const me = {
+        userId: member.userId,
+        sessionId: await sessionOf(member.userId),
+      };
+      const insert = (
+        tenantId: string,
+        actor: { userId: string; sessionId: string } | null,
+        order: string,
+        createdBy: string,
+        rowTenant = tenantId,
+      ) =>
+        asStaff(
+          tenantId,
+          actor,
+          `insert into order_incidents (tenant_id, order_id, type, description, reported_by,
+             created_by, key_hash, request_hash)
+           values (?, ?, 'QUALITY', 'Texto com nome do cliente', 'STAFF', ?,
+             sha256(gen_random_uuid()::text::bytea), sha256('x'::bytea))`,
+          [rowTenant, order, createdBy],
+        );
+      const audits = await auditCount();
+
+      // The legitimate write: the author is the session's staff member.
+      assert.equal(
+        await insert(store.id, me, orderId, member.userId),
+        undefined,
+      );
+      assert.equal(await auditCount(), audits + 1);
+      const [direct] = await owner.em
+        .getConnection()
+        .execute<
+          { actor: string; changes: Record<string, unknown>; tenant: string }[]
+        >(
+          `select a.actor_id as actor, a.changes, a.tenant_id as tenant
+             from audit_events a
+            where a.entity_type = 'order_incident' and a.changes ->> 'orderId' = ?`,
+          [orderId],
+        );
+      assert.deepEqual(direct, {
+        actor: member.userId,
+        changes: { orderId, type: "QUALITY" },
+        tenant: store.id,
+      });
+
+      const refused = [
+        // No session settings at all.
+        await insert(store.id, null, orderId, member.userId),
+        // The row names someone other than the session's staff member.
+        await insert(store.id, me, orderId, colleague.userId),
+        // A made-up author, or a real one with someone else's session.
+        await insert(
+          store.id,
+          { userId: randomUUID(), sessionId: me.sessionId },
+          orderId,
+          member.userId,
+        ),
+        await insert(
+          store.id,
+          { userId: colleague.userId, sessionId: me.sessionId },
+          orderId,
+          colleague.userId,
+        ),
+        // Staff of another store, with a live session there.
+        await insert(
+          store.id,
+          {
+            userId: stranger.userId,
+            sessionId: await sessionOf(stranger.userId),
+          },
+          orderId,
+          stranger.userId,
+        ),
+        // Another store's row or order from this store's context.
+        await insert(store.id, me, orderId, member.userId, other.id),
+        await insert(store.id, me, otherOrderId, member.userId),
+      ];
+      for (const [index, state] of refused.entries())
+        assert.ok(
+          state === INSUFFICIENT_PRIVILEGE || state === "23503",
+          `attempt ${index}: ${state}`,
+        );
+      assert.equal(await auditCount(), audits + 1, "no audit for refusals");
+
+      // A revoked member's session no longer writes.
+      await runInTenant(owner, store.id, (em) =>
+        em.execute(
+          "update memberships set status = 'REVOKED' where tenant_id = ? and staff_user_id = ?",
+          [store.id, colleague.userId],
+        ),
+      );
+      assert.equal(
+        await insert(
+          store.id,
+          {
+            userId: colleague.userId,
+            sessionId: await sessionOf(colleague.userId),
+          },
+          orderId,
+          colleague.userId,
+        ),
+        INSUFFICIENT_PRIVILEGE,
+      );
+      assert.equal(await auditCount(), audits + 1);
+
+      // No function takes audit data from the app any more.
+      const [functions] = await owner.em
+        .getConnection()
+        .execute<{ legacy: number; audit: boolean; guard: boolean }[]>(
+          `select (select count(*)::int from pg_proc where proname = 'whiteoven_incident_audit') as legacy,
+                  has_function_privilege('whiteoven_app', 'whiteoven_order_incident_audit()', 'EXECUTE') as audit,
+                  has_function_privilege('whiteoven_app', 'whiteoven_order_incident_guard()', 'EXECUTE') as guard`,
+        );
+      assert.deepEqual(functions, { legacy: 0, audit: false, guard: false });
+
+      // Through the API, neither the description nor the resolution note reach the audit.
+      const created = await json(
+        await post(member.token, `orders/${orderId}/incidents`, {
+          type: "OTHER",
+          description: "Cliente Maria Souza, rua das Flores 10",
+          reportedBy: "CUSTOMER",
+        }),
+      );
+      assert.equal(
+        (
+          await post(
+            colleague.token,
+            `orders/${orderId}/incidents/${created.id}/resolve`,
+            { resolutionNote: "Liguei para Maria Souza" },
+          )
+        ).status,
+        403,
+        "a revoked member cannot resolve",
+      );
+      assert.equal(
+        (
+          await post(
+            member.token,
+            `orders/${orderId}/incidents/${created.id}/resolve`,
+            { resolutionNote: "Liguei para Maria Souza" },
+          )
+        ).status,
+        200,
+      );
+      const trail = await owner.em
+        .getConnection()
+        .execute<{ action: string; changes: Record<string, unknown> }[]>(
+          "select action, changes from audit_events where entity_id = ? order by at",
+          [created.id],
+        );
+      assert.deepEqual(
+        trail.map((event) => event.action),
+        ["order.incident_reported", "order.incident_resolved"],
+      );
+      for (const event of trail) {
+        assert.deepEqual(event.changes, { orderId, type: "OTHER" });
+        assert.ok(!JSON.stringify(event.changes).includes("Maria"));
+      }
+    });
+
+    it("records an incident once per key: retries return it, another body is a 409", async () => {
+      const day = 86_400_000;
+      const orderId = await seed(store.id, {
+        number: 2601,
+        status: "COMPLETED",
+        placedAt: new Date(Date.now() - 30 * day).toISOString(),
+        endedAt: new Date(Date.now() - 29 * day).toISOString(),
+      });
+      const otherOrderId = await seed(other.id, {
+        number: 2601,
+        placedAt: new Date().toISOString(),
+      });
+      const { token } = await staff(store.id, "STAFF");
+      const { token: otherToken } = await staff(other.id, "STAFF");
+      const body = {
+        type: "MISSING_ITEM",
+        description: "Faltou a borda",
+        reportedBy: "CUSTOMER",
+      };
+      const key = randomUUID();
+      const incidentsOf = (id: string, tenantId = store.id) =>
+        sql<{ count: number }>(
+          tenantId,
+          "select count(*)::int as count from order_incidents where order_id = ?",
+          [id],
+        ).then(([row]) => row!.count);
+      const audits = await auditCount();
+
+      const first = await post(token, `orders/${orderId}/incidents`, body, key);
+      assert.equal(first.status, 201);
+      const original = await json(first);
+      // The response was lost: the panel repeats the same key and body.
+      const retry = await post(token, `orders/${orderId}/incidents`, body, key);
+      assert.equal(retry.status, 200);
+      assert.deepEqual(await json(retry), original);
+      // Even after the 30-day window closed, the key still finds its incident.
+      await sql(
+        store.id,
+        "update order_status_changes set at = at - interval '2 days' where order_id = ?",
+        [orderId],
+      );
+      const late = await post(token, `orders/${orderId}/incidents`, body, key);
+      assert.equal(late.status, 200);
+      assert.equal((await json(late)).id, original.id);
+      assert.equal(
+        (await post(token, `orders/${orderId}/incidents`, body)).status,
+        422,
+        "a new key is a new incident, refused after the window",
+      );
+
+      const changed = await post(
+        token,
+        `orders/${orderId}/incidents`,
+        { ...body, description: "Faltou o refrigerante" },
+        key,
+      );
+      assert.equal(changed.status, 409);
+      assert.equal((await json(changed)).code, "IDEMPOTENCY_CONFLICT");
+      assert.equal(await incidentsOf(orderId), 1);
+      assert.equal(await auditCount(), audits + 1, "retries write no audit");
+
+      // Keys belong to a store and an order: the same key elsewhere records its own incident.
+      const elsewhere = await post(
+        otherToken,
+        `orders/${otherOrderId}/incidents`,
+        body,
+        key,
+      );
+      assert.equal(elsewhere.status, 201);
+      assert.notEqual((await json(elsewhere)).id, original.id);
+      assert.equal(await incidentsOf(otherOrderId, other.id), 1);
+
+      for (const header of [null, "nao-e-uuid"]) {
+        const refused = await post(
+          token,
+          `orders/${orderId}/incidents`,
+          body,
+          header,
+        );
+        assert.equal(refused.status, 422, String(header));
+        assert.deepEqual((await json(refused)).details.errors, [
+          { code: "VALIDATION_FAILED", path: "Idempotency-Key" },
+        ]);
+      }
+    });
+
+    it("records one incident when the same key arrives several times at once", async () => {
+      const orderId = await seed(store.id, {
+        number: 2701,
+        placedAt: new Date().toISOString(),
+      });
+      const { token } = await staff(store.id, "STAFF");
+      const key = randomUUID();
+      const audits = await auditCount();
+      const responses = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          post(
+            token,
+            `orders/${orderId}/incidents`,
+            {
+              type: "LATE_DELIVERY",
+              description: "Atrasou",
+              reportedBy: "STAFF",
+            },
+            key,
+          ),
+        ),
+      );
+      assert.deepEqual(
+        responses.map((response) => response.status).sort(),
+        [200, 200, 200, 201],
+      );
+      const ids = new Set(
+        await Promise.all(responses.map(async (r) => (await json(r)).id)),
+      );
+      assert.equal(ids.size, 1);
+      assert.equal(await auditCount(), audits + 1);
     });
   },
 );

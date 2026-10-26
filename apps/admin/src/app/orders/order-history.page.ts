@@ -15,10 +15,12 @@ import {
   type HistoryFilters,
   INCIDENT_TEXT_MAX_LENGTH,
   INCIDENT_TYPES,
+  type IncidentIntent,
   type IncidentType,
   type OrderDetail,
   type OrderIncident,
   OrderHistoryApi,
+  PendingIncidentIntentError,
 } from "./history-api";
 import {
   FULFILLMENT_LABELS,
@@ -28,7 +30,7 @@ import {
   itemDetails,
   itemName,
 } from "./order-labels";
-import type { OrderStatus } from "./orders-api";
+import { type OrderStatus, isUncertainTransitionError } from "./orders-api";
 
 const INCIDENT_MESSAGES: Record<string, string> = {
   INCIDENT_WINDOW_CLOSED:
@@ -38,10 +40,21 @@ const INCIDENT_MESSAGES: Record<string, string> = {
   TENANT_NOT_ACTIVE:
     "Com a loja suspensa, só o dono pode registrar ou resolver ocorrências.",
   NOT_FOUND: "Este pedido não foi encontrado nesta loja.",
+  IDEMPOTENCY_CONFLICT:
+    "Esta chave de registro já foi usada com outro conteúdo. Recarregue o pedido e registre de novo.",
 };
 
 const incidentError = (error: unknown) =>
-  INCIDENT_MESSAGES[apiErrorCode(error) ?? ""] ?? errorMessage(error);
+  error instanceof PendingIncidentIntentError
+    ? error.message
+    : (INCIDENT_MESSAGES[apiErrorCode(error) ?? ""] ?? errorMessage(error));
+
+/** A record whose answer was lost stays pending with its key; the user decides to retry. */
+const reportError = (error: unknown) =>
+  !(error instanceof PendingIncidentIntentError) &&
+  isUncertainTransitionError(error)
+    ? "A confirmação do registro não chegou. Ele ficou guardado com a mesma chave: use “Verificar / repetir registro”."
+    : incidentError(error);
 
 /**
  * Order history of the active store (M4.6, ADR 0019): filters by local day, status, mode and
@@ -321,61 +334,82 @@ const incidentError = (error: unknown) =>
             }
           </ul>
 
-          <form
-            class="incident-form"
-            aria-labelledby="incident-form-title"
-            (submit)="$event.preventDefault(); report(order)"
-          >
-            <h4 id="incident-form-title">Registrar ocorrência</h4>
-            <div class="field">
-              <label for="incident-type">Tipo</label>
-              <select
-                id="incident-type"
-                name="incidentType"
-                [(ngModel)]="incidentType"
+          @if (pendingIncident(order); as pending) {
+            <div class="incident-form" role="status">
+              <h4>Registro aguardando confirmação</h4>
+              <p>
+                A confirmação do registro “{{
+                  incidentTypeLabel(pending.type)
+                }}: {{ pending.description }}” não chegou. Confira a lista acima
+                ou repita o registro: a repetição usa a mesma chave e não cria
+                uma segunda ocorrência.
+              </p>
+              <button
+                class="button"
+                type="button"
+                [disabled]="saving()"
+                (click)="retryReport(order)"
               >
-                @for (type of incidentTypes; track type.id) {
-                  <option [value]="type.id">{{ type.label }}</option>
-                }
-              </select>
+                Verificar / repetir registro
+              </button>
             </div>
-            <div class="field">
-              <label for="incident-reporter">Quem relatou</label>
-              <select
-                id="incident-reporter"
-                name="incidentReporter"
-                [(ngModel)]="incidentReporter"
-              >
-                <option value="CUSTOMER">
-                  O cliente, pelo contato da loja
-                </option>
-                <option value="STAFF">A equipe</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="incident-description">Descrição</label>
-              <textarea
-                id="incident-description"
-                name="incidentDescription"
-                rows="3"
-                required
-                [maxlength]="maxLength"
-                aria-describedby="incident-hint"
-                [(ngModel)]="incidentDescription"
-              ></textarea>
-              <small id="incident-hint" class="muted">
-                Registro de atendimento: não muda o pedido nem gera reembolso.
-                Evite dados pessoais que não ajudem a resolver.
-              </small>
-            </div>
-            <button
-              class="button"
-              type="submit"
-              [disabled]="saving() || !incidentDescription.trim()"
+          } @else {
+            <form
+              class="incident-form"
+              aria-labelledby="incident-form-title"
+              (submit)="$event.preventDefault(); report(order)"
             >
-              Registrar ocorrência
-            </button>
-          </form>
+              <h4 id="incident-form-title">Registrar ocorrência</h4>
+              <div class="field">
+                <label for="incident-type">Tipo</label>
+                <select
+                  id="incident-type"
+                  name="incidentType"
+                  [(ngModel)]="incidentType"
+                >
+                  @for (type of incidentTypes; track type.id) {
+                    <option [value]="type.id">{{ type.label }}</option>
+                  }
+                </select>
+              </div>
+              <div class="field">
+                <label for="incident-reporter">Quem relatou</label>
+                <select
+                  id="incident-reporter"
+                  name="incidentReporter"
+                  [(ngModel)]="incidentReporter"
+                >
+                  <option value="CUSTOMER">
+                    O cliente, pelo contato da loja
+                  </option>
+                  <option value="STAFF">A equipe</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="incident-description">Descrição</label>
+                <textarea
+                  id="incident-description"
+                  name="incidentDescription"
+                  rows="3"
+                  required
+                  [maxlength]="maxLength"
+                  aria-describedby="incident-hint"
+                  [(ngModel)]="incidentDescription"
+                ></textarea>
+                <small id="incident-hint" class="muted">
+                  Registro de atendimento: não muda o pedido nem gera reembolso.
+                  Evite dados pessoais que não ajudem a resolver.
+                </small>
+              </div>
+              <button
+                class="button"
+                type="submit"
+                [disabled]="saving() || !incidentDescription.trim()"
+              >
+                Registrar ocorrência
+              </button>
+            </form>
+          }
         </dialog>
       }
     </section>
@@ -654,14 +688,38 @@ export class OrderHistoryPage {
   protected async report(order: OrderDetail): Promise<void> {
     const description = this.incidentDescription.trim();
     if (!description) return;
-    await this.save(order, () =>
-      this.api.reportIncident(order.id, {
-        type: this.incidentType,
-        description,
-        reportedBy: this.incidentReporter,
-      }),
+    await this.save(
+      order,
+      () =>
+        this.api.reportIncident(order.id, {
+          type: this.incidentType,
+          description,
+          reportedBy: this.incidentReporter,
+        }),
+      reportError,
     );
     if (!this.detailError()) this.incidentDescription = "";
+  }
+
+  /** Sends the unconfirmed record again, with its key; never done without the user asking. */
+  protected retryReport(order: OrderDetail): Promise<void> {
+    const pending = this.api.pendingIncident(order.id);
+    if (!pending) return Promise.resolve();
+    return this.save(
+      order,
+      () =>
+        this.api.reportIncident(order.id, {
+          type: pending.type,
+          description: pending.description,
+          reportedBy: pending.reportedBy,
+        }),
+      reportError,
+    );
+  }
+
+  protected pendingIncident(order: OrderDetail): IncidentIntent | undefined {
+    const pending = this.api.pendingIncident(order.id);
+    return pending?.request ? undefined : pending;
   }
 
   protected resolve(
@@ -681,13 +739,14 @@ export class OrderHistoryPage {
   private async save(
     order: OrderDetail,
     write: () => Promise<OrderIncident>,
+    explain: (error: unknown) => string = incidentError,
   ): Promise<void> {
     this.saving.set(true);
     this.detailError.set(null);
     try {
       await write();
     } catch (error) {
-      if (!this.destroyed) this.detailError.set(incidentError(error));
+      if (!this.destroyed) this.detailError.set(explain(error));
     }
     try {
       const detail = await this.api.detail(order.id);

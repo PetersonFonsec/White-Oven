@@ -197,10 +197,18 @@ O cliente vê um texto amigável derivado do código, nunca o texto interno de `
 
 - Registradas pela equipe em qualquer pedido, até 30 dias depois de terminal, com tipo, descrição e estado (`OPEN`/`RESOLVED`).
 - Implementação (M4.6, [ADR 0019](../adr/0019-order-history-report-incidents.md)):
-  - `POST /v1/admin/orders/{id}/incidents` registra uma ocorrência; depois do prazo, `422 INCIDENT_WINDOW_CLOSED`.
+  - `POST /v1/admin/orders/{id}/incidents` registra uma ocorrência e exige o cabeçalho `Idempotency-Key` (UUID, um por intenção de registro, repetido nos retries):
+    - primeira vez: `201` com a ocorrência;
+    - mesma chave e mesmo corpo no mesmo pedido: `200` com a ocorrência original, sem segunda ocorrência nem segundo evento de auditoria, mesmo depois do prazo de 30 dias;
+    - mesma chave com outro corpo: `409 IDEMPOTENCY_CONFLICT`;
+    - chave ausente ou que não é UUID: `422 VALIDATION_FAILED`;
+    - a chave vale por loja e pedido e não se mistura com as chaves de criação de pedido nem de transição.
+  - Depois do prazo, um registro novo é `422 INCIDENT_WINDOW_CLOSED`.
   - `POST .../incidents/{incidentId}/resolve` resolve uma vez, com nota opcional; uma segunda vez é `409 INCIDENT_ALREADY_RESOLVED`.
   - Loja suspensa: só o OWNER registra ou resolve.
-  - O banco não permite apagar, reabrir nem reescrever uma ocorrência. A auditoria não guarda o texto livre.
+  - O banco não permite apagar, reabrir nem reescrever uma ocorrência.
+  - A auditoria (`order.incident_reported` e `order.incident_resolved`) é gravada por gatilho na mesma transação, a partir da própria linha: autor, pedido e tipo, nunca a descrição nem a nota. O banco só aceita a escrita quando o autor da linha é a pessoa da sessão de equipe ativa da transação, com vínculo `ACTIVE` na loja da linha.
+  - O painel guarda a intenção de registro (com a chave) no `sessionStorage` da sessão, como o quadro da M4.5. Se a resposta se perde, nada é reenviado sozinho: o painel mostra o registro pendente e a pessoa usa "Verificar / repetir registro", que repete com a mesma chave.
 - Não mudam o estado nem os valores do pedido e não geram reembolso; servem para atendimento e histórico.
 - O cliente relata problemas pelos contatos da pizzaria; relato pelo app é questão aberta (OL-Q3).
 - Não são ferramenta de logística: sem rastreio, roteirização ou gestão de entregador.
