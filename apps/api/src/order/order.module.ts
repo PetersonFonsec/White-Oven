@@ -3,11 +3,11 @@ import {
   CustomerSessionGuard,
   CustomerTokenGuard,
 } from "../customer/customer.guard";
-import { OrderController } from "./order.controller";
+import { AdminOrderController, OrderController } from "./order.controller";
 import { OrderService } from "./order.service";
 
 @Module({
-  controllers: [OrderController],
+  controllers: [OrderController, AdminOrderController],
   providers: [OrderService, CustomerTokenGuard, CustomerSessionGuard],
 })
 export class OrderModule {}

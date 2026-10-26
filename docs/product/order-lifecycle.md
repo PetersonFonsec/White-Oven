@@ -1,6 +1,6 @@
 # Ciclo de vida do pedido
 
-Status: especificação M0.3, sem implementação. Define carrinho, checkout, estados, transições, cancelamento, histórico, ocorrências e regras de funcionamento da loja. Entidades em [domain-model](../architecture/domain-model.md); preços em [pizza-builder-rules](pizza-builder-rules.md).
+Status: especificação de produto M0.3; checkout e criação estão implementados em M4.3, e máquina de estados/transições estão implementadas em M4.4. Define carrinho, checkout, estados, transições, cancelamento, histórico, ocorrências e regras de funcionamento da loja. Entidades em [domain-model](../architecture/domain-model.md); preços em [pizza-builder-rules](pizza-builder-rules.md).
 
 ## Carrinho
 
@@ -110,10 +110,10 @@ Regras gerais:
 
 - Toda transição pedida por cliente ou equipe é um comando com `Idempotency-Key`, `from` e `to` (e motivo, quando obrigatório). Ver [idempotência e concorrência](#idempotência-e-concorrência-das-transições).
 - Cada transição grava `OrderStatusChange` e, quando feita pela equipe, `AuditEvent`, na mesma transação.
-- A ida para `COMPLETED` grava `BillingEntry` na mesma transação.
+- A ida para `COMPLETED` em tenant `ACTIVE` grava `BillingEntry` na mesma transação. Em tenant `SUSPENDED`, concluir é proibido e não gera faturamento.
 - Não há transição saindo de estados terminais. Correção de pedido concluído por engano é feita por estorno de cobrança, sem mudar o estado (ver [domain-model](../architecture/domain-model.md)).
 - Recusa automática: job periódico (a cada minuto) por tenant, transição feita pelo ator `SYSTEM`.
-- Suspensão do tenant: na mesma transação, pedidos em `PLACED` vão para `REJECTED` com `STORE_SUSPENDED` (ator `SYSTEM`). Pedidos em `PREPARING`, `READY` e `OUT_FOR_DELIVERY` só podem seguir as transições da tabela que levam a estado terminal, executadas pelo OWNER. Matriz completa em [domain-model](../architecture/domain-model.md#capacidades-por-status-do-tenant).
+- Suspensão do tenant: na mesma transação, pedidos em `PLACED` vão para `REJECTED` com `STORE_SUSPENDED` (ator `SYSTEM`). Durante a suspensão, somente o OWNER pode executar transições válidas para `CANCELED` ou `REJECTED`; nenhuma transição para `COMPLETED` é permitida. Matriz completa em [domain-model](../architecture/domain-model.md#capacidades-por-status-do-tenant).
 
 ### Idempotência e concorrência das transições
 
@@ -122,7 +122,7 @@ Retry do mesmo comando e conflito entre comandos diferentes são situações dis
 Autenticação e papel são verificados pelos guards antes de tudo (403 sem efeito). Depois, a API processa o comando nesta ordem, dentro de uma transação com bloqueio da linha do pedido (`SELECT ... FOR UPDATE`):
 
 1. **Chave já usada neste pedido** (`OrderStatusChange` com o mesmo `commandKeyHash`):
-   - mesmo `commandHash` (`from`, `to`, motivo): retorna **200 com o resultado original** (a mudança registrada naquele momento e o estado atual do pedido), sem gravar nada, mesmo que o pedido já tenha avançado depois;
+   - mesmo `commandHash` (`from`, `to`, motivo): retorna **200**. `change` representa a transição originalmente confirmada pela chave; `order` representa o pedido atual e pode refletir transições posteriores. Nada é gravado, mesmo que o pedido já tenha avançado depois;
    - `commandHash` diferente: **409 `IDEMPOTENCY_KEY_REUSED`**.
 2. **Chave nova e `from` diferente do estado atual**: **409 `ORDER_STATE_CONFLICT`** com o estado atual e a última mudança, para o painel recarregar. É o caso de duas pessoas agindo ao mesmo tempo.
 3. **Chave nova e `from` igual ao estado atual, mas transição inválida**: fora da tabela retorna **422 `ORDER_INVALID_TRANSITION`**; prevista na tabela, mas não permitida para o status do tenant, retorna **403 `TENANT_NOT_ACTIVE`**.
@@ -130,7 +130,7 @@ Autenticação e papel são verificados pelos guards antes de tudo (403 sem efei
 
 Se duas requisições com a mesma chave chegam juntas, o bloqueio da linha e a restrição `unique (tenant_id, order_id, command_key_hash)` garantem que só uma grava; a outra cai no passo 1. A chave vale enquanto o pedido existir.
 
-Transições do ator `SYSTEM` usam chave determinística (`system:accept-timeout`, `system:tenant-suspended`), então um job repetido cai no passo 1 em vez de duplicar histórico.
+Transições do ator `SYSTEM` usam chave determinística (`system:accept-timeout`, `system:tenant-suspended`), então um job repetido cai no passo 1 em vez de duplicar histórico. A recusa automática processa até 100 pedidos por transação e até 10 lotes por tenant a cada execução do timer; lotes usam `FOR UPDATE SKIP LOCKED`, com uma transação curta por lote.
 
 Cenários obrigatórios (pedido em `PLACED`):
 

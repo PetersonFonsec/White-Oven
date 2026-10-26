@@ -7,6 +7,11 @@ import {
   validateOrderRequest,
   type OrderRequest,
 } from "../src/order/order-rules";
+import {
+  ORDER_STATUSES,
+  reasonRequired,
+  transitionAllowed,
+} from "../src/order/order-lifecycle-rules";
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -16,6 +21,49 @@ const PRODUCT = id(3);
 const PIZZAS = id(4);
 const DRINKS = id(5);
 const ADDRESS = id(6);
+
+describe("M4.4 order lifecycle transition table", () => {
+  it("covers every state pair, actor, and fulfillment mode", () => {
+    const expected: Record<string, readonly string[]> = {
+      "STAFF:DELIVERY": [
+        "PLACED>PREPARING",
+        "PLACED>REJECTED",
+        "PREPARING>READY",
+        "PREPARING>CANCELED",
+        "READY>OUT_FOR_DELIVERY",
+        "READY>CANCELED",
+        "OUT_FOR_DELIVERY>COMPLETED",
+        "OUT_FOR_DELIVERY>CANCELED",
+      ],
+      "STAFF:PICKUP": [
+        "PLACED>PREPARING",
+        "PLACED>REJECTED",
+        "PREPARING>READY",
+        "PREPARING>CANCELED",
+        "READY>COMPLETED",
+        "READY>CANCELED",
+        "OUT_FOR_DELIVERY>COMPLETED",
+        "OUT_FOR_DELIVERY>CANCELED",
+      ],
+      "CUSTOMER:DELIVERY": ["PLACED>CANCELED"],
+      "CUSTOMER:PICKUP": ["PLACED>CANCELED"],
+      "SYSTEM:DELIVERY": ["PLACED>REJECTED"],
+      "SYSTEM:PICKUP": ["PLACED>REJECTED"],
+    };
+    for (const actor of ["STAFF", "CUSTOMER", "SYSTEM"] as const)
+      for (const fulfillment of ["DELIVERY", "PICKUP"] as const)
+        for (const from of ORDER_STATUSES)
+          for (const to of ORDER_STATUSES)
+            assert.equal(
+              transitionAllowed(from, to, fulfillment, actor),
+              expected[`${actor}:${fulfillment}`]!.includes(`${from}>${to}`),
+              `${actor} ${fulfillment}: ${from} -> ${to}`,
+            );
+    assert.equal(reasonRequired("REJECTED"), true);
+    assert.equal(reasonRequired("CANCELED"), true);
+    assert.equal(reasonRequired("COMPLETED"), false);
+  });
+});
 
 const catalog: CatalogManagementSnapshot = {
   categories: [

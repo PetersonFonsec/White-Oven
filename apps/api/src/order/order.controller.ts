@@ -6,6 +6,7 @@ import {
   Post,
   Res,
   HttpCode,
+  Param,
 } from "@nestjs/common";
 import {
   ApiBody,
@@ -27,6 +28,13 @@ import {
   validateOrderRequest,
 } from "./order-rules";
 import { OrderService } from "./order.service";
+import {
+  REJECTION_REASONS,
+  ORDER_STATUSES,
+  type OrderStatus,
+  type RejectionReason,
+} from "./order-lifecycle-rules";
+import { AdminRoute } from "../auth/staff.guard";
 
 class QuoteBody {
   @ApiProperty({ enum: FULFILLMENTS }) fulfillment!: string;
@@ -69,6 +77,33 @@ class CreateOrderBody extends OmitType(QuoteBody, [
       "The total the customer confirmed, in cents. Required: a different server total is 409 ORDER_PRICE_CHANGED and nothing is created.",
   })
   expectedTotalCents!: number;
+}
+
+class TransitionBody {
+  @ApiProperty({ enum: ORDER_STATUSES }) from!: OrderStatus;
+  @ApiProperty({ enum: ORDER_STATUSES }) to!: OrderStatus;
+  @ApiPropertyOptional({ enum: REJECTION_REASONS })
+  reasonCode?: RejectionReason;
+  @ApiPropertyOptional({ maxLength: 280 }) reasonText?: string;
+}
+
+function parseTransition(raw: unknown): TransitionBody {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw invalid(["transition"]);
+  const value = raw as Record<string, unknown>;
+  const allowed = ["from", "to", "reasonCode", "reasonText"];
+  if (
+    Object.keys(value).some((key) => !allowed.includes(key)) ||
+    !ORDER_STATUSES.includes(value["from"] as OrderStatus) ||
+    !ORDER_STATUSES.includes(value["to"] as OrderStatus) ||
+    (value["reasonCode"] !== undefined &&
+      !REJECTION_REASONS.includes(value["reasonCode"] as RejectionReason)) ||
+    (value["reasonText"] !== undefined &&
+      (typeof value["reasonText"] !== "string" ||
+        [...value["reasonText"]].length > 280))
+  )
+    throw invalid(["transition"]);
+  return value as unknown as TransitionBody;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -138,5 +173,78 @@ export class OrderController {
     res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
     res.setHeader("Cache-Control", "no-store");
     return order;
+  }
+
+  @Post(":orderId/transitions")
+  @CustomerRoute("createOrder")
+  @HttpCode(HttpStatus.OK)
+  @ApiBody({ type: TransitionBody })
+  @ApiHeader({ name: "Idempotency-Key", required: true })
+  @ApiOperation({
+    summary: "Apply an idempotent order transition",
+    description:
+      "200 returns `change`, the transition confirmed by this key, and `order`, the current order with its history. A retry with the same key and command returns the same `change`; `order` may have advanced since the original request. Reusing the key for another command returns 409 IDEMPOTENCY_KEY_REUSED. A new command with stale `from` returns 409 ORDER_STATE_CONFLICT.",
+  })
+  transitionCustomer(
+    @Param("orderId") orderId: string,
+    @Body() raw: unknown,
+    @Headers("idempotency-key") key: string | undefined,
+    @Headers("x-request-id") requestId?: string,
+  ) {
+    const body = parseTransition(raw);
+    if (
+      !UUID.test(orderId) ||
+      !key ||
+      !UUID.test(key) ||
+      body.from !== "PLACED" ||
+      body.to !== "CANCELED" ||
+      body.reasonCode !== "CUSTOMER_REQUEST" ||
+      body.reasonText
+    )
+      throw invalid(["transition"]);
+    return this.orders.transition({
+      orderId,
+      from: body.from,
+      to: body.to,
+      reasonCode: body.reasonCode,
+      idempotencyKey: key.toLowerCase(),
+      requestId,
+    });
+  }
+}
+
+@ApiTags("admin")
+@Controller("admin/orders")
+export class AdminOrderController {
+  constructor(private readonly orders: OrderService) {}
+
+  @Post(":orderId/transitions")
+  @AdminRoute("OWNER", "MANAGER", "STAFF")
+  @HttpCode(HttpStatus.OK)
+  @ApiBody({ type: TransitionBody })
+  @ApiHeader({ name: "Idempotency-Key", required: true })
+  @ApiOperation({
+    summary: "Apply an idempotent order transition",
+    description:
+      "200 returns `change`, the transition confirmed by this key, and `order`, the current order with its history. A retry with the same key and command returns the same `change`; `order` may have advanced since the original request. Reusing the key for another command returns 409 IDEMPOTENCY_KEY_REUSED. A new command with stale `from` returns 409 ORDER_STATE_CONFLICT. During tenant suspension, only the OWNER may perform a valid transition to CANCELED or REJECTED.",
+  })
+  transition(
+    @Param("orderId") orderId: string,
+    @Body() raw: unknown,
+    @Headers("idempotency-key") key: string | undefined,
+    @Headers("x-request-id") requestId?: string,
+  ) {
+    const body = parseTransition(raw);
+    if (!UUID.test(orderId) || !key || !UUID.test(key))
+      throw invalid(["transition"]);
+    return this.orders.transition({
+      orderId,
+      from: body.from,
+      to: body.to,
+      reasonCode: body.reasonCode,
+      reasonText: body.reasonText,
+      idempotencyKey: key.toLowerCase(),
+      requestId,
+    });
   }
 }
