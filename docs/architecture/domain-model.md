@@ -175,7 +175,7 @@ Invariantes:
 - O mesmo e-mail pode existir em tenants diferentes como clientes distintos (D-03). Uma pizzaria nunca enxerga clientes de outra.
 - Exclusão anonimiza: `name`, `email`, `phone` e endereços são substituídos/removidos; o `id` permanece para manter pedidos.
 
-Implementação (M4.2, [ADR 0017](../adr/0017-customer-identity.md)): e-mail e senha com conta obrigatória (Q-05). `CustomerSession` guarda só o hash do refresh token e termina 30 dias depois do login. A exclusão pede a senha de novo, torna nulos nome, e-mail, telefone e senha, apaga os endereços e revoga as sessões numa transação; o `id` fica.
+Implementação (M4.2, [ADR 0017](../adr/0017-customer-identity.md)): e-mail e senha com conta obrigatória (Q-05). `CustomerSession` guarda só o hash do refresh token e termina 30 dias depois do login. A exclusão pede a senha de novo, torna nulos nome, e-mail, telefone e senha, apaga os endereços, anonimiza os pedidos (M4.3) e revoga as sessões numa transação; o `id` fica.
 
 ### CustomerAddress
 
@@ -279,7 +279,7 @@ M2.6 implementa `GET /v1/public/stores/{slug}/menu`: só itens pedíveis (não a
 
 ### Order
 
-M1.5 cria a projeção mínima `orders` (`id`, `tenant_id`, `status`, `rejection_reason` e timestamps) para tornar a suspensão transacional. O agregado completo e seus demais campos entram em M4 por migration posterior.
+M1.5 cria a projeção mínima `orders` (`id`, `tenant_id`, `status`, `rejection_reason` e timestamps) para tornar a suspensão transacional. M4.3 ([ADR 0018](../adr/0018-order-creation.md)) acrescenta os campos abaixo, `order_items`, `tenant_order_counters` e `order_creation_keys`. A app só altera colunas de status e de anonimização; valores e itens são imutáveis no banco. A exclusão da conta anonimiza os pedidos (`customerSnapshot`, endereço e observação nulos, `anonymized_at` preenchido); itens e valores ficam.
 
 | Campo                                                 | Regras                                                                       |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------- |
@@ -291,7 +291,7 @@ M1.5 cria a projeção mínima `orders` (`id`, `tenant_id`, `status`, `rejection
 | `paymentMethod`                                       | Um dos `acceptedPaymentMethods` do tenant no momento do pedido.              |
 | `changeForCents`                                      | Só para `CASH`; ≥ total quando informado.                                    |
 | `itemsSubtotalCents`                                  | Soma de `OrderItem.totalCents`.                                              |
-| `deliveryFeeCents`                                    | Copiado de `StoreSettings` (0 em retirada).                                  |
+| `deliveryFeeCents`                                    | Copiado de `StoreSettings` (0 em retirada). Q-04: taxa fixa, zero permitido. |
 | `discountCents`                                       | Sempre 0 no MVP (sem cupons); campo existe para não mudar o contrato depois. |
 | `totalCents`                                          | `itemsSubtotalCents + deliveryFeeCents − discountCents`.                     |
 | `status`                                              | Ver [order-lifecycle](../product/order-lifecycle.md).                        |

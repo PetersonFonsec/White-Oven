@@ -145,7 +145,7 @@ export function validatePizzaConfiguration(
 
   if (paths.length) return structureErrors(paths);
 
-  const flavors = raw.flavors as Record<string, string>;
+  const flavors = raw.flavors as { LEFT: string; RIGHT: string };
   const value: PizzaConfiguration = {
     sizeId: raw.sizeId as string,
     mode: mode as PizzaMode,

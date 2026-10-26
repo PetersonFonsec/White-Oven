@@ -14,6 +14,7 @@ import { ImageModule } from "./images/image.module";
 import { StoreModule } from "./store/store.module";
 import { TeamModule } from "./team/team.module";
 import { CustomerModule } from "./customer/customer.module";
+import { OrderModule } from "./order/order.module";
 
 @Module({})
 export class AppModule {
@@ -35,6 +36,7 @@ export class AppModule {
         StoreModule,
         TeamModule,
         CustomerModule,
+        OrderModule,
       ],
       controllers: [HealthController],
       providers: [

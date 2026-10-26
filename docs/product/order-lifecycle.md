@@ -36,7 +36,9 @@ Validações na criação (todas no servidor, na mesma transação):
 7. Forma de pagamento aceita pela loja; troco (`changeForCents`) só em dinheiro e maior ou igual ao total.
 8. `Idempotency-Key` UUID, registrada em `OrderCreationKey` com escopo não nulo (`customer:{customerId}` no MVP): repetição com o mesmo conteúdo retorna o mesmo pedido; mesma chave com conteúdo diferente retorna 409 (mesma semântica do formulário de leads). Chave válida por 24 horas. A verificação da chave acontece antes das validações 2 a 7, para que um retry de um pedido já criado não falhe porque a loja fechou entre as tentativas. Detalhes em [domain-model](../architecture/domain-model.md#ordercreationkey).
 
-Totais: `total = subtotal de itens + taxa de entrega − desconto` (desconto sempre 0 no MVP). A taxa de entrega é fixa por pizzaria e zero em retirada (Q-04).
+Totais: `total = subtotal de itens + taxa de entrega − desconto` (desconto sempre 0 no MVP). A taxa de entrega é fixa por pizzaria e zero em retirada (Q-04, decidida).
+
+Implementação (M4.3, [ADR 0018](../adr/0018-order-creation.md)): `POST /v1/customer/stores/{slug}/me/orders/quote` e `POST .../me/orders` recebem o mesmo corpo, sem preços; a entrega usa um endereço salvo do cliente (`addressId`). `expectedTotalCents`, o total que o cliente confirmou, é opcional na cotação e obrigatório na criação (`422 VALIDATION_FAILED` sem ele). Cada valor do pedido fica em até R$ 100.000,00. Respostas: `201` criado, `200` repetição da mesma chave e corpo, `409 IDEMPOTENCY_CONFLICT` (chave com outro corpo), `409 ORDER_PRICE_CHANGED` (`expectedTotalCents` diferente do total do servidor), `409 STORE_CLOSED`, `409 STORE_NOT_CONFIGURED`, `403 TENANT_NOT_ACTIVE` e `422 ORDER_INVALID` com `details.errors` por caminho (`FULFILLMENT_UNAVAILABLE`, `ADDRESS_NOT_FOUND`, `PAYMENT_METHOD_UNAVAILABLE`, códigos `PIZZA_*` do motor, `PRODUCT_UNAVAILABLE`, `MINIMUM_ORDER_NOT_REACHED` com `minimumOrderCents`, `CHANGE_FOR_TOO_LOW`, `ORDER_TOTAL_EXCEEDED` com `maxTotalCents`).
 
 Pagamento no MVP é sempre offline (dinheiro, cartão na entrega/retirada, Pix presencial) e apenas registrado. Não há status de pagamento, captura ou estorno; isso entra com o pagamento online (Q-03).
 
@@ -189,12 +191,12 @@ O cliente vê um texto amigável derivado do código, nunca o texto interno de `
 
 ## Questões em aberto
 
-| ID    | Questão                                         | Recomendação                                      |
-| ----- | ----------------------------------------------- | ------------------------------------------------- |
-| Q-04  | Taxa de entrega                                 | Taxa fixa única, permitindo zero                  |
-| Q-05  | Pedido sem conta                                | **Decidida:** conta obrigatória no MVP (ADR 0017) |
-| Q-07  | Tempo para aceite antes de recusa automática    | Configurável, padrão 10 minutos                   |
-| OL-Q1 | Pizzaria pode editar itens de um pedido aceito? | Não; cancelar e o cliente refaz                   |
-| OL-Q2 | Corte de pedidos antes do fechamento            | Configurável, padrão 0 minuto                     |
-| OL-Q3 | Cliente registra ocorrência pelo app            | Não no MVP                                        |
-| OL-Q4 | Prazo legal de retenção de pedidos              | Validar com contador/jurídico antes do piloto     |
+| ID    | Questão                                         | Recomendação                                             |
+| ----- | ----------------------------------------------- | -------------------------------------------------------- |
+| Q-04  | Taxa de entrega                                 | **Decidida:** taxa fixa única, zero permitido (ADR 0018) |
+| Q-05  | Pedido sem conta                                | **Decidida:** conta obrigatória no MVP (ADR 0017)        |
+| Q-07  | Tempo para aceite antes de recusa automática    | Configurável, padrão 10 minutos                          |
+| OL-Q1 | Pizzaria pode editar itens de um pedido aceito? | Não; cancelar e o cliente refaz                          |
+| OL-Q2 | Corte de pedidos antes do fechamento            | Configurável, padrão 0 minuto                            |
+| OL-Q3 | Cliente registra ocorrência pelo app            | Não no MVP                                               |
+| OL-Q4 | Prazo legal de retenção de pedidos              | Validar com contador/jurídico antes do piloto            |

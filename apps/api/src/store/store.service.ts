@@ -67,6 +67,55 @@ export interface BrandState {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/**
+ * Open or closed now, from the tenant, its hours and its pause read in one statement, inside the
+ * caller's transaction (the public status and the order creation of M4.3). The instant is the
+ * database clock, the same one that writes `store_pauses.paused_until`.
+ */
+export async function readStoreStatus(
+  em: EntityManager,
+  tenantId: string,
+): Promise<PublicStoreStatus> {
+  const [row] = await em.execute<
+    {
+      status: TenantStatus;
+      timezone: string;
+      rules: OpeningHours["rules"] | null;
+      exceptions: OpeningHours["exceptions"] | null;
+      paused: boolean;
+      pausedUntil: Date | null;
+      now: Date;
+    }[]
+  >(
+    `select t.status, t.timezone, h.rules, h.exceptions,
+      p.tenant_id is not null as paused, p.paused_until as "pausedUntil", now() as now
+    from tenants t
+    left join store_opening_hours h on h.tenant_id = t.id
+    left join store_pauses p on p.tenant_id = t.id
+    where t.id = ?`,
+    [tenantId],
+  );
+  if (!row) throw new Error("store status: tenant not found");
+  const at = new Date(row.now);
+  const pausedUntil = row.pausedUntil ? new Date(row.pausedUntil) : null;
+  const status = storeStatusAt({
+    tenantStatus: row.status,
+    timezone: row.timezone,
+    hours: { rules: row.rules ?? [], exceptions: row.exceptions ?? [] },
+    pause: row.paused ? { pausedUntil } : null,
+    at,
+  });
+  return {
+    ...status,
+    pausedUntil:
+      status.reason === "PAUSED" && pausedUntil
+        ? pausedUntil.toISOString()
+        : null,
+    timezone: row.timezone,
+    checkedAt: at.toISOString(),
+  };
+}
+
 @Injectable()
 export class StoreService {
   constructor(private readonly transactions: TenantTransactions) {}
@@ -106,46 +155,9 @@ export class StoreService {
    * instant is the database clock, the same one that writes `store_pauses.paused_until`.
    */
   getStatus(): Promise<PublicStoreStatus> {
-    return this.transactions.run(async (em) => {
-      const [row] = await em.execute<
-        {
-          status: TenantStatus;
-          timezone: string;
-          rules: OpeningHours["rules"] | null;
-          exceptions: OpeningHours["exceptions"] | null;
-          paused: boolean;
-          pausedUntil: Date | null;
-          now: Date;
-        }[]
-      >(
-        `select t.status, t.timezone, h.rules, h.exceptions,
-          p.tenant_id is not null as paused, p.paused_until as "pausedUntil", now() as now
-        from tenants t
-        left join store_opening_hours h on h.tenant_id = t.id
-        left join store_pauses p on p.tenant_id = t.id
-        where t.id = ?`,
-        [currentTenantContext().tenantId],
-      );
-      if (!row) throw new Error("store status: tenant not found");
-      const at = new Date(row.now);
-      const pausedUntil = row.pausedUntil ? new Date(row.pausedUntil) : null;
-      const status = storeStatusAt({
-        tenantStatus: row.status,
-        timezone: row.timezone,
-        hours: { rules: row.rules ?? [], exceptions: row.exceptions ?? [] },
-        pause: row.paused ? { pausedUntil } : null,
-        at,
-      });
-      return {
-        ...status,
-        pausedUntil:
-          status.reason === "PAUSED" && pausedUntil
-            ? pausedUntil.toISOString()
-            : null,
-        timezone: row.timezone,
-        checkedAt: at.toISOString(),
-      };
-    });
+    return this.transactions.run((em) =>
+      readStoreStatus(em, currentTenantContext().tenantId),
+    );
   }
 
   getPause(): Promise<StorePause> {
