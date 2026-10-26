@@ -66,11 +66,29 @@ export interface OrderView {
   totalCents: number;
 }
 
+export interface AdminOrderView extends OrderView {
+  customerName: string;
+  customerPhone: string | null;
+  history: Record<string, unknown>[];
+}
+
 const ADDRESS_COLUMNS = `label, postal_code as "postalCode", street, number, complement, district,
   city, state, reference`;
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type WithoutOrderId<T> = T extends { orderId: string }
+  ? Omit<T, "orderId">
+  : never;
+
+function withoutOrderId<T extends { orderId: string }>(
+  value: T,
+): WithoutOrderId<T> {
+  const copy = { ...value };
+  Reflect.deleteProperty(copy, "orderId");
+  return copy as unknown as WithoutOrderId<T>;
+}
 
 interface LockedOrder {
   id: string;
@@ -136,6 +154,103 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
   }
   onModuleDestroy(): void {
     if (this.timeout) clearInterval(this.timeout);
+  }
+
+  listForStaff(): Promise<AdminOrderView[]> {
+    return this.transactions.run(async (em) => {
+      const rows = await em.execute<
+        (Omit<AdminOrderView, "items" | "placedAt" | "history"> & {
+          placedAt: Date | string;
+        })[]
+      >(
+        `select id, number, status, placed_at as "placedAt", fulfillment,
+                delivery_address as "deliveryAddress", payment_method as "paymentMethod",
+                change_for_cents as "changeForCents", notes, customer_name as "customerName",
+                customer_phone as "customerPhone", items_subtotal_cents as "itemsSubtotalCents",
+                delivery_fee_cents as "deliveryFeeCents", discount_cents as "discountCents",
+                total_cents as "totalCents"
+           from orders
+          order by case when status in ('PLACED','PREPARING','READY','OUT_FOR_DELIVERY') then 0 else 1 end,
+                   placed_at desc, number desc
+          limit 200`,
+      );
+      const ids = rows.map((row) => row.id);
+      const orderIds = `{${ids.join(",")}}`;
+      const items = ids.length
+        ? await em.execute<(QuotedLine & { orderId: string })[]>(
+            `select order_id as "orderId", kind, quantity, unit_price_cents as "unitPriceCents",
+                    total_cents as "totalCents", snapshot
+               from order_items where order_id = any(?::uuid[]) order by order_id, position`,
+            [orderIds],
+          )
+        : [];
+      const history = ids.length
+        ? await em.execute<(Record<string, unknown> & { orderId: string })[]>(
+            `select order_id as "orderId", from_status as "from", to_status as "to",
+                    actor_type as "actorType", reason_code as "reasonCode", reason_text as "reasonText", at
+               from order_status_changes where order_id = any(?::uuid[]) order by at asc`,
+            [orderIds],
+          )
+        : [];
+      const byOrder = <T extends { orderId: string }>(values: T[]) => {
+        const grouped = new Map<string, T[]>();
+        for (const value of values) {
+          const group = grouped.get(value.orderId) ?? [];
+          group.push(value);
+          grouped.set(value.orderId, group);
+        }
+        return grouped;
+      };
+      const itemsByOrder = byOrder(items);
+      const historyByOrder = byOrder(history);
+      return rows.map((row) => ({
+        ...row,
+        placedAt: new Date(row.placedAt).toISOString(),
+        items: (itemsByOrder.get(row.id) ?? []).map(withoutOrderId),
+        history: (historyByOrder.get(row.id) ?? []).map(withoutOrderId),
+      }));
+    });
+  }
+
+  getForStaff(orderId: string): Promise<AdminOrderView> {
+    return this.transactions.run(async (em) => {
+      const [row] = await em.execute<
+        (Omit<AdminOrderView, "items" | "placedAt" | "history"> & {
+          placedAt: Date | string;
+        })[]
+      >(
+        `select id, number, status, placed_at as "placedAt", fulfillment,
+                delivery_address as "deliveryAddress", payment_method as "paymentMethod",
+                change_for_cents as "changeForCents", notes, customer_name as "customerName",
+                customer_phone as "customerPhone", items_subtotal_cents as "itemsSubtotalCents",
+                delivery_fee_cents as "deliveryFeeCents", discount_cents as "discountCents",
+                total_cents as "totalCents" from orders where id = ?`,
+        [orderId],
+      );
+      if (!row)
+        throw new ApiError(
+          HttpStatus.NOT_FOUND,
+          "NOT_FOUND",
+          "Order not found.",
+        );
+      const items = await em.execute<QuotedLine[]>(
+        `select kind, quantity, unit_price_cents as "unitPriceCents", total_cents as "totalCents", snapshot
+           from order_items where order_id = ? order by position`,
+        [orderId],
+      );
+      const history = await em.execute<Record<string, unknown>[]>(
+        `select from_status as "from", to_status as "to", actor_type as "actorType",
+                reason_code as "reasonCode", reason_text as "reasonText", at
+           from order_status_changes where order_id = ? order by at asc`,
+        [orderId],
+      );
+      return {
+        ...row,
+        placedAt: new Date(row.placedAt).toISOString(),
+        items,
+        history,
+      };
+    });
   }
 
   async transition(input: {

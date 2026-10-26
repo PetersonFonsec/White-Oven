@@ -7,6 +7,7 @@ import {
   Res,
   HttpCode,
   Param,
+  Get,
 } from "@nestjs/common";
 import {
   ApiBody,
@@ -217,6 +218,30 @@ export class OrderController {
 @Controller("admin/orders")
 export class AdminOrderController {
   constructor(private readonly orders: OrderService) {}
+
+  @Get()
+  @AdminRoute("OWNER", "MANAGER", "STAFF")
+  @ApiOperation({
+    summary: "List recent orders for the active store",
+    description:
+      "Returns up to 200 recent orders with customer contact, item snapshots and transition history. The active store comes from the verified staff session.",
+  })
+  list(@Res({ passthrough: true }) res: Response) {
+    res.setHeader("Cache-Control", "no-store");
+    return this.orders.listForStaff();
+  }
+
+  @Get(":orderId")
+  @AdminRoute("OWNER", "MANAGER", "STAFF")
+  @ApiOperation({ summary: "Read an order in the active store" })
+  get(
+    @Param("orderId") orderId: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!UUID.test(orderId)) throw invalid(["orderId"]);
+    res.setHeader("Cache-Control", "no-store");
+    return this.orders.getForStaff(orderId);
+  }
 
   @Post(":orderId/transitions")
   @AdminRoute("OWNER", "MANAGER", "STAFF")

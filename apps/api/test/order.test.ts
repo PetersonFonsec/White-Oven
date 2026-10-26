@@ -724,6 +724,47 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     }
   });
 
+  it("lists and reads recent orders for staff in the active store", async () => {
+    const { token } = await customer(stores.a.slug);
+    const staffToken = await admin(stores.a.id, "STAFF");
+    const placed = await json(
+      await place(stores.a.slug, token, pickup(stores.a.catalog)),
+    );
+    const response = await fetch(`${server.baseUrl}/v1/admin/orders`, {
+      headers: bearer(staffToken),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const list = (await json(response)) as Record<string, unknown>[];
+    const listed = list.find((entry) => entry["id"] === placed.id);
+    assert.ok(listed);
+    assert.equal(listed["customerName"], "Joana Cliente");
+    assert.equal(listed["status"], "PLACED");
+    assert.ok(Array.isArray(listed["items"]));
+    assert.equal((listed["items"] as unknown[]).length, 1);
+    assert.ok(Array.isArray(listed["history"]));
+
+    const detail = await fetch(
+      `${server.baseUrl}/v1/admin/orders/${placed.id}`,
+      { headers: bearer(staffToken) },
+    );
+    assert.equal(detail.status, 200);
+    assert.equal(detail.headers.get("cache-control"), "no-store");
+    assert.equal((await json(detail)).id, placed.id);
+
+    const otherStoreStaff = await admin(stores.b.id, "STAFF");
+    const otherStoreOrders = await fetch(`${server.baseUrl}/v1/admin/orders`, {
+      headers: bearer(otherStoreStaff),
+    });
+    assert.equal(otherStoreOrders.status, 200);
+    assert.equal(
+      ((await json(otherStoreOrders)) as Record<string, unknown>[]).some(
+        (entry) => entry["id"] === placed.id,
+      ),
+      false,
+    );
+  });
+
   it("anonymizes the customer's orders when the account is deleted, keeping items and totals", async () => {
     const { token, addressId } = await customer(stores.a.slug);
     const c = stores.a.catalog;

@@ -12,7 +12,7 @@ import { StorePauseCard } from "../settings/store-pause";
       >. As áreas do painel aparecem no menu conforme o seu papel na loja.
     </p>
     <wo-store-pause />
-    <p class="muted">Pedidos chegam nas próximas etapas do painel.</p>
+    <p class="muted">Acompanhe novos pedidos no quadro de pedidos.</p>
   `,
 })
 export class StoreHomePage {

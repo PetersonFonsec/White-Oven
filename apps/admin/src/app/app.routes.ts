@@ -105,6 +105,13 @@ export const routes: Routes = [
         component: MenuPage,
       },
       {
+        path: "pedidos",
+        title: "Pedidos · WhiteOven",
+        data: { roles: rolesOf("pedidos"), title: "Pedidos" },
+        loadComponent: () =>
+          import("./orders/orders.page").then((m) => m.OrdersPage),
+      },
+      {
         path: "configuracoes",
         title: "Configurações · WhiteOven",
         data: { roles: rolesOf("configuracoes"), title: "Configurações" },
