@@ -260,7 +260,7 @@ describe("M3.5 brand theme", databaseSuite, () => {
     assert.equal((await json(response)).code, "STORE_WRITE_FORBIDDEN");
   });
 
-  it("serves the app the store's name and resolved colors, without asset ids", async () => {
+  it("serves the app the store's name, resolved colors and logo, never the icon", async () => {
     const profile = (slug: string) =>
       fetch(`${server.baseUrl}/v1/public/stores/${slug}`);
     const before = await profile(slugB);
@@ -269,7 +269,7 @@ describe("M3.5 brand theme", databaseSuite, () => {
     assert.deepEqual(await json(before), {
       slug: slugB,
       name: `Pizzaria ${slugB}`,
-      brand: { version: 0, colors: DEFAULT_BRAND_COLORS },
+      brand: { version: 0, colors: DEFAULT_BRAND_COLORS, logoImageId: null },
     });
 
     assert.equal(
@@ -286,8 +286,27 @@ describe("M3.5 brand theme", databaseSuite, () => {
     assert.equal(saved.brand.version, 1);
     assert.deepEqual(saved.brand.colors, { ...DEFAULT_BRAND_COLORS, ...RED });
     assert.ok(!JSON.stringify(saved).includes(images["otherStore"]!));
+    assert.equal(saved.brand.logoImageId, null);
     // Each store gets its own brand, whatever the other one saved.
-    assert.equal((await json(await profile(slugA))).slug, slugA);
+    const storeA = await json(await profile(slugA));
+    assert.equal(storeA.slug, slugA);
+    assert.equal(storeA.brand.logoImageId, images["logo"]);
+    // The logo is public through the store's own slug only; the icon never is.
+    const image = (slug: string, id: string) =>
+      fetch(`${server.baseUrl}/v1/public/stores/${slug}/images/${id}/menu`);
+    const logo = await image(slugA, images["logo"]!);
+    assert.equal(logo.status, 200);
+    assert.equal(logo.headers.get("content-type"), "image/webp");
+    assert.equal(logo.headers.get("cache-control"), "no-cache");
+    assert.ok((await logo.arrayBuffer()).byteLength > 0);
+    for (const [slug, id] of [
+      [slugB, images["logo"]!],
+      [slugB, images["otherStore"]!],
+    ] as const) {
+      const refused = await image(slug, id);
+      assert.equal(refused.status, 404);
+      assert.equal((await json(refused)).code, "IMAGE_NOT_FOUND");
+    }
 
     const suspended = `brand-s-${randomUUID().slice(0, 8)}`;
     await insertTenant(owner, suspended, "SUSPENDED");

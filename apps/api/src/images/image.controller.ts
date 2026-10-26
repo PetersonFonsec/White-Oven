@@ -16,6 +16,7 @@ import {
 } from "@nestjs/swagger";
 import type { Request, Response } from "express";
 import { AdminRoute } from "../auth/staff.guard";
+import { StoreTenant } from "../tenancy/store-tenant.guard";
 import { ApiError } from "../errors/api-error";
 import { requestIdOf } from "../logging/request-context";
 import {
@@ -26,6 +27,17 @@ import {
 import { ImageService } from "./image.service";
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The same 404 for a malformed id or variant as for an unknown image. */
+function checkedVariant(id: string, variant: string): ImageVariant {
+  if (!ID.test(id) || !(IMAGE_VARIANTS as readonly string[]).includes(variant))
+    throw new ApiError(
+      HttpStatus.NOT_FOUND,
+      "IMAGE_NOT_FOUND",
+      "Image not found.",
+    );
+  return variant as ImageVariant;
+}
 
 @ApiTags("images")
 @ApiBearerAuth()
@@ -88,24 +100,47 @@ export class ImageController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    if (
-      !ID.test(id) ||
-      !(IMAGE_VARIANTS as readonly string[]).includes(variant)
-    )
-      throw new ApiError(
-        HttpStatus.NOT_FOUND,
-        "IMAGE_NOT_FOUND",
-        "Image not found.",
-      );
     const image = await this.images.read(
       id,
-      variant as ImageVariant,
+      checkedVariant(id, variant),
       requestIdOf(req),
     );
     res
       .status(HttpStatus.OK)
       .type("image/webp")
       .set("Cache-Control", "private, no-store")
+      .set("X-Content-Type-Options", "nosniff")
+      .send(image);
+  }
+}
+
+/**
+ * Images of the store's public surface, for the app (M5.2, ADR 0021): the menu's flavor and
+ * product images and the brand logo, nothing else.
+ */
+@ApiTags("public")
+@Controller("public/stores/:storeSlug/images")
+export class PublicImageController {
+  constructor(private readonly images: ImageService) {}
+
+  @Get(":id/:variant")
+  @StoreTenant()
+  @ApiProduces("image/webp")
+  @ApiOperation({
+    summary: "Read an image the store's public menu or brand shows",
+  })
+  async read(
+    @Param("id") id: string,
+    @Param("variant") variant: string,
+    @Res() res: Response,
+  ) {
+    const image = await this.images.readPublic(id, checkedVariant(id, variant));
+    res
+      .status(HttpStatus.OK)
+      .type("image/webp")
+      // Revalidated on every use (ETag), like the menu: an image taken off the menu or a
+      // suspended store stops being served at once, and an unchanged one costs a 304.
+      .set("Cache-Control", "no-cache")
       .set("X-Content-Type-Options", "nosniff")
       .send(image);
   }

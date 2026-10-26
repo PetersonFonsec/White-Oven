@@ -80,3 +80,25 @@ export function storeMessage(view: StoreView): StoreMessage {
       };
   }
 }
+
+/** Shown on the menu and in the builder while a menu kept after a failed reload is on screen. */
+export const MENU_STALE_NOTICE =
+  "Não conseguimos atualizar o cardápio. Preços e disponibilidade podem ter mudado.";
+
+/**
+ * Lines above the menu (M5.2): why the store is not taking orders now, if so, the connection
+ * notice and, when the menu on screen could not be reloaded, that its prices may be old. Empty
+ * for an open store with a fresh brand and menu.
+ */
+export function menuNotices(view: StoreView, menuStale = false): string[] {
+  const message = storeMessage(view);
+  const status =
+    view.availability.kind === "closed"
+      ? `${message.title}. ${message.body}`
+      : view.availability.kind === "offline"
+        ? message.body
+        : null;
+  return [status, message.notice, menuStale ? MENU_STALE_NOTICE : null].filter(
+    (line): line is string => line !== null,
+  );
+}

@@ -18,11 +18,12 @@ const RED = {
   onPrimary: "#FFFFFF",
   accentText: "#8C1D18",
 };
+const LOGO = "7d7c3c39-3a54-4c8e-9a44-5a0d2f3f8f11";
 const MANIFEST = { name: "Forno do Bairro", colors: DEFAULT_BRAND_COLORS };
 const profile = (extra: Record<string, unknown> = {}) => ({
   slug: SLUG,
   name: "Forno do Bairro Oficial",
-  brand: { version: 3, colors: RED },
+  brand: { version: 3, colors: RED, logoImageId: LOGO },
   ...extra,
 });
 const OPEN = {
@@ -104,6 +105,7 @@ describe("store brand and status", () => {
     assert.deepEqual(view, {
       name: "Forno do Bairro Oficial",
       colors: RED,
+      logoImageId: LOGO,
       brandVersion: 3,
       brandSource: "api",
       brandStale: false,
@@ -112,6 +114,7 @@ describe("store brand and status", () => {
     assert.deepEqual(await cachedBrand(cache, SLUG), {
       name: "Forno do Bairro Oficial",
       colors: RED,
+      logoImageId: LOGO,
       version: 3,
     });
     assert.deepEqual(storeMessage(view), {
@@ -135,6 +138,7 @@ describe("store brand and status", () => {
     assert.deepEqual(view, {
       name: "Forno do Bairro Oficial",
       colors: RED,
+      logoImageId: LOGO,
       brandVersion: 3,
       brandSource: "cache",
       brandStale: true,
@@ -196,6 +200,20 @@ describe("store brand and status", () => {
       const view = await loadStore(options(fetch, memoryCache(raw)));
       assert.equal(view.brandSource, "manifest", raw.slice(0, 40));
     }
+    // A cache written before the logo existed (M5.1) still opens the app, without a logo.
+    const beforeLogo = await loadStore(
+      options(
+        fetch,
+        memoryCache(
+          JSON.stringify({
+            version: 1,
+            profile: profile({ brand: { version: 3, colors: RED } }),
+          }),
+        ),
+      ),
+    );
+    assert.equal(beforeLogo.brandSource, "cache");
+    assert.equal(beforeLogo.logoImageId, null);
     const unreadable: BrandCache = {
       read: () => Promise.reject(new Error("io")),
       write: () => Promise.resolve(),
@@ -213,6 +231,7 @@ describe("store brand and status", () => {
         brand: { version: 4, colors: { ...RED, onPrimary: "#B3261E" } },
       }),
       profile({ brand: { version: -1, colors: RED } }),
+      profile({ brand: { version: 4, colors: RED, logoImageId: "../admin" } }),
       profile({ name: "" }),
       { error: "html page" },
     ]) {

@@ -5,11 +5,13 @@ import {
   LocalImageStorage,
   processImage,
 } from "./image-storage";
-import { ImageController } from "./image.controller";
+import { CatalogModule } from "../catalog/catalog.module";
+import { ImageController, PublicImageController } from "./image.controller";
 import { ImageService } from "./image.service";
 
 @Module({
-  controllers: [ImageController],
+  imports: [CatalogModule],
+  controllers: [ImageController, PublicImageController],
   providers: [
     ImageService,
     LocalImageStorage,

@@ -162,6 +162,11 @@ describe("tenant isolation", databaseSuite, () => {
         "insert into image_assets (id,tenant_id,source_format,width,height) values (gen_random_uuid(),?,'webp',2,2) returning id",
         [id],
       );
+      // Published on the menu, so the public image route would serve it to its own store.
+      await em.execute(
+        "update catalog_flavors set image_asset_id=? where id=?",
+        [image!.id, flavorRow!.id],
+      );
       return {
         categoryId: category!.id,
         productCategoryId: productCategory!.id,
@@ -606,6 +611,10 @@ describe("tenant isolation", databaseSuite, () => {
           attacker,
           `/admin/catalog/products/${victim.productId}`,
           "DELETE",
+        ),
+      "GET /public/stores/:storeSlug/images/:id/:variant": (attacker, victim) =>
+        call(
+          `/public/stores/${attacker.slug}/images/${victim.imageAssetId}/menu`,
         ),
       "GET /admin/catalog/images/:id/:variant": (attacker, victim) =>
         adminCatalogCall(

@@ -182,6 +182,12 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@whiteoven/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@whiteoven/pizza-pricing':
+        specifier: workspace:*
+        version: link:../../packages/pizza-pricing
       expo:
         specifier: ~58.0.19
         version: 58.0.19(@babel/core@7.29.7(supports-color@8.1.1))(@expo/dom-webview@58.0.2)(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)(supports-color@8.1.1)(typescript@5.9.3)

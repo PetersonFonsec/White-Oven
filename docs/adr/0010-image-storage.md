@@ -18,7 +18,7 @@ O catálogo precisa receber imagens sem confiar no nome, extensão ou tipo MIME 
 - O contrato `ImageStorage` exige que `write` remova suas gravações parciais sempre que possível e repropague o erro original. `remove` é idempotente e limitado ao par tenant/asset. O storage local escreve em diretório novo e remove esse diretório se uma variante falhar; UUIDs em colisão não sobrescrevem nem removem conteúdo existente.
 - Gravar arquivos antes do metadado e removê-los se INSERT ou COMMIT do banco falhar. Uma falha de remoção compensatória é registrada com evento, operação, tenant/asset e tipos de erro, sem mensagens ou caminhos do filesystem; o erro original continua sendo propagado. Uma falha de processo entre gravação e commit ainda pode deixar arquivo órfão; uma rotina de reconciliação fica para operação posterior.
 - Quando o metadado existe mas uma variante não está no storage (`ENOENT`), responder `503 IMAGE_STORAGE_MISSING` e registrar a inconsistência. Outros erros de I/O continuam como falhas internas observáveis e não são convertidos em `404`.
-- Respostas administrativas de imagem usam `Cache-Control: private, no-store` porque a autorização pode ser revogada. Endpoints públicos futuros definirão sua política separadamente.
+- Respostas administrativas de imagem usam `Cache-Control: private, no-store` porque a autorização pode ser revogada. Endpoints públicos futuros definirão sua política separadamente. M5.2 criou a rota pública, restrita às imagens do cardápio público e ao logotipo, com `no-cache` e ETag ([ADR 0021](0021-mobile-menu-pizza-builder.md)).
 
 ## Consequências
 

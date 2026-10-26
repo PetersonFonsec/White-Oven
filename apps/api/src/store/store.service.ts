@@ -51,8 +51,9 @@ export interface PublicStoreStatus {
 
 /**
  * `GET /v1/public/stores/{slug}` (M5.1, ADR 0020): what the app needs to wear the store's brand.
- * Colors are already resolved over the WhiteOven defaults; images arrive with the public menu
- * images (M5.2), so nothing here points at an asset.
+ * Colors are already resolved over the WhiteOven defaults. The logo is read at
+ * `/v1/public/stores/{slug}/images/{logoImageId}/{variant}` (M5.2, ADR 0021); the icon belongs to
+ * the build and is not exposed.
  */
 export interface PublicStoreProfile {
   slug: string;
@@ -61,6 +62,8 @@ export interface PublicStoreProfile {
     /** `brand_themes.version`; 0 while the store uses the WhiteOven defaults. */
     version: number;
     colors: Record<BrandColorToken, string>;
+    /** null while the store has no logo. */
+    logoImageId: string | null;
   };
 }
 
@@ -188,7 +191,11 @@ export class StoreService {
       return {
         slug: tenant!.slug,
         name: tenant!.name,
-        brand: { version: brand.theme.version, colors: brand.colors },
+        brand: {
+          version: brand.theme.version,
+          colors: brand.colors,
+          logoImageId: brand.theme.logoAssetId,
+        },
       };
     });
   }
