@@ -18,7 +18,13 @@ import {
 import { type OrderStore, seedOrderStore } from "./order-fixtures";
 import { HeldTransactions } from "./concurrency";
 import { runInTenant } from "../src/tenancy/tenant-transaction";
-import { OrderService } from "../src/order/order.service";
+import { TenantTransactions } from "../src/tenancy/tenant-transaction";
+import { MikroORM } from "@mikro-orm/postgresql";
+import { JsonLogger } from "../src/logging/json-logger";
+import {
+  ORDER_TIMEOUT_BATCH_SIZE,
+  OrderService,
+} from "../src/order/order.service";
 
 const PASSWORD = "cliente-senha-forte";
 const ADDRESS = {
@@ -148,10 +154,13 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     ...extra,
   });
 
-  const admin = async (tenantId: string) => {
+  const admin = async (
+    tenantId: string,
+    role: "OWNER" | "MANAGER" | "STAFF" = "OWNER",
+  ) => {
     const email = `order-admin-${randomUUID()}@teste.invalid`;
     const userId = await insertStaffUser(owner, email, PASSWORD);
-    await insertMembership(owner, tenantId, userId, "OWNER");
+    await insertMembership(owner, tenantId, userId, role);
     const loggedIn = await staffLogin(server.baseUrl, email, PASSWORD);
     const selected = await switchTenant(
       server.baseUrl,
@@ -888,11 +897,15 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
       k1,
     );
     assert.equal(accepted.status, 200);
-    assert.equal((await json(accepted)).order.status, "PREPARING");
+    const acceptedBody = await json(accepted);
+    assert.equal(acceptedBody.order.status, "PREPARING");
 
     // I2: retry returns the original transition without appending history.
     const retry = await staffTransition(staffToken, firstOrder.id, accept, k1);
     assert.equal(retry.status, 200);
+    const immediateRetry = await json(retry);
+    assert.deepEqual(immediateRetry.change, acceptedBody.change);
+    assert.deepEqual(immediateRetry.order, acceptedBody.order);
     assert.equal(await historyCount(firstOrder.id), 2); // initial PLACED + I1
 
     // I3: an old successful retry returns its original change and current order state.
@@ -905,7 +918,7 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
       await staffTransition(staffToken, firstOrder.id, accept, k1),
     );
     assert.equal(oldRetry.order.status, "READY");
-    assert.equal(oldRetry.change.to, "PREPARING");
+    assert.deepEqual(oldRetry.change, acceptedBody.change);
 
     // I4: a key cannot be reused for another command.
     const reused = await staffTransition(
@@ -954,6 +967,11 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
       duplicateResponses.map((response) => response.status),
       [200, 200],
     );
+    const duplicateBodies = await Promise.all(
+      duplicateResponses.map((response) => json(response)),
+    );
+    assert.deepEqual(duplicateBodies[0].change, duplicateBodies[1].change);
+    assert.deepEqual(duplicateBodies[0].order, duplicateBodies[1].order);
     assert.equal(await historyCount(retryOrder.id), 2);
 
     // I8: running the tenant job twice records one timeout rejection.
@@ -979,6 +997,304 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
       rejection_reason: "ACCEPT_TIMEOUT",
     });
     assert.equal(await historyCount(timedOutOrder.id), 2);
+  });
+
+  it("rejects overdue orders in bounded batches across concurrent job instances", async () => {
+    const tenant = `lotes-${randomUUID().slice(0, 8)}`;
+    const tenantId = await insertTenant(owner, tenant);
+    const catalog = await seedOrderStore(owner, tenantId);
+    const { token } = await customer(tenant);
+    const count = ORDER_TIMEOUT_BATCH_SIZE + 2;
+    const responses = await Promise.all(
+      Array.from({ length: count }, () =>
+        place(tenant, token, {
+          ...pickup(catalog),
+          expectedTotalCents: 4000,
+        }),
+      ),
+    );
+    assert.ok(responses.every((response) => response.status === 201));
+    await sql(
+      tenantId,
+      "update orders set placed_at = now() - interval '2 hours'",
+    );
+
+    const serviceA = server.app.get(OrderService) as unknown as {
+      rejectExpiredOrders(): Promise<void>;
+    };
+    const serviceB = new OrderService(
+      server.app.get(TenantTransactions),
+      server.app.get(MikroORM),
+      server.app.get(JsonLogger),
+    ) as unknown as { rejectExpiredOrders(): Promise<void> };
+    await Promise.all([
+      serviceA.rejectExpiredOrders(),
+      serviceB.rejectExpiredOrders(),
+    ]);
+
+    const [states] = await sql<{ pending: number; rejected: number }>(
+      tenantId,
+      `select count(*) filter (where status='PLACED')::int as pending,
+              count(*) filter (where status='REJECTED' and rejection_reason='ACCEPT_TIMEOUT')::int as rejected
+         from orders`,
+    );
+    assert.deepEqual(states, { pending: 0, rejected: count });
+    const [history] = await sql<{ timeouts: number; duplicates: number }>(
+      tenantId,
+      `select count(*) filter (where reason_code='ACCEPT_TIMEOUT')::int as timeouts,
+              count(*) filter (where reason_code='ACCEPT_TIMEOUT')::int - count(distinct order_id)
+                filter (where reason_code='ACCEPT_TIMEOUT')::int as duplicates
+         from order_status_changes`,
+    );
+    assert.deepEqual(history, { timeouts: count, duplicates: 0 });
+  });
+
+  it("skips an order being accepted while the timeout batch runs", async () => {
+    const tenant = `aceite-job-${randomUUID().slice(0, 8)}`;
+    const tenantId = await insertTenant(owner, tenant);
+    const catalog = await seedOrderStore(owner, tenantId);
+    const { token } = await customer(tenant);
+    const staffToken = await admin(tenantId);
+    const order = await json(
+      await place(tenant, token, {
+        ...pickup(catalog),
+        expectedTotalCents: 4000,
+      }),
+    );
+    await sql(
+      tenantId,
+      "update orders set placed_at = now() - interval '2 hours' where id = ?",
+      [order.id],
+    );
+    const held = new HeldTransactions(owner);
+    try {
+      const lock = await held.hold(
+        (em) =>
+          em.execute("select id from orders where id = ? for update", [
+            order.id,
+          ]),
+        tenantId,
+      );
+      const accepting = staffTransition(staffToken, order.id, {
+        from: "PLACED",
+        to: "PREPARING",
+      });
+      await held.lockWaiters(1);
+      const service = server.app.get(OrderService) as unknown as {
+        rejectExpiredOrders(): Promise<void>;
+      };
+      await service.rejectExpiredOrders();
+      lock.commit();
+      await lock.done;
+      const accepted = await accepting;
+      assert.equal(accepted.status, 200);
+      const [row] = await sql<{ status: string; reason: string | null }>(
+        tenantId,
+        `select o.status, c.reason_code as reason from orders o
+           left join order_status_changes c on c.order_id=o.id and c.reason_code='ACCEPT_TIMEOUT'
+          where o.id=?`,
+        [order.id],
+      );
+      assert.deepEqual(row, { status: "PREPARING", reason: null });
+    } finally {
+      held.releaseAll();
+    }
+  });
+
+  it("continues processing other tenants when one timeout batch fails", async () => {
+    const failedTenant = `falha-job-${randomUUID().slice(0, 8)}`;
+    const healthyTenant = `saudavel-job-${randomUUID().slice(0, 8)}`;
+    const failedId = await insertTenant(owner, failedTenant);
+    const healthyId = await insertTenant(owner, healthyTenant);
+    const failedCatalog = await seedOrderStore(owner, failedId);
+    const healthyCatalog = await seedOrderStore(owner, healthyId);
+    const failedCustomer = await customer(failedTenant);
+    const healthyCustomer = await customer(healthyTenant);
+    const failedOrder = await json(
+      await place(failedTenant, failedCustomer.token, {
+        ...pickup(failedCatalog),
+        expectedTotalCents: 4000,
+      }),
+    );
+    const healthyOrder = await json(
+      await place(healthyTenant, healthyCustomer.token, {
+        ...pickup(healthyCatalog),
+        expectedTotalCents: 4000,
+      }),
+    );
+    await sql(
+      failedId,
+      "update orders set placed_at = now() - interval '2 hours' where id = ?",
+      [failedOrder.id],
+    );
+    await sql(
+      healthyId,
+      "update orders set placed_at = now() - interval '2 hours' where id = ?",
+      [healthyOrder.id],
+    );
+
+    const functionName = `test_timeout_failure_${randomUUID().replaceAll("-", "")}`;
+    const triggerName = `${functionName}_trigger`;
+    const connection = owner.em.getConnection();
+    await connection.execute(`
+      create function public.${functionName}() returns trigger language plpgsql as $$
+      begin
+        if new.tenant_id = '${failedId}'::uuid and new.rejection_reason = 'ACCEPT_TIMEOUT' then
+          raise exception 'synthetic timeout batch failure';
+        end if;
+        return new;
+      end $$;
+      create trigger ${triggerName} before update of status on public.orders
+      for each row execute function public.${functionName}();
+    `);
+    try {
+      const service = server.app.get(OrderService) as unknown as {
+        rejectExpiredOrders(): Promise<void>;
+      };
+      await service.rejectExpiredOrders();
+      const [failed] = await sql<{ status: string }>(
+        failedId,
+        "select status from orders where id = ?",
+        [failedOrder.id],
+      );
+      const [healthy] = await sql<{ status: string }>(
+        healthyId,
+        "select status from orders where id = ?",
+        [healthyOrder.id],
+      );
+      assert.equal(failed!.status, "PLACED");
+      assert.equal(healthy!.status, "REJECTED");
+    } finally {
+      await connection.execute(
+        `drop trigger ${triggerName} on public.orders; drop function public.${functionName}();`,
+      );
+    }
+  });
+
+  it("blocks completion and billing while suspended, allowing only OWNER closures", async () => {
+    const tenant = `suspensa-transicao-${randomUUID().slice(0, 8)}`;
+    const tenantId = await insertTenant(owner, tenant);
+    const catalog = await seedOrderStore(owner, tenantId);
+    const { token } = await customer(tenant);
+    const ownerToken = await admin(tenantId);
+    const managerToken = await admin(tenantId, "MANAGER");
+    const staffToken = await admin(tenantId, "STAFF");
+    const advance = async (
+      orderId: string,
+      tokenValue: string,
+      from: string,
+      to: string,
+      reasonCode?: string,
+    ) =>
+      staffTransition(tokenValue, orderId, {
+        from,
+        to,
+        ...(reasonCode ? { reasonCode } : {}),
+      });
+    const completionOrder = await json(
+      await place(tenant, token, {
+        ...pickup(catalog),
+        expectedTotalCents: 4000,
+      }),
+    );
+    assert.equal(
+      (await advance(completionOrder.id, ownerToken, "PLACED", "PREPARING"))
+        .status,
+      200,
+    );
+    assert.equal(
+      (await advance(completionOrder.id, ownerToken, "PREPARING", "READY"))
+        .status,
+      200,
+    );
+    const managerOrder = await json(
+      await place(tenant, token, {
+        ...pickup(catalog),
+        expectedTotalCents: 4000,
+      }),
+    );
+    assert.equal(
+      (await advance(managerOrder.id, ownerToken, "PLACED", "PREPARING"))
+        .status,
+      200,
+    );
+    const staffOrder = await json(
+      await place(tenant, token, {
+        ...pickup(catalog),
+        expectedTotalCents: 4000,
+      }),
+    );
+    assert.equal(
+      (await advance(staffOrder.id, ownerToken, "PLACED", "PREPARING")).status,
+      200,
+    );
+    const rejectableOrder = await json(
+      await place(tenant, token, {
+        ...pickup(catalog),
+        expectedTotalCents: 4000,
+      }),
+    );
+
+    await owner.em
+      .getConnection()
+      .execute("update tenants set status='SUSPENDED' where id=?", [tenantId]);
+
+    const blockedCompletion = await advance(
+      completionOrder.id,
+      ownerToken,
+      "READY",
+      "COMPLETED",
+    );
+    assert.equal(blockedCompletion.status, 403);
+    assert.equal((await json(blockedCompletion)).code, "TENANT_NOT_ACTIVE");
+    const ownerCancel = await advance(
+      completionOrder.id,
+      ownerToken,
+      "READY",
+      "CANCELED",
+      "STORE_TOO_BUSY",
+    );
+    assert.equal(ownerCancel.status, 200);
+    const ownerReject = await staffTransition(ownerToken, rejectableOrder.id, {
+      from: "PLACED",
+      to: "REJECTED",
+      reasonCode: "ITEM_UNAVAILABLE",
+    });
+    assert.equal(ownerReject.status, 200);
+    for (const [tokenValue, orderId] of [
+      [managerToken, managerOrder.id],
+      [staffToken, staffOrder.id],
+    ]) {
+      const response = await advance(
+        orderId!,
+        tokenValue!,
+        "PREPARING",
+        "CANCELED",
+        "STORE_TOO_BUSY",
+      );
+      assert.equal(response.status, 403);
+      const [blocked] = await sql<{ status: string; canceled: number }>(
+        tenantId,
+        `select o.status,
+                (select count(*)::int from order_status_changes c
+                  where c.order_id=o.id and c.to_status='CANCELED') as canceled
+           from orders o where o.id=?`,
+        [orderId],
+      );
+      assert.deepEqual(blocked, { status: "PREPARING", canceled: 0 });
+    }
+    const [billing] = await sql<{ count: number }>(
+      tenantId,
+      "select count(*)::int as count from billing_entries",
+    );
+    assert.equal(billing!.count, 0);
+    const [blockedHistory] = await sql<{ count: number }>(
+      tenantId,
+      `select count(*)::int as count from order_status_changes
+        where order_id=? and to_status='COMPLETED'`,
+      [completionOrder.id],
+    );
+    assert.equal(blockedHistory!.count, 0);
   });
 
   it("lets a customer cancel only a placed order with an idempotent command", async () => {
@@ -1010,6 +1326,24 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     const retry = await cancel();
     assert.equal(retry.status, 200);
     assert.equal((await json(retry)).order.status, "CANCELED");
+    await sql(
+      stores.a.id,
+      "update orders set placed_at = now() - interval '2 hours' where id = ?",
+      [order.id],
+    );
+    const service = server.app.get(OrderService) as unknown as {
+      rejectExpiredOrders(): Promise<void>;
+    };
+    await service.rejectExpiredOrders();
+    const [afterJob] = await sql<{ status: string; timeouts: number }>(
+      stores.a.id,
+      `select o.status,
+              (select count(*)::int from order_status_changes c
+                where c.order_id=o.id and c.reason_code='ACCEPT_TIMEOUT') as timeouts
+         from orders o where o.id=?`,
+      [order.id],
+    );
+    assert.deepEqual(afterJob, { status: "CANCELED", timeouts: 0 });
     const invalid = await fetch(
       `${server.baseUrl}/v1/customer/stores/${stores.a.slug}/me/orders/${order.id}/transitions`,
       {

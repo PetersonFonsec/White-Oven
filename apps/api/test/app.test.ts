@@ -243,6 +243,18 @@ describe("OpenAPI", () => {
       assert.ok(document.paths["/health/ready"]?.get);
       assert.ok(document.components.schemas.ApiErrorBody);
       assert.ok(document.components.schemas.HealthBody);
+      type OpenApiOperation = { summary?: string; description?: string };
+      const transitionOperations = Object.values(
+        document.paths as Record<string, Record<string, OpenApiOperation>>,
+      )
+        .flatMap((path) => Object.values(path))
+        .filter(
+          (operation) =>
+            operation.summary === "Apply an idempotent order transition",
+        );
+      assert.equal(transitionOperations.length, 2);
+      for (const operation of transitionOperations)
+        assert.match(operation.description ?? "", /change.*order/s);
     } finally {
       await server.close();
     }

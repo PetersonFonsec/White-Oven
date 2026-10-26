@@ -92,8 +92,8 @@ Fonte única para os guards da API: `TenantStatusPolicy` é verificada depois do
 Encerramento de pedidos em tenant `SUSPENDED`:
 
 - Na mesma transação que suspende o tenant, todos os pedidos em `PLACED` vão para `REJECTED` com motivo `STORE_SUSPENDED` e ator `SYSTEM`. Nenhum pedido novo é aceito depois disso, então não existe aceite (`PLACED → PREPARING`) durante a suspensão.
-- Pedidos em `PREPARING`, `READY` e `OUT_FOR_DELIVERY` podem seguir apenas as transições que levam a estado terminal: `PREPARING → READY`, `PREPARING → CANCELED`, `READY → OUT_FOR_DELIVERY`, `READY → COMPLETED`, `READY → CANCELED`, `OUT_FOR_DELIVERY → COMPLETED`, `OUT_FOR_DELIVERY → CANCELED`. Só o OWNER as executa.
-- A conclusão durante a suspensão gera `BillingEntry` normalmente: a venda aconteceu.
+- Pedidos em `PREPARING`, `READY` e `OUT_FOR_DELIVERY` podem seguir transições de encerramento válidas, executadas somente pelo OWNER. Durante a suspensão, não há transição para `COMPLETED`; `CANCELED` e `REJECTED` só são permitidos quando válidos pela máquina de estados.
+- **Decisão da revisão da PR #30:** uma loja suspensa não pode registrar novas conclusões comerciais; portanto, `COMPLETED` e `BillingEntry` ficam proibidos durante a suspensão, mesmo se o pedido já estava em preparo. Isso substitui a regra anterior de faturar normalmente pedidos concluídos durante a suspensão.
 - Reativar (`SUSPENDED → ACTIVE`) não reabre pedidos recusados.
 
 Critério de aceite: teste parametrizado percorre a matriz (status × papel × operação) e confirma permitido/negado em cada célula, incluindo as sete transições de encerramento e a recusa automática de `PLACED` na suspensão.

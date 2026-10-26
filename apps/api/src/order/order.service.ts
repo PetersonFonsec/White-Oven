@@ -38,6 +38,11 @@ import {
 /** How long an `Idempotency-Key` identifies its order (domain-model.md#ordercreationkey). */
 export const ORDER_KEY_TTL_HOURS = 24;
 
+/** A timeout transaction locks at most this many orders. */
+export const ORDER_TIMEOUT_BATCH_SIZE = 100;
+/** Bound work per tenant per timer tick so a large store cannot delay every later tenant. */
+export const ORDER_TIMEOUT_MAX_BATCHES_PER_TENANT_PER_RUN = 10;
+
 export interface OrderQuoteView extends OrderQuote {
   /** True when the app sent `expectedTotalCents` and the server total differs. */
   priceChanged: boolean;
@@ -66,6 +71,40 @@ const ADDRESS_COLUMNS = `label, postal_code as "postalCode", street, number, com
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface LockedOrder {
+  id: string;
+  status: OrderStatus;
+  fulfillment: Fulfillment;
+  totalCents: number;
+  itemsSubtotalCents: number;
+  deliveryFeeCents: number;
+  paymentMethod: PaymentMethod;
+}
+
+interface PersistedTransitionChange {
+  from: OrderStatus;
+  to: OrderStatus;
+  reasonCode: RejectionReason | null;
+  reasonText: string | null;
+  commandHash: Buffer;
+  at: Date | string;
+}
+
+type PublicTransitionChange = Omit<PersistedTransitionChange, "commandHash">;
+
+interface WriteTransitionInput {
+  orderId: string;
+  from: OrderStatus;
+  to: OrderStatus;
+  actorType: "CUSTOMER" | "STAFF" | "SYSTEM";
+  actorId: string;
+  reasonCode: RejectionReason | null;
+  reasonText: string | null;
+  keyHash: Buffer;
+  commandHash: Buffer;
+  requestId?: string;
+}
 
 /**
  * Quote and idempotent creation of an order (M4.3, ADR 0018, order-lifecycle.md#checkout).
@@ -144,7 +183,7 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
             "TENANT_NOT_ACTIVE",
             "Store unavailable.",
           );
-        const [order] = await em.execute<any[]>(
+        const [order] = await em.execute<LockedOrder[]>(
           `select id, status, fulfillment, total_cents as "totalCents", items_subtotal_cents as "itemsSubtotalCents",
                 delivery_fee_cents as "deliveryFeeCents", payment_method as "paymentMethod", placed_at as "placedAt"
            from orders where id = ? for update`,
@@ -156,7 +195,7 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
             "NOT_FOUND",
             "Order not found.",
           );
-        const [prior] = await em.execute<any[]>(
+        const [prior] = await em.execute<PersistedTransitionChange[]>(
           `select from_status as "from", to_status as "to", reason_code as "reasonCode", reason_text as "reasonText",
                 command_hash as "commandHash", at from order_status_changes where order_id = ? and command_key_hash = ?`,
           [input.orderId, keyHash],
@@ -175,11 +214,13 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
               actorType,
               actorId,
             ),
-            change: prior,
+            change: publicTransitionChange(prior),
           };
         }
         if (input.from !== order.status) {
-          const [lastChange] = await em.execute<any[]>(
+          const [lastChange] = await em.execute<
+            { from: OrderStatus; to: OrderStatus; at: Date | string }[]
+          >(
             `select from_status as "from", to_status as "to", at from order_status_changes where order_id = ? order by at desc limit 1`,
             [input.orderId],
           );
@@ -216,8 +257,8 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
             "This order transition is not allowed.",
           );
         if (
-          suspendedOwnerClose &&
-          !["COMPLETED", "CANCELED", "REJECTED"].includes(input.to)
+          tenant?.status === "SUSPENDED" &&
+          (!suspendedOwnerClose || !["CANCELED", "REJECTED"].includes(input.to))
         )
           throw new ApiError(
             HttpStatus.FORBIDDEN,
@@ -245,13 +286,14 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
           ],
         );
         if (input.to === "COMPLETED") await this.recordBilling(em, order);
-        const change = {
-          from: input.from,
-          to: input.to,
-          reasonCode: input.reasonCode ?? null,
-          reasonText: input.reasonText?.trim() ?? null,
-          at: new Date().toISOString(),
-        };
+        const [persistedChange] = await em.execute<PublicTransitionChange[]>(
+          `select from_status as "from", to_status as "to", reason_code as "reasonCode",
+                  reason_text as "reasonText", at
+             from order_status_changes where order_id = ? and command_key_hash = ?`,
+          [input.orderId, keyHash],
+        );
+        if (!persistedChange)
+          throw new Error("Order transition history was not persisted.");
         return {
           order: await readTransitionOrder(
             em,
@@ -259,14 +301,17 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
             actorType,
             actorId,
           ),
-          change,
+          change: publicTransitionChange(persistedChange),
         };
       },
       actorType === "STAFF" ? { lockTenantStatusFirst: true } : undefined,
     );
   }
 
-  private async writeTransition(em: any, c: any): Promise<void> {
+  private async writeTransition(
+    em: EntityManager,
+    c: WriteTransitionInput,
+  ): Promise<void> {
     await em.execute(
       `insert into order_status_changes (tenant_id, order_id, from_status, to_status, actor_type, actor_id, reason_code, reason_text, command_key_hash, command_hash)
       values (current_setting('app.tenant_id')::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -295,7 +340,17 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
       ]);
   }
 
-  private async recordBilling(em: any, order: any): Promise<void> {
+  private async recordBilling(
+    em: EntityManager,
+    order: Pick<
+      LockedOrder,
+      | "id"
+      | "itemsSubtotalCents"
+      | "deliveryFeeCents"
+      | "totalCents"
+      | "paymentMethod"
+    >,
+  ): Promise<void> {
     await em.execute(
       `insert into billing_entries (tenant_id, order_id, type, items_subtotal_cents, delivery_fee_cents, total_cents, payment_method, paid_online)
       values (current_setting('app.tenant_id')::uuid, ?, 'ORDER_COMPLETED', ?, ?, ?, ?, false) on conflict (tenant_id, order_id, type) do nothing`,
@@ -317,46 +372,80 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
       const tenants = await em.execute<{ id: string }[]>(
         `select id from tenants where status = 'ACTIVE'`,
       );
-      for (const tenant of tenants)
-        await runInTenant(this.orm, tenant.id, async (tx) => {
-          const [state] = await tx.execute<{ status: string }[]>(
-            "select whiteoven_lock_tenant_status(?) as status",
-            [tenant.id],
-          );
-          if (state?.status !== "ACTIVE") return;
-          const due = await tx.execute<{ id: string }[]>(
-            `select o.id from orders o join store_settings s on true where o.status = 'PLACED' and o.placed_at + make_interval(mins => s.accept_timeout_minutes) <= now() for update of o skip locked`,
-          );
-          for (const { id } of due) {
-            const key = "system:accept-timeout";
-            const keyHash = sha256(key);
-            const commandHash = createHash("sha256")
-              .update(
-                JSON.stringify(["PLACED", "REJECTED", "ACCEPT_TIMEOUT", null]),
-              )
-              .digest();
-            const [prior] = await tx.execute(
-              `select 1 from order_status_changes where order_id = ? and command_key_hash = ?`,
-              [id, keyHash],
+      for (const tenant of tenants) {
+        for (
+          let batch = 1;
+          batch <= ORDER_TIMEOUT_MAX_BATCHES_PER_TENANT_PER_RUN;
+          batch++
+        ) {
+          try {
+            const processed = await runInTenant(
+              this.orm,
+              tenant.id,
+              async (tx) => {
+                const [state] = await tx.execute<{ status: string }[]>(
+                  "select whiteoven_lock_tenant_status(?) as status",
+                  [tenant.id],
+                );
+                if (state?.status !== "ACTIVE") return 0;
+                const due = await tx.execute<{ id: string }[]>(
+                  `select o.id from orders o join store_settings s on true
+                    where o.status = 'PLACED'
+                      and o.placed_at + make_interval(mins => s.accept_timeout_minutes) <= now()
+                    order by o.placed_at, o.id
+                    limit ? for update of o skip locked`,
+                  [ORDER_TIMEOUT_BATCH_SIZE],
+                );
+                for (const { id } of due) {
+                  const key = "system:accept-timeout";
+                  const keyHash = sha256(key);
+                  const commandHash = createHash("sha256")
+                    .update(
+                      JSON.stringify([
+                        "PLACED",
+                        "REJECTED",
+                        "ACCEPT_TIMEOUT",
+                        null,
+                      ]),
+                    )
+                    .digest();
+                  const [prior] = await tx.execute(
+                    `select 1 from order_status_changes where order_id = ? and command_key_hash = ?`,
+                    [id, keyHash],
+                  );
+                  if (prior) continue;
+                  const updated = await tx.execute<{ id: string }[]>(
+                    `update orders set status='REJECTED', rejection_reason='ACCEPT_TIMEOUT', updated_at=now()
+                      where id=? and status='PLACED' returning id`,
+                    [id],
+                  );
+                  if (!updated.length) continue;
+                  await this.writeTransition(tx, {
+                    orderId: id,
+                    from: "PLACED",
+                    to: "REJECTED",
+                    actorType: "SYSTEM",
+                    actorId: tenant.id,
+                    reasonCode: "ACCEPT_TIMEOUT",
+                    reasonText: null,
+                    keyHash,
+                    commandHash,
+                  });
+                }
+                return due.length;
+              },
             );
-            if (prior) continue;
-            await this.writeTransition(tx, {
-              orderId: id,
-              from: "PLACED",
-              to: "REJECTED",
-              actorType: "SYSTEM",
-              actorId: tenant.id,
-              reasonCode: "ACCEPT_TIMEOUT",
-              reasonText: null,
-              keyHash,
-              commandHash,
-            });
-            await tx.execute(
-              `update orders set status='REJECTED', rejection_reason='ACCEPT_TIMEOUT', updated_at=now() where id=? and status='PLACED'`,
-              [id],
+            if (processed === 0) break;
+          } catch {
+            this.logger.write(
+              "error",
+              "order acceptance timeout batch failed",
+              { tenantId: tenant.id, batch },
             );
+            break;
           }
-        });
+        }
+      }
     } catch {
       this.logger.write("error", "order acceptance timeout job failed");
     } finally {
@@ -484,6 +573,22 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
       { lockCustomer: true },
     );
   }
+}
+
+function publicTransitionChange(change: {
+  from: OrderStatus;
+  to: OrderStatus;
+  reasonCode: RejectionReason | null;
+  reasonText: string | null;
+  at: Date | string;
+}) {
+  return {
+    from: change.from,
+    to: change.to,
+    reasonCode: change.reasonCode,
+    reasonText: change.reasonText,
+    at: new Date(change.at).toISOString(),
+  };
 }
 
 /** Validations 2 to 7 of order-lifecycle.md#checkout, in the caller's transaction. */

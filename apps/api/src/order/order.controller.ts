@@ -180,6 +180,11 @@ export class OrderController {
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: TransitionBody })
   @ApiHeader({ name: "Idempotency-Key", required: true })
+  @ApiOperation({
+    summary: "Apply an idempotent order transition",
+    description:
+      "200 returns `change`, the transition confirmed by this key, and `order`, the current order with its history. A retry with the same key and command returns the same `change`; `order` may have advanced since the original request. Reusing the key for another command returns 409 IDEMPOTENCY_KEY_REUSED. A new command with stale `from` returns 409 ORDER_STATE_CONFLICT.",
+  })
   transitionCustomer(
     @Param("orderId") orderId: string,
     @Body() raw: unknown,
@@ -218,6 +223,11 @@ export class AdminOrderController {
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: TransitionBody })
   @ApiHeader({ name: "Idempotency-Key", required: true })
+  @ApiOperation({
+    summary: "Apply an idempotent order transition",
+    description:
+      "200 returns `change`, the transition confirmed by this key, and `order`, the current order with its history. A retry with the same key and command returns the same `change`; `order` may have advanced since the original request. Reusing the key for another command returns 409 IDEMPOTENCY_KEY_REUSED. A new command with stale `from` returns 409 ORDER_STATE_CONFLICT. During tenant suspension, only the OWNER may perform a valid transition to CANCELED or REJECTED.",
+  })
   transition(
     @Param("orderId") orderId: string,
     @Body() raw: unknown,
