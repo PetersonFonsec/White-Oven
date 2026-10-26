@@ -55,23 +55,49 @@ export async function runInTenant<T>(
 export class TenantTransactions {
   constructor(@Inject(MikroORM) private readonly orm: MikroORM) {}
 
+  /**
+   * `lockCustomer` (customer actors only) first takes the customer's transaction advisory lock,
+   * before the session check locks any row: writes that must not interleave for one account
+   * (address limit, account deletion, a new session) serialize there, always in the same order.
+   */
   async run<T>(
     work: (em: EntityManager) => Promise<T>,
-    options: { isolationLevel?: IsolationLevel } = {},
+    options: { isolationLevel?: IsolationLevel; lockCustomer?: boolean } = {},
   ): Promise<T> {
     const { tenantId, actor } = currentTenantContext();
+    const { lockCustomer: serialize, ...transaction } = options;
+    if (serialize && actor.type !== "customer")
+      throw new Error("lockCustomer requires a customer actor");
     return runInTenant(
       this.orm,
       tenantId,
       async (em) => {
         if (actor.type === "staff") await assertStaffStillAllowed(em, actor);
-        if (actor.type === "customer")
+        if (actor.type === "customer") {
+          if (serialize) await lockCustomer(em, actor.customerId);
           await assertCustomerStillAllowed(em, actor);
+        }
         return work(em);
       },
-      options,
+      transaction,
     );
   }
+}
+
+/**
+ * Serializes, until commit or rollback, the transactions that change one customer's account:
+ * creating an address (the limit is counted under it), deleting the account and starting a
+ * session. It is the first lock those transactions take, before any row lock, so they never
+ * wait on each other in opposite orders. Other customers use other keys and never wait.
+ */
+export async function lockCustomer(
+  em: Pick<EntityManager, "execute">,
+  customerId: string,
+): Promise<void> {
+  await em.execute(
+    "select pg_advisory_xact_lock(hashtextextended('whiteoven:customer:' || ?, 0))",
+    [customerId],
+  );
 }
 
 /** Live, unexpired session of an ACTIVE customer, both rows locked FOR SHARE. */

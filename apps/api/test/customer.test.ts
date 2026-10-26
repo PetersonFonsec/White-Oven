@@ -15,7 +15,8 @@ import {
   staffLogin,
   switchTenant,
 } from "./staff-fixtures";
-import { runInTenant } from "../src/tenancy/tenant-transaction";
+import { HeldTransactions } from "./concurrency";
+import { lockCustomer, runInTenant } from "../src/tenancy/tenant-transaction";
 
 const PASSWORD = "cliente-senha-forte";
 const address = {
@@ -101,7 +102,8 @@ describe("M4.2 customer accounts", databaseSuite, () => {
     stores.b.id = await insertTenant(owner, stores.b.slug);
     server = await startTestServer({
       DATABASE_URL: database.appUrl,
-      DATABASE_POOL_MAX: "2",
+      // Concurrency tests run several requests at once, each with its own transaction.
+      DATABASE_POOL_MAX: "8",
     });
   });
   after(async () => {
@@ -651,5 +653,293 @@ describe("M4.2 customer accounts", databaseSuite, () => {
     } finally {
       await app.close();
     }
+  });
+
+  describe("concurrency (PR #28 review)", () => {
+    let held: HeldTransactions;
+    before(() => {
+      held = new HeldTransactions(owner);
+    });
+    after(() => held.releaseAll());
+
+    const createAddress = (slug: string, token: string, label = "Casa") =>
+      call(slug, "me/addresses", token, "POST", { ...address, label });
+    const addressCount = async (tenantId: string, customerId: string) => {
+      const [row] = await runInTenant(owner, tenantId, (em) =>
+        em.execute<{ n: number }[]>(
+          "select count(*)::int as n from customer_addresses where customer_id = ?",
+          [customerId],
+        ),
+      );
+      return row!.n;
+    };
+    const idOf = async (tenantId: string, email: string) =>
+      String((await customerRow(tenantId, email))!["id"]);
+    const liveSessions = async (tenantId: string, customerId: string) => {
+      const [row] = await runInTenant(owner, tenantId, (em) =>
+        em.execute<{ n: number }[]>(
+          "select count(*)::int as n from customer_sessions where customer_id = ? and revoked_at is null",
+          [customerId],
+        ),
+      );
+      return row!.n;
+    };
+
+    it("creates addresses concurrently for one customer without deadlock", async () => {
+      const customer = await signUp(stores.a.slug);
+      const responses = await Promise.all(
+        Array.from({ length: 8 }, (_, index) =>
+          createAddress(stores.a.slug, customer.accessToken, `Casa ${index}`),
+        ),
+      );
+      assert.deepEqual(
+        responses.map((response) => response.status),
+        Array(8).fill(201),
+      );
+      assert.equal(
+        await addressCount(
+          stores.a.id,
+          await idOf(stores.a.id, customer.email),
+        ),
+        8,
+      );
+    });
+
+    it("never passes 10 addresses when concurrent creations start at 9", async () => {
+      const customer = await signUp(stores.a.slug);
+      for (let index = 0; index < 9; index++)
+        assert.equal(
+          (await createAddress(stores.a.slug, customer.accessToken)).status,
+          201,
+        );
+      const responses = await Promise.all(
+        Array.from({ length: 6 }, () =>
+          createAddress(stores.a.slug, customer.accessToken),
+        ),
+      );
+      const statuses = responses.map((response) => response.status).sort();
+      assert.deepEqual(statuses, [201, 409, 409, 409, 409, 409]);
+      for (const response of responses)
+        if (response.status === 409)
+          assert.equal((await json(response)).code, "ADDRESS_LIMIT_REACHED");
+      assert.equal(
+        await addressCount(
+          stores.a.id,
+          await idOf(stores.a.id, customer.email),
+        ),
+        10,
+      );
+    });
+
+    it("serializes per customer only: another customer is not blocked", async () => {
+      const blocked = await signUp(stores.a.slug);
+      const free = await signUp(stores.a.slug);
+      const blockedId = await idOf(stores.a.id, blocked.email);
+      const lock = await held.hold(
+        (em) => lockCustomer(em, blockedId),
+        stores.a.id,
+      );
+      const waiting = createAddress(stores.a.slug, blocked.accessToken);
+      await held.lockWaiters(1);
+      // The other customer's creation goes through while the first one waits.
+      assert.equal(
+        (await createAddress(stores.a.slug, free.accessToken)).status,
+        201,
+      );
+      let settled = false;
+      void waiting.then(() => (settled = true));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(settled, false);
+      lock.commit();
+      await lock.done;
+      assert.equal((await waiting).status, 201);
+    });
+
+    it("refuses a sign-in whose account was deleted after the password check", async () => {
+      const customer = await signUp(stores.a.slug);
+      const id = await idOf(stores.a.id, customer.email);
+      // Hold the customer lock and delete the account inside it, as deleteAccount does: the
+      // sign-in checks the password, then queues on the lock.
+      const deletion = await held.hold(async (em) => {
+        await lockCustomer(em, id);
+        await em.execute(
+          `update customers set status = 'DELETED', name = null, email = null, phone = null,
+             password_hash = null, deleted_at = now() where id = ?`,
+          [id],
+        );
+      }, stores.a.id);
+      const login = post(stores.a.slug, "auth/login", {
+        email: customer.email,
+        password: PASSWORD,
+      });
+      await held.lockWaiters(1);
+      deletion.commit();
+      await deletion.done;
+      const response = await login;
+      assert.equal(response.status, 401);
+      // The same answer as a wrong password: the race reveals nothing.
+      const wrong = await post(stores.b.slug, "auth/login", {
+        email: `ninguem-${randomUUID()}@teste.invalid`,
+        password: PASSWORD,
+      });
+      assert.deepEqual(
+        { ...(await json(response)), requestId: undefined },
+        { ...(await json(wrong)), requestId: undefined },
+      );
+      // Only the sign-up's session exists, and none was created by the sign-in.
+      const [sessions] = await runInTenant(owner, stores.a.id, (em) =>
+        em.execute<{ n: number }[]>(
+          "select count(*)::int as n from customer_sessions where customer_id = ?",
+          [id],
+        ),
+      );
+      assert.equal(sessions!.n, 1);
+    });
+
+    it("revokes a session created by a sign-in that finished before the deletion", async () => {
+      const customer = await signUp(stores.a.slug);
+      const login = await post(stores.a.slug, "auth/login", {
+        email: customer.email,
+        password: PASSWORD,
+      });
+      assert.equal(login.status, 200);
+      const signedIn = await json(login);
+      assert.equal(
+        (
+          await call(stores.a.slug, "me", customer.accessToken, "DELETE", {
+            password: PASSWORD,
+          })
+        ).status,
+        204,
+      );
+      assert.equal(
+        (await call(stores.a.slug, "me", signedIn.accessToken)).status,
+        401,
+      );
+      assert.equal(
+        (
+          await post(stores.a.slug, "auth/refresh", {
+            refreshToken: signedIn.refreshToken,
+          })
+        ).status,
+        401,
+      );
+      assert.equal(
+        await liveSessions(
+          stores.a.id,
+          await idOfDeleted(customer.refreshToken),
+        ),
+        0,
+      );
+    });
+
+    it("leaves no usable session when sign-ins race a deletion", async () => {
+      for (let round = 0; round < 4; round++) {
+        const customer = await signUp(stores.a.slug);
+        const id = await idOf(stores.a.id, customer.email);
+        const [logins, deletion] = await Promise.all([
+          Promise.all(
+            Array.from({ length: 3 }, () =>
+              post(stores.a.slug, "auth/login", {
+                email: customer.email,
+                password: PASSWORD,
+              }),
+            ),
+          ),
+          call(stores.a.slug, "me", customer.accessToken, "DELETE", {
+            password: PASSWORD,
+          }),
+        ]);
+        assert.equal(deletion.status, 204);
+        for (const response of logins) {
+          assert.ok(
+            [200, 401].includes(response.status),
+            String(response.status),
+          );
+          if (response.status !== 200) continue;
+          const tokens = await json(response);
+          assert.equal(
+            (await call(stores.a.slug, "me", tokens.accessToken)).status,
+            401,
+          );
+          assert.equal(
+            (
+              await post(stores.a.slug, "auth/refresh", {
+                refreshToken: tokens.refreshToken,
+              })
+            ).status,
+            401,
+          );
+        }
+        assert.equal(await liveSessions(stores.a.id, id), 0);
+      }
+    });
+
+    /** The customer id of a session, read from its refresh token's session id. */
+    const idOfDeleted = async (refreshToken: string) => {
+      const [row] = await runInTenant(owner, stores.a.id, (em) =>
+        em.execute<{ id: string }[]>(
+          "select customer_id as id from customer_sessions where id = ?",
+          [refreshToken.split(".")[0]],
+        ),
+      );
+      return row!.id;
+    };
+  });
+
+  describe("login lockout per store (PR #28 review)", () => {
+    it("locks an IP in one store without slowing down another store or the panel", async () => {
+      const locked = {
+        slug: `cliente-trava-${randomUUID().slice(0, 8)}`,
+        id: "",
+      };
+      const other = {
+        slug: `cliente-livre-${randomUUID().slice(0, 8)}`,
+        id: "",
+      };
+      locked.id = await insertTenant(owner, locked.slug);
+      other.id = await insertTenant(owner, other.slug);
+      const victim = await signUp(locked.slug);
+      const neighbour = await signUp(other.slug);
+
+      // 30 failures on different accounts of one store are free; the 31st locks this IP there.
+      for (let attempt = 0; attempt < 31; attempt++)
+        assert.equal(
+          (
+            await post(locked.slug, "auth/login", {
+              email: `tentativa-${attempt}-${randomUUID()}@teste.invalid`,
+              password: "senha-errada-123",
+            })
+          ).status,
+          401,
+        );
+      const lockedOut = await post(locked.slug, "auth/login", {
+        email: victim.email,
+        password: PASSWORD,
+      });
+      assert.equal(lockedOut.status, 429);
+      assert.ok(Number(lockedOut.headers.get("retry-after")) > 0);
+
+      // Same IP, another store: not affected.
+      assert.equal(
+        (
+          await post(other.slug, "auth/login", {
+            email: neighbour.email,
+            password: PASSWORD,
+          })
+        ).status,
+        200,
+      );
+      // Same IP, the staff panel: its throttle is separate.
+      const email = `painel-${randomUUID()}@teste.invalid`;
+      const staffId = await insertStaffUser(owner, email, PASSWORD);
+      await insertMembership(owner, locked.id, staffId, "OWNER");
+      const staff = await fetch(`${server.baseUrl}/v1/admin/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: PASSWORD }),
+      });
+      assert.equal(staff.status, 200);
+    });
   });
 });

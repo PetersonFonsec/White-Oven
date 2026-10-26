@@ -11,6 +11,12 @@ import { tenantIsolationSql } from "../tenant-isolation-sql";
  * - `customer_sessions` keep only the SHA-256 of the refresh token; they expire 30 days after
  *   sign-in and are revoked, never deleted.
  * - `customer_addresses` are deleted with the account; orders will copy them (snapshot).
+ *
+ * Forward-only, like every migration here (ADR 0005, AGENTS.md): `down()` refuses. Dropping
+ * these tables would destroy customer accounts and personal data with no audit trail, and a
+ * rollback is not needed to undo a release: the change is purely additive, so the previous API
+ * version runs against this schema unchanged (it never reads these tables). Any later change is
+ * a new forward migration; restoring a backup is the last resort (ADR 0017, "Migração").
  */
 export class Migration20261028000000_customer_accounts extends Migration {
   override up(): void {

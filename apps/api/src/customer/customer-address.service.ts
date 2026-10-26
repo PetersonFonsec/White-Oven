@@ -38,33 +38,37 @@ export class CustomerAddresses {
     );
   }
 
+  /**
+   * The advisory lock of `lockCustomer` serializes creations for one customer, so the count and
+   * the insert below see every address committed before: two requests at 9 addresses give one
+   * 201 and one 409. No row lock is upgraded (the session check holds the customer row FOR
+   * SHARE), so concurrent creations queue instead of deadlocking.
+   */
   create(address: CustomerAddress): Promise<SavedAddress> {
-    return this.transactions.run(async (em) => {
-      const customerId = customerOf();
-      // The session check locked the customer row FOR SHARE; FOR UPDATE here serializes two
-      // concurrent creations, so the limit holds.
-      await em.execute("select 1 from customers where id = ? for update", [
-        customerId,
-      ]);
-      const [count] = await em.execute<{ count: number }[]>(
-        "select count(*)::int as count from customer_addresses where customer_id = ?",
-        [customerId],
-      );
-      if (count!.count >= ADDRESSES_PER_CUSTOMER_MAX)
-        throw new ApiError(
-          HttpStatus.CONFLICT,
-          "ADDRESS_LIMIT_REACHED",
-          `At most ${ADDRESSES_PER_CUSTOMER_MAX} addresses per account.`,
+    return this.transactions.run(
+      async (em) => {
+        const customerId = customerOf();
+        const [count] = await em.execute<{ count: number }[]>(
+          "select count(*)::int as count from customer_addresses where customer_id = ?",
+          [customerId],
         );
-      const [row] = await em.execute<SavedAddress[]>(
-        `insert into customer_addresses (tenant_id, customer_id, label, postal_code, street, number,
-           complement, district, city, state, reference)
-         values (current_setting('app.tenant_id')::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         returning ${COLUMNS}`,
-        [customerId, ...values(address)],
-      );
-      return row!;
-    });
+        if (count!.count >= ADDRESSES_PER_CUSTOMER_MAX)
+          throw new ApiError(
+            HttpStatus.CONFLICT,
+            "ADDRESS_LIMIT_REACHED",
+            `At most ${ADDRESSES_PER_CUSTOMER_MAX} addresses per account.`,
+          );
+        const [row] = await em.execute<SavedAddress[]>(
+          `insert into customer_addresses (tenant_id, customer_id, label, postal_code, street, number,
+             complement, district, city, state, reference)
+           values (current_setting('app.tenant_id')::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           returning ${COLUMNS}`,
+          [customerId, ...values(address)],
+        );
+        return row!;
+      },
+      { lockCustomer: true },
+    );
   }
 
   update(id: string, address: CustomerAddress): Promise<SavedAddress> {

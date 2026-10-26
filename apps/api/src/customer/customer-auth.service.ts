@@ -7,11 +7,14 @@ import {
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import type { EntityManager } from "@mikro-orm/postgresql";
 import { AccessTokens } from "../auth/access-token";
-import { LoginThrottle } from "../auth/login-throttle";
 import { hashPassword, verifyPassword } from "../auth/password";
 import { ApiError } from "../errors/api-error";
 import { currentTenantContext } from "../tenancy/tenant-context";
-import { TenantTransactions } from "../tenancy/tenant-transaction";
+import {
+  TenantTransactions,
+  lockCustomer,
+} from "../tenancy/tenant-transaction";
+import { CustomerLoginThrottle } from "./customer-login-throttle";
 import type { Registration } from "./customer-rules";
 
 /** Customer sessions end 30 days after sign-in; refreshing rotates the token, never extends. */
@@ -60,10 +63,6 @@ export const invalidCustomerSession = () =>
     "Session expired or revoked. Sign in again.",
   );
 
-/** The tenant comes from the store slug; the throttle key keeps the same e-mail apart per store. */
-const throttleKey = (email: string) =>
-  `${currentTenantContext().tenantId}\0${email}`;
-
 /**
  * Customer accounts of one store (M4.2, ADR 0017, Q-05: e-mail and password, account required).
  * Every read and write runs in the store's tenant transaction, so RLS keeps customers, sessions
@@ -75,11 +74,12 @@ export class CustomerAuth {
   constructor(
     private readonly transactions: TenantTransactions,
     @Inject(AccessTokens) private readonly tokens: AccessTokens,
-    @Inject(CUSTOMER_LOGIN_THROTTLE) private readonly throttle: LoginThrottle,
+    @Inject(CUSTOMER_LOGIN_THROTTLE)
+    private readonly throttle: CustomerLoginThrottle,
   ) {}
 
   loginRetryAfterSeconds(email: string, ip: string): number {
-    return Math.ceil(this.throttle.retryAfterMs(throttleKey(email), ip) / 1000);
+    return Math.ceil(this.throttle.retryAfterMs(tenantOf(), email, ip) / 1000);
   }
 
   /** Creates the account and signs it in. The e-mail and phone are unique in this store only. */
@@ -133,11 +133,29 @@ export class CustomerAuth {
     // Unknown e-mails cost one Argon2id verification too, so timing reveals nothing.
     const ok = await verifyPassword(customer?.passwordHash ?? null, password);
     if (!customer || !ok) {
-      this.throttle.recordFailure(throttleKey(email), ip);
+      this.throttle.recordFailure(tenantOf(), email, ip);
       throw invalidCustomerCredentials();
     }
-    this.throttle.recordSuccess(throttleKey(email));
-    return this.transactions.run((em) => this.startSession(em, customer.id));
+    // The password was checked without any lock held. The session is created only if the
+    // account is still the one that was checked: ACTIVE with the same password hash, read under
+    // the customer lock that deleteAccount takes too. A deletion that won the race leaves
+    // nothing to sign in to (the same 401 as a wrong password); one that comes after revokes
+    // this session with the others.
+    const tokens = await this.transactions.run(async (em) => {
+      await lockCustomer(em, customer.id);
+      const [still] = await em.execute(
+        `select 1 from customers where id = ? and status = 'ACTIVE' and password_hash = ?
+           for share`,
+        [customer.id, customer.passwordHash],
+      );
+      return still ? this.startSession(em, customer.id) : null;
+    });
+    if (!tokens) {
+      this.throttle.recordFailure(tenantOf(), email, ip);
+      throw invalidCustomerCredentials();
+    }
+    this.throttle.recordSuccess(tenantOf(), email);
+    return tokens;
   }
 
   /**
@@ -238,21 +256,27 @@ export class CustomerAuth {
         "PASSWORD_MISMATCH",
         "The password does not match.",
       );
-    await this.transactions.run(async (em) => {
-      const [changed] = await em.execute<{ id: string }[]>(
-        `update customers
+    // `lockCustomer` serializes this with address creation, sign-ins and another deletion of the
+    // same account; the Argon2id check above ran without it.
+    await this.transactions.run(
+      async (em) => {
+        const [changed] = await em.execute<{ id: string }[]>(
+          `update customers
             set status = 'DELETED', name = null, email = null, phone = null,
                 password_hash = null, deleted_at = now(), updated_at = now()
           where id = ? and status = 'ACTIVE' and password_hash = ?
           returning id`,
-        [customerId, row!.passwordHash],
-      );
-      if (!changed) throw invalidCustomerSession();
-      await em.execute("delete from customer_addresses where customer_id = ?", [
-        customerId,
-      ]);
-      await revoke(em, "s.customer_id = ?", [customerId], "ACCOUNT_DELETED");
-    });
+          [customerId, row!.passwordHash],
+        );
+        if (!changed) throw invalidCustomerSession();
+        await em.execute(
+          "delete from customer_addresses where customer_id = ?",
+          [customerId],
+        );
+        await revoke(em, "s.customer_id = ?", [customerId], "ACCOUNT_DELETED");
+      },
+      { lockCustomer: true },
+    );
   }
 
   private async startSession(
@@ -291,6 +315,9 @@ export class CustomerAuth {
     };
   }
 }
+
+/** The store of the request: from the slug, never from the body. */
+const tenantOf = () => currentTenantContext().tenantId;
 
 /** The signed-in customer of a `@CustomerRoute()`. */
 export function customerOf(): string {
