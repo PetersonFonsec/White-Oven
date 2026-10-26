@@ -72,6 +72,13 @@ export interface AdminOrderView extends OrderView {
   history: Record<string, unknown>[];
 }
 
+export type StaffOrderSection = "active" | "closed";
+export interface StaffOrderPage {
+  orders: AdminOrderView[];
+  nextCursor: number | null;
+}
+export const STAFF_ORDER_PAGE_SIZE = 100;
+
 const ADDRESS_COLUMNS = `label, postal_code as "postalCode", street, number, complement, district,
   city, state, reference`;
 
@@ -156,8 +163,12 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
     if (this.timeout) clearInterval(this.timeout);
   }
 
-  listForStaff(): Promise<AdminOrderView[]> {
+  listForStaff(
+    section: StaffOrderSection,
+    cursor?: number,
+  ): Promise<StaffOrderPage> {
     return this.transactions.run(async (em) => {
+      const active = section === "active";
       const rows = await em.execute<
         (Omit<AdminOrderView, "items" | "placedAt" | "history"> & {
           placedAt: Date | string;
@@ -170,11 +181,15 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
                 delivery_fee_cents as "deliveryFeeCents", discount_cents as "discountCents",
                 total_cents as "totalCents"
            from orders
-          order by case when status in ('PLACED','PREPARING','READY','OUT_FOR_DELIVERY') then 0 else 1 end,
-                   placed_at desc, number desc
-          limit 200`,
+          where status ${active ? "in" : "not in"} ('PLACED','PREPARING','READY','OUT_FOR_DELIVERY')
+            and (?::integer is null or number ${active ? ">" : "<"} ?::integer)
+          order by number ${active ? "asc" : "desc"}
+          limit ?`,
+        [cursor ?? null, cursor ?? null, STAFF_ORDER_PAGE_SIZE + 1],
       );
-      const ids = rows.map((row) => row.id);
+      const hasMore = rows.length > STAFF_ORDER_PAGE_SIZE;
+      const pageRows = rows.slice(0, STAFF_ORDER_PAGE_SIZE);
+      const ids = pageRows.map((row) => row.id);
       const orderIds = `{${ids.join(",")}}`;
       const items = ids.length
         ? await em.execute<(QuotedLine & { orderId: string })[]>(
@@ -203,12 +218,16 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
       };
       const itemsByOrder = byOrder(items);
       const historyByOrder = byOrder(history);
-      return rows.map((row) => ({
+      const orders = pageRows.map((row) => ({
         ...row,
         placedAt: new Date(row.placedAt).toISOString(),
         items: (itemsByOrder.get(row.id) ?? []).map(withoutOrderId),
         history: (historyByOrder.get(row.id) ?? []).map(withoutOrderId),
       }));
+      return {
+        orders,
+        nextCursor: hasMore ? (pageRows.at(-1)?.number ?? null) : null,
+      };
     });
   }
 

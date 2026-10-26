@@ -88,7 +88,7 @@ sequenceDiagram
   App->>API: POST /orders (Idempotency-Key)
   API->>DB: transação: valida loja aberta, recalcula, grava snapshot, status PLACED, evento
   API-->>App: pedido criado
-  Painel->>API: GET /v1/admin/orders?status=active (polling)
+  Painel->>API: GET /v1/admin/orders?section=active&cursor=... (polling paginado)
   Painel->>API: POST /v1/admin/orders/{id}/transitions {from: PLACED, to: PREPARING}
   API->>DB: transição + histórico + auditoria
 ```

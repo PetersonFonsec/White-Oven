@@ -12,7 +12,12 @@ import {
 import { takeUntilDestroyed } from "@angular/core/rxjs-interop";
 import { interval } from "rxjs";
 import { errorMessage } from "../core/api";
-import { OrdersApi, type OrderStatus, type StaffOrder } from "./orders-api";
+import {
+  isUncertainTransitionError,
+  OrdersApi,
+  type OrderStatus,
+  type StaffOrder,
+} from "./orders-api";
 
 const STATUS: { id: OrderStatus; label: string }[] = [
   { id: "PLACED", label: "Novos" },
@@ -54,7 +59,7 @@ const PAYMENT_LABELS: Record<string, string> = {
           class="button button--secondary"
           type="button"
           (click)="load()"
-          [disabled]="loading()"
+          [disabled]="loading() || paging()"
         >
           Atualizar
         </button>
@@ -123,10 +128,26 @@ const PAYMENT_LABELS: Record<string, string> = {
                   <button
                     class="button"
                     type="button"
-                    [disabled]="busyId() === order.id"
+                    [disabled]="
+                      busyId() === order.id || api.hasUncertainIntent(order.id)
+                    "
                     (click)="advance(order)"
                   >
                     {{ actionLabel(order) }}
+                  </button>
+                }
+                @if (api.hasUncertainIntent(order.id)) {
+                  <p role="status">
+                    A confirmação desta ação não chegou. Repita para verificar
+                    com segurança.
+                  </p>
+                  <button
+                    class="button"
+                    type="button"
+                    [disabled]="busyId() === order.id"
+                    (click)="retry(order)"
+                  >
+                    Verificar / repetir ação
                   </button>
                 }
                 @if (
@@ -138,7 +159,9 @@ const PAYMENT_LABELS: Record<string, string> = {
                   <button
                     class="button button--secondary"
                     type="button"
-                    [disabled]="busyId() === order.id"
+                    [disabled]="
+                      busyId() === order.id || api.hasUncertainIntent(order.id)
+                    "
                     (click)="closeOrder(order, 'CANCELED')"
                   >
                     Cancelar pedido
@@ -168,6 +191,29 @@ const PAYMENT_LABELS: Record<string, string> = {
           </section>
         }
       </div>
+
+      <nav class="pagination" aria-label="Paginação de pedidos">
+        @if (activeCursor() !== null) {
+          <button
+            class="button button--secondary"
+            type="button"
+            (click)="loadMore('active')"
+            [disabled]="paging() || loading() || busyId() !== null"
+          >
+            Carregar mais pedidos ativos
+          </button>
+        }
+        @if (closedCursor() !== null) {
+          <button
+            class="button button--secondary"
+            type="button"
+            (click)="loadMore('closed')"
+            [disabled]="paging() || loading() || busyId() !== null"
+          >
+            Carregar histórico
+          </button>
+        }
+      </nav>
 
       @if (selected(); as order) {
         <dialog
@@ -249,6 +295,73 @@ const PAYMENT_LABELS: Record<string, string> = {
             Imprimir comanda
           </button>
         </dialog>
+      }
+      @if (printOrder(); as receipt) {
+        <section
+          #printReceipt
+          class="receipt"
+          aria-label="Comanda para impressão"
+        >
+          <h1>Comanda · Pedido #{{ receipt.number }}</h1>
+          <p>{{ receipt.placedAt | date: "dd/MM/yyyy HH:mm" }}</p>
+          <p>
+            <strong>{{ receipt.customerName }}</strong>
+          </p>
+          @if (receipt.customerPhone) {
+            <p>{{ receipt.customerPhone }}</p>
+          }
+          <p>
+            {{ receipt.fulfillment === "DELIVERY" ? "Entrega" : "Retirada" }}
+          </p>
+          @if (
+            receipt.fulfillment === "DELIVERY" && receipt.deliveryAddress;
+            as address
+          ) {
+            <p>
+              {{ address.street
+              }}{{ address.number ? ", " + address.number : ""
+              }}{{ address.complement ? " · " + address.complement : ""
+              }}<br />{{ address.district }}, {{ address.city }} -
+              {{ address.state }} · {{ address.postalCode }}
+            </p>
+            @if (address.reference) {
+              <p>Referência: {{ address.reference }}</p>
+            }
+          }
+          <hr />
+          <ul class="receipt-items">
+            @for (item of receipt.items; track $index) {
+              <li>
+                <strong>{{ item.quantity }}× {{ itemName(item) }}</strong
+                ><span>{{ item.totalCents / 100 | currency: "BRL" }}</span>
+                @if (itemDetails(item); as details) {
+                  <small>{{ details }}</small>
+                }
+              </li>
+            }
+          </ul>
+          @if (receipt.notes) {
+            <p><strong>Observação:</strong> {{ receipt.notes }}</p>
+          }
+          <p>Pagamento: {{ paymentLabel(receipt.paymentMethod) }}</p>
+          @if (receipt.changeForCents) {
+            <p>
+              Troco para: {{ receipt.changeForCents / 100 | currency: "BRL" }}
+            </p>
+          }
+          <hr />
+          <p>
+            Subtotal: {{ receipt.itemsSubtotalCents / 100 | currency: "BRL" }}
+          </p>
+          <p>
+            Taxa de entrega:
+            {{ receipt.deliveryFeeCents / 100 | currency: "BRL" }}
+          </p>
+          @if (receipt.discountCents) {
+            <p>Desconto: {{ receipt.discountCents / 100 | currency: "BRL" }}</p>
+          }
+          <h2>Total: {{ receipt.totalCents / 100 | currency: "BRL" }}</h2>
+        </section>
       }
     </section>
   `,
@@ -332,6 +445,15 @@ const PAYMENT_LABELS: Record<string, string> = {
       background: var(--wo-color-orangeSoft);
       border-radius: var(--wo-radius-small);
     }
+    .pagination {
+      display: flex;
+      gap: var(--wo-spacing-3);
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .receipt {
+      display: none;
+    }
     .detail {
       position: fixed;
       z-index: 20;
@@ -376,41 +498,80 @@ const PAYMENT_LABELS: Record<string, string> = {
       body * {
         visibility: hidden;
       }
-      .detail,
-      .detail * {
+      .receipt,
+      .receipt * {
         visibility: visible;
       }
-      .detail {
+      .receipt {
+        display: block;
         position: absolute;
-        inset: 0;
-        transform: none;
-        width: 100%;
-        max-height: none;
-        box-shadow: none;
-        border: 0;
+        inset: 0 auto auto 0;
+        width: 72mm;
+        color: #000;
+        background: #fff;
+        padding: 3mm;
+        font: 10pt/1.3 monospace;
       }
-      .detail-head button,
-      .detail > button {
-        display: none;
+      .receipt h1,
+      .receipt h2 {
+        font-size: 12pt;
+      }
+      .receipt-items {
+        list-style: none;
+        padding: 0;
+      }
+      .receipt-items li {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 2mm;
+        padding: 2mm 0;
+      }
+      .receipt-items small {
+        grid-column: 1 / -1;
+      }
+      .detail,
+      .pagination,
+      .orders-heading,
+      .board,
+      .new-orders,
+      .status--error {
+        display: none !important;
+      }
+      @page {
+        margin: 5mm;
+        size: auto;
       }
     }
   `,
 })
 export class OrdersPage {
-  private readonly api = inject(OrdersApi);
+  protected readonly api = inject(OrdersApi);
   private readonly destroyRef = inject(DestroyRef);
   private readonly detailDialog =
     viewChild<ElementRef<HTMLDialogElement>>("detailDialog");
+  private readonly printReceipt =
+    viewChild<ElementRef<HTMLElement>>("printReceipt");
   protected readonly orders = signal<StaffOrder[]>([]);
   protected readonly selected = signal<StaffOrder | null>(null);
   protected readonly loading = signal(true);
   protected readonly error = signal("");
   protected readonly busyId = signal<string | null>(null);
+  protected readonly paging = signal(false);
+  protected readonly activeCursor = signal<number | null>(null);
+  protected readonly closedCursor = signal<number | null>(null);
+  protected readonly printOrder = signal<StaffOrder | null>(null);
   protected readonly now = signal(Date.now());
   protected readonly reasons = REASONS;
   private readonly newlyArrived = signal(new Set<string>());
   private audio: AudioContext | null = null;
-  private loadVersion = 0;
+  private activeCursors: (number | undefined)[] = [undefined];
+  private closedCursors: (number | undefined)[] = [undefined];
+  private refreshPromise: Promise<void> | null = null;
+  private refreshQueued = false;
+  private destroyed = false;
+  private printedOrderId: string | null = null;
+  private mutationVersion = 0;
+  private hasLoadedOnce = false;
   protected readonly soundEnabled = signal(false);
   protected readonly newCount = computed(() => this.newlyArrived().size);
   protected readonly columns = computed(() =>
@@ -428,7 +589,28 @@ export class OrdersPage {
       if (shouldOpen && !dialog.open) dialog.showModal();
       else if (!shouldOpen && dialog.open) dialog.close();
     });
+    effect(() => {
+      const order = this.printOrder();
+      const receipt = this.printReceipt()?.nativeElement;
+      if (!order || !receipt || this.printedOrderId === order.id) return;
+      this.printedOrderId = order.id;
+      requestAnimationFrame(() => {
+        if (
+          !this.destroyed &&
+          this.printOrder()?.id === order.id &&
+          receipt.isConnected
+        )
+          window.print();
+      });
+    });
+    const afterPrint = () => {
+      this.printOrder.set(null);
+      this.printedOrderId = null;
+    };
+    window.addEventListener("afterprint", afterPrint);
     this.destroyRef.onDestroy(() => {
+      this.destroyed = true;
+      window.removeEventListener("afterprint", afterPrint);
       if (this.audio && this.audio.state !== "closed") void this.audio.close();
     });
     void this.load();
@@ -441,42 +623,136 @@ export class OrdersPage {
   }
 
   protected async load(): Promise<void> {
-    const version = ++this.loadVersion;
+    if (this.refreshPromise) {
+      this.refreshQueued = true;
+      return this.refreshPromise;
+    }
+    if (this.busyId() || this.paging()) {
+      this.refreshQueued = true;
+      return;
+    }
+    this.loading.set(true);
+    this.refreshPromise = this.refreshLoadedPages();
     try {
-      const incoming = await this.api.list();
-      if (version !== this.loadVersion) return;
-      const known = new Set(this.orders().map((order) => order.id));
-      const newOrders = incoming.filter(
-        (order) => !known.has(order.id) && order.status === "PLACED",
+      await this.refreshPromise;
+    } finally {
+      this.refreshPromise = null;
+      this.loading.set(false);
+      if (this.refreshQueued && !this.busyId() && !this.destroyed) {
+        this.refreshQueued = false;
+        void this.load();
+      }
+    }
+  }
+
+  private async refreshLoadedPages(): Promise<void> {
+    const version = this.mutationVersion;
+    const requests = [
+      ...this.activeCursors.map((cursor) =>
+        this.api
+          .list("active", cursor)
+          .then((page) => ({ section: "active" as const, page })),
+      ),
+      ...this.closedCursors.map((cursor) =>
+        this.api
+          .list("closed", cursor)
+          .then((page) => ({ section: "closed" as const, page })),
+      ),
+    ];
+    const results = await Promise.allSettled(requests);
+    if (this.destroyed || this.busyId() || version !== this.mutationVersion) {
+      this.refreshQueued = true;
+      return;
+    }
+    const successful = results
+      .filter(
+        (
+          result,
+        ): result is PromiseFulfilledResult<
+          Awaited<(typeof requests)[number]>
+        > => result.status === "fulfilled",
+      )
+      .map((result) => result.value);
+    const failures = results.filter((result) => result.status === "rejected");
+    if (failures.length)
+      this.error.set(
+        errorMessage((failures[0] as PromiseRejectedResult).reason),
       );
-      const visibleIds = new Set(
-        incoming
+    else this.error.set("");
+    if (!successful.length) return;
+    const incoming = successful.flatMap(({ page }) => page.orders);
+    const map = new Map(this.orders().map((order) => [order.id, order]));
+    for (const order of incoming) map.set(order.id, order);
+    const merged = [...map.values()];
+    const known = new Set(this.orders().map((order) => order.id));
+    const newOrders = incoming.filter(
+      (order) => !known.has(order.id) && order.status === "PLACED",
+    );
+    this.newlyArrived.update((ids) => {
+      const visible = new Set(
+        merged
           .filter((order) => order.status === "PLACED")
           .map((order) => order.id),
       );
+      return new Set([...ids].filter((id) => visible.has(id)));
+    });
+    if (this.hasLoadedOnce && newOrders.length) {
       this.newlyArrived.update(
-        (ids) => new Set([...ids].filter((id) => visibleIds.has(id))),
+        (ids) => new Set([...ids, ...newOrders.map((order) => order.id)]),
       );
-      if (known.size && newOrders.length) {
-        this.newlyArrived.update((ids) => {
-          const next = new Set(ids);
-          for (const order of newOrders) next.add(order.id);
-          return next;
-        });
-        this.playAlert();
-      }
-      this.orders.set(incoming);
-      const selectedId = this.selected()?.id;
+      this.playAlert();
+    }
+    if (!failures.length) this.hasLoadedOnce = true;
+    merged.sort((a, b) => a.number - b.number);
+    this.orders.set(merged);
+    const selectedId = this.selected()?.id;
+    if (selectedId)
       this.selected.set(
-        selectedId
-          ? (incoming.find((order) => order.id === selectedId) ?? null)
-          : null,
+        merged.find((order) => order.id === selectedId) ?? null,
       );
-      this.error.set("");
+    for (const result of successful) {
+      if (result.section === "active" && this.activeCursors.length === 1)
+        this.activeCursor.set(result.page.nextCursor);
+      if (result.section === "closed" && this.closedCursors.length === 1)
+        this.closedCursor.set(result.page.nextCursor);
+    }
+  }
+
+  protected async loadMore(section: "active" | "closed"): Promise<void> {
+    if (this.paging() || this.busyId()) {
+      this.refreshQueued = true;
+      return;
+    }
+    if (this.refreshPromise) await this.refreshPromise;
+    if (this.destroyed || this.paging() || this.busyId()) return;
+    const cursors =
+      section === "active" ? this.activeCursors : this.closedCursors;
+    const nextCursor =
+      section === "active" ? this.activeCursor() : this.closedCursor();
+    if (nextCursor === null) return;
+    const version = this.mutationVersion;
+    this.paging.set(true);
+    try {
+      const page = await this.api.list(section, nextCursor);
+      if (this.destroyed) return;
+      if (version !== this.mutationVersion || this.busyId()) {
+        this.refreshQueued = true;
+        return;
+      }
+      cursors.push(nextCursor);
+      const byId = new Map(this.orders().map((order) => [order.id, order]));
+      page.orders.forEach((order) => byId.set(order.id, order));
+      this.orders.set([...byId.values()].sort((a, b) => a.number - b.number));
+      if (section === "active") this.activeCursor.set(page.nextCursor);
+      else this.closedCursor.set(page.nextCursor);
     } catch (error) {
-      if (version === this.loadVersion) this.error.set(errorMessage(error));
+      this.error.set(errorMessage(error));
     } finally {
-      if (version === this.loadVersion) this.loading.set(false);
+      this.paging.set(false);
+      if (this.refreshQueued && !this.busyId() && !this.destroyed) {
+        this.refreshQueued = false;
+        void this.load();
+      }
     }
   }
 
@@ -627,21 +903,44 @@ export class OrdersPage {
     reasonCode?: string,
     reasonText?: string,
   ): Promise<void> {
-    if (this.busyId()) return;
+    if (this.busyId() || this.api.pendingIntent(order.id)?.uncertain) return;
+    this.mutationVersion++;
     this.busyId.set(order.id);
     try {
       await this.api.transition(order, to, reasonCode, reasonText);
-      await this.load();
     } catch (error) {
-      await this.load();
-      this.error.set(errorMessage(error));
+      if (isUncertainTransitionError(error))
+        this.error.set(
+          "Não foi possível confirmar a resposta. O pedido permanece pendente; use “Verificar / repetir ação” para repetir com a mesma chave.",
+        );
+      else this.error.set(errorMessage(error));
     } finally {
       this.busyId.set(null);
+      this.refreshQueued = true;
+      await this.load();
+    }
+  }
+  protected async retry(order: StaffOrder): Promise<void> {
+    if (this.busyId()) return;
+    this.mutationVersion++;
+    this.busyId.set(order.id);
+    try {
+      await this.api.retryPending(order.id);
+      this.error.set("");
+    } catch (error) {
+      if (isUncertainTransitionError(error))
+        this.error.set(
+          "A confirmação ainda não chegou. A chave foi preservada; tente novamente quando a conexão estiver estável.",
+        );
+      else this.error.set(errorMessage(error));
+    } finally {
+      this.busyId.set(null);
+      this.refreshQueued = true;
+      await this.load();
     }
   }
   protected print(order: StaffOrder): void {
-    this.selected.set(order);
-    window.setTimeout(() => window.print(), 0);
+    this.printOrder.set(order);
   }
   private playAlert(): void {
     if (!this.soundEnabled() || !this.audio || this.audio.state !== "running")
