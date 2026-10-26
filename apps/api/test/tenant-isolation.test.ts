@@ -67,6 +67,7 @@ interface Fixture {
   membershipId: string;
   inviteId: string;
   addressId: string;
+  orderId: string;
 }
 
 /** Staff membership cache TTL of this suite's server; production allows at most 60 s. */
@@ -190,7 +191,7 @@ describe("tenant isolation", databaseSuite, () => {
       );
       return { membershipId: membership!.id, inviteId: invite!.id };
     });
-    const addressId = await runInTenant(owner, id, async (em) => {
+    const customerFixture = await runInTenant(owner, id, async (em) => {
       const [customer] = await em.execute<{ id: string }[]>(
         `insert into customers (tenant_id,name,email,password_hash,privacy_policy_version,accepted_at)
          values (?,?,?,'x','2026-10',now()) returning id`,
@@ -201,9 +202,22 @@ describe("tenant isolation", databaseSuite, () => {
          values (?,?,'Casa','01310100','Rua A','1','Centro','São Paulo','SP') returning id`,
         [id, customer!.id],
       );
-      return address!.id;
+      const [order] = await em.execute<{ id: string }[]>(
+        `insert into orders (tenant_id,number,customer_id,customer_name,fulfillment,payment_method,
+          items_subtotal_cents,delivery_fee_cents,discount_cents,total_cents)
+         values (?,1,?,?,'PICKUP','PIX_ON_DELIVERY',1000,0,0,1000) returning id`,
+        [id, customer!.id, `Cliente ${slug}`],
+      );
+      return { addressId: address!.id, orderId: order!.id };
     });
-    return { id, slug, flavorId: row!.id, ...catalog, ...team, addressId };
+    return {
+      id,
+      slug,
+      flavorId: row!.id,
+      ...catalog,
+      ...team,
+      ...customerFixture,
+    };
   };
 
   const appCount = async (sql: string, params: unknown[] = []) => {
@@ -276,12 +290,39 @@ describe("tenant isolation", databaseSuite, () => {
     });
   };
 
+  const adminOrderCall = async (
+    store: Fixture,
+    victim: Fixture,
+  ): Promise<Response> => {
+    const login = await staffLogin(
+      server.baseUrl,
+      `fixture-${store.slug}@isolamento.test`,
+      STAFF_PASSWORD,
+    );
+    const switched = await switchTenant(
+      server.baseUrl,
+      login.accessToken,
+      store.id,
+    );
+    const { accessToken } = await json(switched);
+    return call(`/admin/orders/${victim.orderId}/transitions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+        "idempotency-key": randomUUID(),
+      },
+      body: JSON.stringify({ from: "PLACED", to: "PREPARING" }),
+    });
+  };
+
   /** A new customer of `store`, signed up through the API, calling `path` with its token. */
   const customerCall = async (
     store: Fixture,
     path: string,
     method: string,
     requestBody?: unknown,
+    extraHeaders: Record<string, string> = {},
   ) => {
     const registered = await call(
       `/customer/stores/${store.slug}/auth/register`,
@@ -301,6 +342,7 @@ describe("tenant isolation", databaseSuite, () => {
       method,
       headers: {
         authorization: `Bearer ${accessToken}`,
+        ...extraHeaders,
         ...(requestBody ? { "content-type": "application/json" } : {}),
       },
       ...(requestBody ? { body: JSON.stringify(requestBody) } : {}),
@@ -520,6 +562,19 @@ describe("tenant isolation", databaseSuite, () => {
           attacker,
           `/admin/team/invites/${victim.inviteId}`,
           "DELETE",
+        ),
+      "POST /admin/orders/:orderId/transitions": (attacker, victim) =>
+        adminOrderCall(attacker, victim),
+      "POST /customer/stores/:storeSlug/me/orders/:orderId/transitions": (
+        attacker,
+        victim,
+      ) =>
+        customerCall(
+          attacker,
+          `/customer/stores/${attacker.slug}/me/orders/${victim.orderId}/transitions`,
+          "POST",
+          { from: "PLACED", to: "CANCELED", reasonCode: "CUSTOMER_REQUEST" },
+          { "idempotency-key": randomUUID() },
         ),
       "PUT /customer/stores/:storeSlug/me/addresses/:addressId": async (
         attacker,
@@ -869,6 +924,7 @@ describe("tenant isolation", databaseSuite, () => {
           order by 1`,
         );
       assert.deepEqual(rows, [
+        { table: "billing_entries", forced: true },
         { table: "brand_themes", forced: true },
         { table: "catalog_categories", forced: true },
         { table: "catalog_crust_prices", forced: true },
@@ -889,6 +945,7 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "memberships", forced: true },
         { table: "order_creation_keys", forced: true },
         { table: "order_items", forced: true },
+        { table: "order_status_changes", forced: true },
         { table: "orders", forced: true },
         { table: "owner_invites", forced: true },
         { table: "pizza_sizes", forced: true },

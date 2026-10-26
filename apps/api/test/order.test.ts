@@ -7,10 +7,18 @@ import {
   databaseSuite,
   type TestDatabase,
 } from "./postgres";
-import { bearer, insertTenant } from "./staff-fixtures";
+import {
+  bearer,
+  insertMembership,
+  insertStaffUser,
+  insertTenant,
+  staffLogin,
+  switchTenant,
+} from "./staff-fixtures";
 import { type OrderStore, seedOrderStore } from "./order-fixtures";
 import { HeldTransactions } from "./concurrency";
 import { runInTenant } from "../src/tenancy/tenant-transaction";
+import { OrderService } from "../src/order/order.service";
 
 const PASSWORD = "cliente-senha-forte";
 const ADDRESS = {
@@ -139,6 +147,36 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     items: [pizza(catalog)],
     ...extra,
   });
+
+  const admin = async (tenantId: string) => {
+    const email = `order-admin-${randomUUID()}@teste.invalid`;
+    const userId = await insertStaffUser(owner, email, PASSWORD);
+    await insertMembership(owner, tenantId, userId, "OWNER");
+    const loggedIn = await staffLogin(server.baseUrl, email, PASSWORD);
+    const selected = await switchTenant(
+      server.baseUrl,
+      loggedIn.accessToken,
+      tenantId,
+    );
+    assert.equal(selected.status, 200);
+    return (await json(selected)).accessToken as string;
+  };
+
+  const staffTransition = (
+    token: string,
+    orderId: string,
+    body: Record<string, unknown>,
+    key = randomUUID(),
+  ) =>
+    fetch(`${server.baseUrl}/v1/admin/orders/${orderId}/transitions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...bearer(token),
+        "idempotency-key": key,
+      },
+      body: JSON.stringify(body),
+    });
 
   const sql = <T>(tenantId: string, query: string, params: unknown[] = []) =>
     runInTenant(owner, tenantId, (em) => em.execute<T[]>(query, params));
@@ -802,6 +840,10 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
         "delete from order_items where order_id = ?",
         "delete from orders where id = ?",
         "delete from order_creation_keys where order_id = ?",
+        "update order_status_changes set reason_text = 'hijacked' where order_id = ?",
+        "delete from order_status_changes where order_id = ?",
+        "update billing_entries set total_cents = 1 where order_id = ?",
+        "delete from billing_entries where order_id = ?",
       ])
         await assert.rejects(
           asApp(query, [order.id]),
@@ -819,5 +861,204 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     } finally {
       await app.close();
     }
+  });
+
+  it("enforces transition idempotency and conflicts through I1–I8", async () => {
+    const { token } = await customer(stores.a.slug);
+    const staffToken = await admin(stores.a.id);
+    const order = async () =>
+      json(await place(stores.a.slug, token, pickup(stores.a.catalog)));
+    const historyCount = async (orderId: string) => {
+      const [row] = await sql<{ count: number }>(
+        stores.a.id,
+        "select count(*)::int as count from order_status_changes where order_id = ?",
+        [orderId],
+      );
+      return row!.count;
+    };
+
+    // I1: the first action moves the order to PREPARING.
+    const firstOrder = await order();
+    const k1 = randomUUID();
+    const accept = { from: "PLACED", to: "PREPARING" };
+    const accepted = await staffTransition(
+      staffToken,
+      firstOrder.id,
+      accept,
+      k1,
+    );
+    assert.equal(accepted.status, 200);
+    assert.equal((await json(accepted)).order.status, "PREPARING");
+
+    // I2: retry returns the original transition without appending history.
+    const retry = await staffTransition(staffToken, firstOrder.id, accept, k1);
+    assert.equal(retry.status, 200);
+    assert.equal(await historyCount(firstOrder.id), 2); // initial PLACED + I1
+
+    // I3: an old successful retry returns its original change and current order state.
+    const advanced = await staffTransition(staffToken, firstOrder.id, {
+      from: "PREPARING",
+      to: "READY",
+    });
+    assert.equal(advanced.status, 200);
+    const oldRetry = await json(
+      await staffTransition(staffToken, firstOrder.id, accept, k1),
+    );
+    assert.equal(oldRetry.order.status, "READY");
+    assert.equal(oldRetry.change.to, "PREPARING");
+
+    // I4: a key cannot be reused for another command.
+    const reused = await staffTransition(
+      staffToken,
+      firstOrder.id,
+      { from: "PLACED", to: "REJECTED", reasonCode: "ITEM_UNAVAILABLE" },
+      k1,
+    );
+    assert.equal(reused.status, 409);
+    assert.equal((await json(reused)).code, "IDEMPOTENCY_KEY_REUSED");
+
+    // I5: a new command using an old `from` state receives the current state.
+    const stale = await staffTransition(staffToken, firstOrder.id, {
+      from: "PLACED",
+      to: "REJECTED",
+      reasonCode: "ITEM_UNAVAILABLE",
+    });
+    assert.equal(stale.status, 409);
+    const staleError = await json(stale);
+    assert.equal(staleError.code, "ORDER_STATE_CONFLICT");
+    assert.equal(staleError.details.currentStatus, "READY");
+
+    // I6: accepting and refusing concurrently allows exactly one command.
+    const competingOrder = await order();
+    const [acceptRace, rejectRace] = await Promise.all([
+      staffTransition(staffToken, competingOrder.id, accept),
+      staffTransition(staffToken, competingOrder.id, {
+        from: "PLACED",
+        to: "REJECTED",
+        reasonCode: "ITEM_UNAVAILABLE",
+      }),
+    ]);
+    assert.deepEqual([acceptRace.status, rejectRace.status].sort(), [200, 409]);
+    const conflict = acceptRace.status === 409 ? acceptRace : rejectRace;
+    assert.equal((await json(conflict)).code, "ORDER_STATE_CONFLICT");
+
+    // I7: concurrent retries with the same key produce one history row.
+    const retryOrder = await order();
+    const retryKey = randomUUID();
+    const duplicateResponses = await Promise.all(
+      Array.from({ length: 2 }, () =>
+        staffTransition(staffToken, retryOrder.id, accept, retryKey),
+      ),
+    );
+    assert.deepEqual(
+      duplicateResponses.map((response) => response.status),
+      [200, 200],
+    );
+    assert.equal(await historyCount(retryOrder.id), 2);
+
+    // I8: running the tenant job twice records one timeout rejection.
+    const timedOutOrder = await order();
+    await sql(
+      stores.a.id,
+      "update orders set placed_at = now() - interval '2 hours' where id = ?",
+      [timedOutOrder.id],
+    );
+    const service = server.app.get(OrderService) as unknown as {
+      rejectExpiredOrders(): Promise<void>;
+    };
+    await service.rejectExpiredOrders();
+    await service.rejectExpiredOrders();
+    const timedOut = await runInTenant(owner, stores.a.id, (em) =>
+      em.execute<{ status: string; rejection_reason: string }[]>(
+        "select status,rejection_reason from orders where id = ?",
+        [timedOutOrder.id],
+      ),
+    );
+    assert.deepEqual(timedOut[0], {
+      status: "REJECTED",
+      rejection_reason: "ACCEPT_TIMEOUT",
+    });
+    assert.equal(await historyCount(timedOutOrder.id), 2);
+  });
+
+  it("lets a customer cancel only a placed order with an idempotent command", async () => {
+    const { token } = await customer(stores.a.slug);
+    const order = await json(
+      await place(stores.a.slug, token, pickup(stores.a.catalog)),
+    );
+    const key = randomUUID();
+    const cancel = () =>
+      fetch(
+        `${server.baseUrl}/v1/customer/stores/${stores.a.slug}/me/orders/${order.id}/transitions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...bearer(token),
+            "idempotency-key": key,
+          },
+          body: JSON.stringify({
+            from: "PLACED",
+            to: "CANCELED",
+            reasonCode: "CUSTOMER_REQUEST",
+          }),
+        },
+      );
+    const first = await cancel();
+    assert.equal(first.status, 200);
+    assert.equal((await json(first)).order.status, "CANCELED");
+    const retry = await cancel();
+    assert.equal(retry.status, 200);
+    assert.equal((await json(retry)).order.status, "CANCELED");
+    const invalid = await fetch(
+      `${server.baseUrl}/v1/customer/stores/${stores.a.slug}/me/orders/${order.id}/transitions`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...bearer(token),
+          "idempotency-key": randomUUID(),
+        },
+        body: JSON.stringify({ from: "CANCELED", to: "PLACED" }),
+      },
+    );
+    assert.equal(invalid.status, 422);
+  });
+
+  it("records one append-only billing event when a pickup order completes", async () => {
+    const { token } = await customer(stores.a.slug);
+    const staffToken = await admin(stores.a.id);
+    const order = await json(
+      await place(stores.a.slug, token, pickup(stores.a.catalog)),
+    );
+    const advance = async (from: string, to: string, key = randomUUID()) =>
+      staffTransition(staffToken, order.id, { from, to }, key);
+    assert.equal((await advance("PLACED", "PREPARING")).status, 200);
+    assert.equal((await advance("PREPARING", "READY")).status, 200);
+    const completeKey = randomUUID();
+    assert.equal(
+      (await advance("READY", "COMPLETED", completeKey)).status,
+      200,
+    );
+    assert.equal(
+      (await advance("READY", "COMPLETED", completeKey)).status,
+      200,
+      "same completion retry returns the original command",
+    );
+    const [entry] = await sql<{
+      count: number;
+      type: string;
+      totalCents: number;
+    }>(
+      stores.a.id,
+      `select count(*)::int as count, min(type) as type, min(total_cents) as "totalCents"
+       from billing_entries where order_id = ?`,
+      [order.id],
+    );
+    assert.deepEqual(entry, {
+      count: 1,
+      type: "ORDER_COMPLETED",
+      totalCents: order.totalCents,
+    });
   });
 });

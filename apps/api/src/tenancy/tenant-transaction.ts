@@ -62,16 +62,31 @@ export class TenantTransactions {
    */
   async run<T>(
     work: (em: EntityManager) => Promise<T>,
-    options: { isolationLevel?: IsolationLevel; lockCustomer?: boolean } = {},
+    options: {
+      isolationLevel?: IsolationLevel;
+      lockCustomer?: boolean;
+      /** Acquire the global tenant status lock before the staff session/membership locks. */
+      lockTenantStatusFirst?: boolean;
+    } = {},
   ): Promise<T> {
     const { tenantId, actor } = currentTenantContext();
-    const { lockCustomer: serialize, ...transaction } = options;
+    const {
+      lockCustomer: serialize,
+      lockTenantStatusFirst,
+      ...transaction
+    } = options;
     if (serialize && actor.type !== "customer")
       throw new Error("lockCustomer requires a customer actor");
+    if (lockTenantStatusFirst && actor.type !== "staff")
+      throw new Error("lockTenantStatusFirst requires a staff actor");
     return runInTenant(
       this.orm,
       tenantId,
       async (em) => {
+        if (lockTenantStatusFirst)
+          await em.execute("select whiteoven_lock_tenant_status(?)", [
+            tenantId,
+          ]);
         if (actor.type === "staff") await assertStaffStillAllowed(em, actor);
         if (actor.type === "customer") {
           if (serialize) await lockCustomer(em, actor.customerId);

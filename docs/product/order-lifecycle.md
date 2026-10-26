@@ -1,6 +1,6 @@
 # Ciclo de vida do pedido
 
-Status: especificação M0.3, sem implementação. Define carrinho, checkout, estados, transições, cancelamento, histórico, ocorrências e regras de funcionamento da loja. Entidades em [domain-model](../architecture/domain-model.md); preços em [pizza-builder-rules](pizza-builder-rules.md).
+Status: especificação de produto M0.3; checkout e criação estão implementados em M4.3, e máquina de estados/transições estão implementadas em M4.4. Define carrinho, checkout, estados, transições, cancelamento, histórico, ocorrências e regras de funcionamento da loja. Entidades em [domain-model](../architecture/domain-model.md); preços em [pizza-builder-rules](pizza-builder-rules.md).
 
 ## Carrinho
 
