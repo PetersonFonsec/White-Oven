@@ -1,0 +1,106 @@
+import type { Answer, StoreView } from "../brand/store-loader.ts";
+import type { PublicMenu } from "../menu/menu.ts";
+
+/**
+ * The menu the app holds (ADR 0021). `stale` marks a menu kept on screen after a reload failed:
+ * its prices and availability may have changed, and the menu and the builder say so.
+ */
+export type MenuState =
+  | { kind: "loading" }
+  | { kind: "failed" }
+  | { kind: "ok"; menu: PublicMenu; stale: boolean };
+
+/** A reload starts: a menu on screen stays (and keeps its staleness) while it runs. */
+export function menuWhileLoading(current: MenuState): MenuState {
+  return current.kind === "ok" ? current : { kind: "loading" };
+}
+
+/**
+ * A reload ended. A new menu replaces the old one and clears the warning; a failure keeps the
+ * menu on screen marked stale, or shows the error when there was none.
+ */
+export function menuAfterLoad(
+  current: MenuState,
+  answer: Answer<PublicMenu>,
+): MenuState {
+  if (answer.kind === "ok")
+    return { kind: "ok", menu: answer.body, stale: false };
+  return current.kind === "ok"
+    ? { ...current, stale: true }
+    : { kind: "failed" };
+}
+
+export interface MenuLoader {
+  /** Starts a reload; an earlier one still running is aborted and its answer dropped. */
+  reload(): Promise<void>;
+  dispose(): void;
+}
+
+/**
+ * Reloads the menu once at a time: only the latest reload may change the state, so an answer
+ * that arrives late never replaces a newer one. Pure, with `load` injected, for tests.
+ */
+export function createMenuLoader(
+  load: (signal: AbortSignal) => Promise<Answer<PublicMenu>>,
+  update: (change: (current: MenuState) => MenuState) => void,
+): MenuLoader {
+  let running: AbortController | null = null;
+  let disposed = false;
+  return {
+    async reload() {
+      if (disposed) return;
+      running?.abort();
+      const controller = new AbortController();
+      running = controller;
+      update(menuWhileLoading);
+      let answer: Answer<PublicMenu>;
+      try {
+        answer = await load(controller.signal);
+      } catch {
+        answer = { kind: "failed" };
+      }
+      if (controller.signal.aborted || disposed) return;
+      running = null;
+      update((current) => menuAfterLoad(current, answer));
+    },
+    dispose() {
+      disposed = true;
+      running?.abort();
+    },
+  };
+}
+
+export type Screen =
+  | { kind: "starting" }
+  /** The API confirmed the store is not serving: nothing else is reachable. */
+  | { kind: "unavailable" }
+  | { kind: "menu" }
+  | { kind: "builder"; flavorId: string };
+
+/**
+ * The one place that decides what the app shows. A store confirmed unavailable wins over
+ * everything, the builder included; closed and offline stores keep the menu and the builder,
+ * with their notices. The builder needs a menu to price with.
+ */
+export function screenFor(
+  view: StoreView | null,
+  menu: MenuState,
+  building: string | null,
+): Screen {
+  if (!view) return { kind: "starting" };
+  if (view.availability.kind === "unavailable") return { kind: "unavailable" };
+  if (building && menu.kind === "ok")
+    return { kind: "builder", flavorId: building };
+  return { kind: "menu" };
+}
+
+/**
+ * The open pizza after a store refresh: closed when the store is confirmed unavailable, so it
+ * does not come back on its own when the store serves again.
+ */
+export function buildingAfterRefresh(
+  building: string | null,
+  view: StoreView,
+): string | null {
+  return view.availability.kind === "unavailable" ? null : building;
+}

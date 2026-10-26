@@ -18,12 +18,14 @@ import {
 import { ThemeProvider, themeFor } from "./src/brand/theme.tsx";
 import { parseRuntimeConfig } from "./src/config/manifest.ts";
 import { builderMenu } from "./src/builder/builder.ts";
+import { imageUrl, loadMenu, menuSections } from "./src/menu/menu.ts";
 import {
-  type PublicMenu,
-  imageUrl,
-  loadMenu,
-  menuSections,
-} from "./src/menu/menu.ts";
+  type MenuLoader,
+  type MenuState,
+  buildingAfterRefresh,
+  createMenuLoader,
+  screenFor,
+} from "./src/navigation/app-state.ts";
 import { BuilderScreen } from "./src/screens/BuilderScreen.tsx";
 import { type MenuLoad, MenuScreen } from "./src/screens/MenuScreen.tsx";
 import { StoreScreen } from "./src/screens/StoreScreen.tsx";
@@ -43,38 +45,10 @@ export default function App() {
   > | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const refresher = useRef<StoreRefresher | null>(null);
-  const [menu, setMenu] = useState<
-    { kind: "loading" } | { kind: "ok"; menu: PublicMenu } | { kind: "failed" }
-  >({ kind: "loading" });
+  const [menu, setMenu] = useState<MenuState>({ kind: "loading" });
   /** The pizza open in the builder; null shows the menu. */
   const [building, setBuilding] = useState<string | null>(null);
-  const menuLoad = useRef<AbortController | null>(null);
-
-  /** The menu once at a time: a new load aborts the one before, whose answer is dropped. */
-  const reloadMenu = useCallback(async () => {
-    if (!runtime) return;
-    menuLoad.current?.abort();
-    const controller = new AbortController();
-    menuLoad.current = controller;
-    setMenu((current) =>
-      current.kind === "ok" ? current : { kind: "loading" },
-    );
-    const answer = await loadMenu({
-      apiUrl: runtime.apiUrl,
-      storeSlug: runtime.storeSlug,
-      fetch,
-      signal: controller.signal,
-    });
-    if (controller.signal.aborted) return;
-    setMenu((current) =>
-      answer.kind === "ok"
-        ? { kind: "ok", menu: answer.body }
-        : // A menu already on screen stays when a later reload fails.
-          current.kind === "ok"
-          ? current
-          : { kind: "failed" },
-    );
-  }, []);
+  const menuLoader = useRef<MenuLoader | null>(null);
 
   /**
    * One load at a time (ADR 0020): a tap while a load runs joins it. The refresher of an
@@ -84,12 +58,16 @@ export default function App() {
     const current = refresher.current;
     if (!current) return;
     setRefreshing(true);
-    void reloadMenu();
+    void menuLoader.current?.reload();
     const next = await current.refresh();
     if (refresher.current !== current) return;
-    if (next) setView(next);
+    if (next) {
+      setView(next);
+      // A store confirmed unavailable closes the builder for good (ADR 0021).
+      setBuilding((open) => buildingAfterRefresh(open, next));
+    }
     setRefreshing(current.refreshing);
-  }, [reloadMenu]);
+  }, []);
 
   useEffect(() => {
     if (!runtime) return;
@@ -102,6 +80,17 @@ export default function App() {
       fetch,
     });
     refresher.current = current;
+    const loader = createMenuLoader(
+      (signal) =>
+        loadMenu({
+          apiUrl: runtime.apiUrl,
+          storeSlug: runtime.storeSlug,
+          fetch,
+          signal,
+        }),
+      setMenu,
+    );
+    menuLoader.current = loader;
     // The cached brand paints the first frame; the API answer replaces it when it arrives.
     void cachedBrand(cache, runtime.storeSlug).then((brand) => {
       if (refresher.current === current) setCached(brand);
@@ -110,13 +99,16 @@ export default function App() {
     return () => {
       refresher.current = null;
       current.dispose();
-      menuLoad.current?.abort();
+      menuLoader.current = null;
+      loader.dispose();
     };
   }, [refresh]);
 
+  const screen = screenFor(view, menu, building);
+  const inBuilder = screen.kind === "builder";
   // Android's back button leaves the builder for the menu.
   useEffect(() => {
-    if (!building) return;
+    if (!inBuilder) return;
     const subscription = BackHandler.addEventListener(
       "hardwareBackPress",
       () => {
@@ -125,13 +117,22 @@ export default function App() {
       },
     );
     return () => subscription.remove();
-  }, [building]);
+  }, [inBuilder]);
 
+  // Keyed on the menu itself, so marking it stale does not rebuild the index or the sections.
+  const menuData = menu.kind === "ok" ? menu.menu : null;
   const builder = useMemo(
-    () => (menu.kind === "ok" ? builderMenu(menu.menu) : null),
-    [menu],
+    () => (menuData ? builderMenu(menuData) : null),
+    [menuData],
   );
-  const menuScreenLoad = useMemo(() => menuView(menu), [menu]);
+  const sections = useMemo(
+    () => (menuData ? menuSections(menuData) : null),
+    [menuData],
+  );
+  const menuStale = menu.kind === "ok" && menu.stale;
+  const menuLoad: MenuLoad = sections
+    ? { kind: "ok", sections }
+    : { kind: menu.kind === "failed" ? "failed" : "loading" };
 
   if (!runtime)
     return (
@@ -148,17 +149,18 @@ export default function App() {
   return (
     <ThemeProvider value={theme}>
       <StatusBar style="dark" />
-      {view && builder && building ? (
+      {view && screen.kind === "builder" && builder ? (
         <BuilderScreen
-          key={building}
+          key={screen.flavorId}
           builder={builder}
-          flavorId={building}
+          flavorId={screen.flavorId}
+          menuStale={menuStale}
           onBack={() => setBuilding(null)}
         />
-      ) : view && view.availability.kind !== "unavailable" ? (
+      ) : view && screen.kind === "menu" ? (
         <MenuScreen
           storeName={view.name}
-          notices={menuNotices(view)}
+          notices={menuNotices(view, menuStale)}
           logoUrl={
             view.logoImageId
               ? imageUrl(
@@ -169,7 +171,8 @@ export default function App() {
                 )
               : null
           }
-          menu={menuScreenLoad}
+          menu={menuLoad}
+          menuStale={menuStale}
           refreshing={refreshing}
           imageUrl={(id) =>
             imageUrl(runtime.apiUrl, runtime.storeSlug, id, "thumbnail")
@@ -194,15 +197,6 @@ export default function App() {
       )}
     </ThemeProvider>
   );
-}
-
-function menuView(
-  menu:
-    { kind: "loading" } | { kind: "ok"; menu: PublicMenu } | { kind: "failed" },
-): MenuLoad {
-  return menu.kind === "ok"
-    ? { kind: "ok", sections: menuSections(menu.menu) }
-    : menu;
 }
 
 const styles = StyleSheet.create({

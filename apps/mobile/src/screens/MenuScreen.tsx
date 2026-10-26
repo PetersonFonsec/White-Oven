@@ -17,8 +17,10 @@ export type MenuLoad =
 
 interface Props {
   storeName: string;
-  /** From `menuNotices`: closed, unconfirmed or stale brand. */
+  /** From `menuNotices`: closed, unconfirmed, stale brand or stale menu. */
   notices: string[];
+  /** The menu on screen could not be reloaded: the banner offers to try again. */
+  menuStale: boolean;
   /** Absolute URL of the brand logo, or null. */
   logoUrl: string | null;
   menu: MenuLoad;
@@ -35,6 +37,7 @@ interface Props {
 export function MenuScreen({
   storeName,
   notices,
+  menuStale,
   logoUrl,
   menu,
   refreshing,
@@ -89,6 +92,21 @@ export function MenuScreen({
               {line}
             </Text>
           ))}
+          {menuStale ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ busy: refreshing, disabled: refreshing }}
+              disabled={refreshing}
+              onPress={onRetry}
+              style={styles.link}
+            >
+              <Text
+                style={[styles.linkText, { color: theme.colors.accentText }]}
+              >
+                {refreshing ? "Atualizando…" : "Atualizar cardápio"}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
@@ -245,4 +263,10 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   buttonText: { fontSize: 16, fontWeight: "700" },
+  link: { minHeight: 48, justifyContent: "center", alignSelf: "flex-start" },
+  linkText: {
+    fontSize: 16,
+    fontWeight: "700",
+    textDecorationLine: "underline",
+  },
 });

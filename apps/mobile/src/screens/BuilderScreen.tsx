@@ -20,18 +20,22 @@ import {
   setFlavor,
   setMode,
   setQuantity,
-  setSize,
+  type SizeChange,
+  changeSize,
   startBuilder,
   toggleExtra,
   toggleRemoval,
 } from "../builder/builder.ts";
 import { formatCents } from "../menu/menu.ts";
 import { Choice } from "../components/Choice.tsx";
+import { MENU_STALE_NOTICE } from "./store-messages.ts";
 import { PizzaVisual } from "../components/PizzaVisual.tsx";
 
 interface Props {
   builder: BuilderMenu;
   flavorId: string;
+  /** The menu could not be reloaded: prices and availability may be old. */
+  menuStale: boolean;
   onBack: () => void;
 }
 
@@ -39,11 +43,16 @@ interface Props {
  * The Pizza Builder (M5.2, ADR 0021). Every choice goes through `pizza-pricing`, the same
  * pipeline the API runs; the price shown is an estimate the order confirms (M5.3).
  */
-export function BuilderScreen({ builder, flavorId, onBack }: Props) {
+export function BuilderScreen({ builder, flavorId, menuStale, onBack }: Props) {
   const theme = useTheme();
   const [state, setState] = useState<BuilderState | null>(() =>
     startBuilder(builder, flavorId),
   );
+  /** The last size tap that was blocked or waits for confirmation; any other choice clears it. */
+  const [sizeChange, setSizeChange] = useState<{
+    sizeId: string;
+    change: Exclude<SizeChange, { kind: "applied" }>;
+  } | null>(null);
   const result = useMemo(
     () => (state ? evaluateBuilder(builder, state) : null),
     [builder, state],
@@ -76,7 +85,15 @@ export function BuilderScreen({ builder, flavorId, onBack }: Props) {
     );
 
   const { menu, index } = builder;
-  const update = (next: BuilderState) => setState(next);
+  const update = (next: BuilderState) => {
+    setSizeChange(null);
+    setState(next);
+  };
+  const pickSize = (sizeId: string) => {
+    const change = changeSize(builder, state, sizeId);
+    if (change.kind === "applied") update(change.state);
+    else setSizeChange({ sizeId, change });
+  };
   const size = menu.sizes.find((entry) => entry.id === state.sizeId);
   const sides: HalfSide[] =
     state.mode === "HALVES" ? ["LEFT", "RIGHT"] : ["LEFT"];
@@ -128,6 +145,24 @@ export function BuilderScreen({ builder, flavorId, onBack }: Props) {
       >
         Monte sua pizza
       </Text>
+      {menuStale ? (
+        <View
+          accessibilityRole="alert"
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border,
+              borderRadius: theme.radius.small,
+              padding: theme.spacing(3),
+            },
+          ]}
+        >
+          <Text style={[styles.body, { color: theme.colors.text }]}>
+            {MENU_STALE_NOTICE}
+          </Text>
+        </View>
+      ) : null}
 
       <PizzaVisual
         mode={shown.mode}
@@ -173,10 +208,45 @@ export function BuilderScreen({ builder, flavorId, onBack }: Props) {
             label={entry.name}
             detail={`${entry.slices} fatias${entry.maxFlavors === 1 ? " · 1 sabor" : ""}`}
             selected={entry.id === state.sizeId}
-            onPress={() => update(setSize(builder, state, entry.id))}
+            onPress={() => pickSize(entry.id)}
           />
         ))}
       </View>
+      {sizeChange ? (
+        <View
+          accessibilityRole="alert"
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.colors.errorSurface,
+              borderColor: theme.colors.error,
+              borderRadius: theme.radius.small,
+              padding: theme.spacing(3),
+              gap: theme.spacing(2),
+            },
+          ]}
+        >
+          <Text style={[styles.body, { color: theme.colors.text }]}>
+            {sizeChange.change.message}
+          </Text>
+          <View style={row}>
+            {sizeChange.change.kind === "confirm" ? (
+              <Action
+                label="Trocar e remover"
+                primary
+                onPress={() =>
+                  sizeChange.change.kind === "confirm" &&
+                  update(sizeChange.change.state)
+                }
+              />
+            ) : null}
+            <Action
+              label={`Manter ${size?.name ?? "o tamanho atual"}`}
+              onPress={() => setSizeChange(null)}
+            />
+          </View>
+        </View>
+      ) : null}
 
       {heading("Sabores")}
       <View accessibilityRole="radiogroup" style={row}>
@@ -405,7 +475,9 @@ export function BuilderScreen({ builder, flavorId, onBack }: Props) {
               </Text>
             </View>
             <Text style={[styles.small, { color: theme.colors.muted }]}>
-              A pizzaria confirma o valor ao receber o pedido.
+              {menuStale
+                ? "Calculado com o último cardápio carregado, que pode estar desatualizado. A pizzaria confirma o valor ao receber o pedido."
+                : "A pizzaria confirma o valor ao receber o pedido."}
             </Text>
           </>
         ) : result.kind === "invalid" ? (
@@ -426,6 +498,45 @@ export function BuilderScreen({ builder, flavorId, onBack }: Props) {
         )}
       </View>
     </ScrollView>
+  );
+}
+
+function Action(props: {
+  label: string;
+  primary?: boolean;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={props.onPress}
+      style={({ pressed }) => [
+        styles.action,
+        {
+          borderRadius: theme.radius.pill,
+          borderColor: theme.colors.primary,
+          backgroundColor: props.primary
+            ? pressed
+              ? theme.colors.primaryPressed
+              : theme.colors.primary
+            : theme.colors.surface,
+        },
+      ]}
+    >
+      <Text
+        style={[
+          styles.actionText,
+          {
+            color: props.primary
+              ? theme.colors.onPrimary
+              : theme.colors.accentText,
+          },
+        ]}
+      >
+        {props.label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -481,6 +592,14 @@ const styles = StyleSheet.create({
   card: { borderWidth: 1 },
   body: { fontSize: 16, lineHeight: 24 },
   small: { fontSize: 14, lineHeight: 20 },
+  action: {
+    minHeight: 48,
+    paddingHorizontal: 20,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionText: { fontSize: 16, fontWeight: "700" },
   step: {
     width: 48,
     height: 48,

@@ -13,7 +13,7 @@ import {
   setFlavor,
   setMode,
   setQuantity,
-  setSize,
+  changeSize,
   startBuilder,
   toggleExtra,
   toggleRemoval,
@@ -155,8 +155,13 @@ describe("Pizza Builder", () => {
   });
 
   it("reports the rules pizza-pricing enforces in Portuguese, naming the half", () => {
+    // States the size buttons no longer produce (changeSize blocks them), but a menu that changed
+    // under an open builder can: pizza-pricing still reports them.
     // PB-02: the small size takes one flavor only.
-    const small = setSize(builder, halves("calabresa", "marguerita"), "broto");
+    const small = {
+      ...halves("calabresa", "marguerita"),
+      sizeId: "broto",
+    };
     const smallResult = evaluateBuilder(builder, small);
     assert.equal(smallResult.kind, "invalid");
     assert.deepEqual(smallResult.kind === "invalid" && smallResult.messages, [
@@ -165,10 +170,10 @@ describe("Pizza Builder", () => {
     ]);
 
     // PB-03: a flavor without a price in the size.
-    const unpriced = evaluateBuilder(
-      builder,
-      setSize(builder, start("marguerita"), "broto"),
-    );
+    const unpriced = evaluateBuilder(builder, {
+      ...start("marguerita"),
+      sizeId: "broto",
+    });
     assert.deepEqual(unpriced.kind === "invalid" && unpriced.messages, [
       "Marguerita não está disponível no tamanho Broto.",
     ]);
@@ -210,10 +215,6 @@ describe("Pizza Builder", () => {
   it("keeps choices consistent when the size, mode or a flavor changes", () => {
     let state = setCrust(toggleExtra(start(), "LEFT", "cheddar"), "catupiry");
     state = toggleExtra(state, "LEFT", "bacon");
-    // The small size has no catupiry nor cheddar: both leave, bacon stays.
-    const small = setSize(builder, state, "broto");
-    assert.equal(small.crustId, null);
-    assert.deepEqual(small.extras.LEFT, ["bacon"]);
 
     // Whole to halves: the whole extras cover both halves; the right flavor is still open.
     const split = setMode(toggleRemoval(state, "LEFT", "cebola"), "HALVES");
@@ -234,6 +235,122 @@ describe("Pizza Builder", () => {
 
     assert.equal(setQuantity(state, 0).quantity, 1);
     assert.equal(setQuantity(state, 99).quantity, 20);
+  });
+
+  describe("size change", () => {
+    const applied = (state: BuilderState, sizeId: string) => {
+      const change = changeSize(builder, state, sizeId);
+      assert.equal(change.kind, "applied", JSON.stringify(change));
+      return (change as { state: BuilderState }).state;
+    };
+
+    it("applies a compatible size, keeping every choice, and prices it again", () => {
+      const state = setQuantity(
+        toggleRemoval(toggleExtra(start(), "LEFT", "bacon"), "LEFT", "cebola"),
+        2,
+      );
+      assert.equal(priced(state).price.totalCents, 2 * (5000 + 600));
+      const small = applied(state, "broto");
+      assert.deepEqual(small, { ...state, sizeId: "broto" });
+      assert.equal(priced(small).price.totalCents, 2 * (3000 + 400));
+      assert.equal(changeSize(builder, state, "grande").kind, "applied");
+    });
+
+    it("blocks a size the chosen flavor has no price in, naming it and keeping the state", () => {
+      const state = toggleRemoval(start("marguerita"), "LEFT", "tomate");
+      const before = structuredClone(state);
+      assert.deepEqual(changeSize(builder, state, "broto"), {
+        kind: "blocked",
+        message:
+          "Marguerita não está disponível no tamanho Broto. Escolha outro sabor antes de trocar o tamanho.",
+      });
+      assert.deepEqual(state, before);
+      // After picking a flavor the size has, the same change goes through.
+      assert.equal(
+        changeSize(builder, setFlavor(state, "LEFT", "calabresa"), "broto")
+          .kind,
+        "applied",
+      );
+      const both = changeSize(
+        builder,
+        halves("marguerita", "especial"),
+        "broto",
+      );
+      assert.match(
+        both.kind === "blocked" ? both.message : "",
+        /^Marguerita e Especial da casa não estão disponíveis no tamanho Broto/,
+      );
+    });
+
+    it("turns halves into a whole pizza on a one-flavor size only when nothing is lost", () => {
+      // The right flavor was not chosen yet: the pizza is the left half.
+      const open = toggleExtra(setMode(start(), "HALVES"), "LEFT", "bacon");
+      const whole = applied(toggleExtra(open, "RIGHT", "bacon"), "broto");
+      assert.equal(whole.mode, "WHOLE");
+      assert.deepEqual(whole.extras, { LEFT: ["bacon"], RIGHT: [] });
+      // The same flavor and choices on both halves: the same pizza as a whole one (PB-05).
+      let same = halves("calabresa", "calabresa");
+      same = toggleRemoval(
+        toggleRemoval(same, "LEFT", "cebola"),
+        "RIGHT",
+        "cebola",
+      );
+      const wholeSame = applied(same, "broto");
+      assert.equal(wholeSame.mode, "WHOLE");
+      assert.deepEqual(wholeSame.removals.LEFT, ["cebola"]);
+
+      // Anything that differs between halves would be lost: blocked, state untouched.
+      const message =
+        'O tamanho Broto aceita só um sabor. Escolha "Um sabor" antes de trocar, para decidir qual sabor fica.';
+      for (const differing of [
+        toggleExtra(halves("calabresa", "calabresa"), "LEFT", "bacon"),
+        toggleRemoval(halves("calabresa", "calabresa"), "RIGHT", "cebola"),
+        toggleExtra(setMode(start(), "HALVES"), "RIGHT", "bacon"),
+      ])
+        assert.deepEqual(changeSize(builder, differing, "broto"), {
+          kind: "blocked",
+          message,
+        });
+    });
+
+    it("asks before dropping a crust or extras the size has no price for", () => {
+      let state = setCrust(start(), "catupiry");
+      state = toggleExtra(
+        toggleExtra(state, "LEFT", "cheddar"),
+        "LEFT",
+        "bacon",
+      );
+      state = toggleRemoval(state, "LEFT", "cebola");
+      const change = changeSize(builder, state, "broto");
+      assert.equal(change.kind, "confirm");
+      if (change.kind !== "confirm") return;
+      assert.deepEqual(change.removed, ["borda Catupiry", "Cheddar"]);
+      assert.equal(
+        change.message,
+        "O tamanho Broto não tem borda Catupiry e Cheddar. Trocar o tamanho remove esses itens da pizza.",
+      );
+      // Confirmed, the rest stays: flavor, bacon, removal and quantity.
+      assert.deepEqual(change.state, {
+        ...state,
+        sizeId: "broto",
+        crustId: null,
+        extras: { LEFT: ["bacon"], RIGHT: [] },
+      });
+      assert.equal(priced(change.state).price.totalCents, 3000 + 400);
+
+      const onlyExtra = changeSize(
+        builder,
+        toggleExtra(start(), "LEFT", "milho"),
+        "broto",
+      );
+      assert.deepEqual(onlyExtra.kind === "confirm" && onlyExtra.removed, [
+        "Milho",
+      ]);
+      assert.match(
+        onlyExtra.kind === "confirm" ? onlyExtra.message : "",
+        /remove esse item da pizza\.$/,
+      );
+    });
   });
 
   it("drops animation time when the system asks for reduced motion", () => {

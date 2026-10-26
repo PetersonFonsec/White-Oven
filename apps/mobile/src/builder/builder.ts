@@ -70,27 +70,114 @@ export function startBuilder(
 const sidesOf = (state: Pick<BuilderState, "mode">): HalfSide[] =>
   state.mode === "HALVES" ? ["LEFT", "RIGHT"] : ["LEFT"];
 
+export type SizeChange =
+  /** Nothing the customer chose is lost. */
+  | { kind: "applied"; state: BuilderState }
+  /** The size cannot take the pizza as it is; the state stays as it was. */
+  | { kind: "blocked"; message: string }
+  /** The size drops a paid choice: `state` is applied only after the customer confirms. */
+  | {
+      kind: "confirm";
+      state: BuilderState;
+      message: string;
+      removed: string[];
+    };
+
+const sameSet = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((id) => b.includes(id));
+
 /**
- * A new size keeps the flavors (an unpriced one is reported by `pizza-pricing`) and drops the
- * crust and extras the size has no price for, which the customer can no longer see to undo.
+ * A size change, checked before it is applied (ADR 0021), so no choice is dropped in silence:
+ *
+ * - A flavor without a price in the new size blocks the change; the flavor is never swapped.
+ * - Halves on a one-flavor size become a whole pizza only when that loses nothing (the right
+ *   flavor not chosen yet, or the same flavor and choices on both halves); otherwise blocked.
+ * - A crust or extras without a price in the new size need the customer's confirmation.
+ *
+ * Flavors, removals, extras and quantity that fit the new size are kept. Prices and the PB rules
+ * stay with `evaluatePizza`, which runs on the result like on any other state.
  */
-export function setSize(
-  { index }: BuilderMenu,
+export function changeSize(
+  { menu, index }: BuilderMenu,
   state: BuilderState,
   sizeId: string,
-): BuilderState {
+): SizeChange {
+  if (sizeId === state.sizeId) return { kind: "applied", state };
+  const size = menu.sizes.find((entry) => entry.id === sizeId);
+  if (!size)
+    return {
+      kind: "blocked",
+      message: "Este tamanho não está mais disponível.",
+    };
+  const nameOf = <T extends { id: string; name: string }>(
+    entries: T[],
+    id: string,
+  ) => entries.find((entry) => entry.id === id)?.name ?? "Um item";
+
+  const chosen = [
+    ...new Set(
+      sidesOf(state)
+        .map((side) => state.flavors[side])
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const unpriced = chosen.filter(
+    (id) => index.flavorPrice(id, sizeId) === undefined,
+  );
+  if (unpriced.length)
+    return {
+      kind: "blocked",
+      message: `${listPt(unpriced.map((id) => nameOf(menu.flavors, id)))} ${
+        unpriced.length === 1 ? "não está disponível" : "não estão disponíveis"
+      } no tamanho ${size.name}. Escolha outro sabor antes de trocar o tamanho.`,
+    };
+
+  let next: BuilderState = { ...state, sizeId };
+  if (state.mode === "HALVES" && size.maxFlavors < 2) {
+    const { LEFT, RIGHT } = state.flavors;
+    const lossless =
+      (RIGHT === null &&
+        sameSet(state.extras.RIGHT, state.extras.LEFT) &&
+        state.removals.RIGHT.length === 0) ||
+      (RIGHT === LEFT &&
+        sameSet(state.extras.RIGHT, state.extras.LEFT) &&
+        sameSet(state.removals.RIGHT, state.removals.LEFT));
+    if (!lossless)
+      return {
+        kind: "blocked",
+        message: `O tamanho ${size.name} aceita só um sabor. Escolha "Um sabor" antes de trocar, para decidir qual sabor fica.`,
+      };
+    next = setMode(next, "WHOLE");
+  }
+
+  const crustLost =
+    next.crustId !== null &&
+    index.crustPrice(next.crustId, sizeId) === undefined;
   const priced = (id: string) => index.extraPrice(id, sizeId) !== undefined;
+  const extrasLost = [
+    ...new Set([...next.extras.LEFT, ...next.extras.RIGHT]),
+  ].filter((id) => !priced(id));
+  if (!crustLost && extrasLost.length === 0)
+    return { kind: "applied", state: next };
+
+  const removed = [
+    ...(crustLost ? [`borda ${nameOf(menu.crusts, next.crustId!)}`] : []),
+    ...extrasLost.map((id) => nameOf(menu.extras, id)),
+  ];
   return {
-    ...state,
-    sizeId,
-    crustId:
-      state.crustId && index.crustPrice(state.crustId, sizeId) !== undefined
-        ? state.crustId
-        : null,
-    extras: {
-      LEFT: state.extras.LEFT.filter(priced),
-      RIGHT: state.extras.RIGHT.filter(priced),
+    kind: "confirm",
+    state: {
+      ...next,
+      crustId: crustLost ? null : next.crustId,
+      extras: {
+        LEFT: next.extras.LEFT.filter(priced),
+        RIGHT: next.extras.RIGHT.filter(priced),
+      },
     },
+    removed,
+    message: `O tamanho ${size.name} não tem ${listPt(removed)}. Trocar o tamanho ${
+      removed.length === 1 ? "remove esse item" : "remove esses itens"
+    } da pizza.`,
   };
 }
 

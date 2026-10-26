@@ -51,9 +51,16 @@ A [ADR 0020](0020-mobile-app-base.md) deixou para esta etapa o logotipo e a rota
     - um adicional nas duas metades é enviado como `LEFT` + `RIGHT` e o pacote o normaliza para `WHOLE` (PB-10);
     - o mesmo sabor nas duas metades vira pizza inteira sem sobretaxa (PB-05).
   - As transições só mantêm o estado coerente com o que a tela mostra:
-    - trocar de tamanho descarta a borda e os adicionais sem preço no novo tamanho;
     - trocar o sabor de uma metade descarta as remoções daquela metade;
     - ir de inteira para meio a meio copia os adicionais para as duas metades.
+- **Troca de tamanho** (`changeSize`): o app confere a troca antes de aplicá-la, para que nenhuma escolha seja descartada sem o cliente saber.
+  - Um sabor sem preço no novo tamanho bloqueia a troca. A mensagem nomeia o sabor, e o app nunca troca o sabor por outro.
+  - Meio a meio num tamanho de um sabor:
+    - vira pizza inteira só quando nada se perde: a metade direita ainda sem sabor, ou o mesmo sabor e as mesmas escolhas nas duas metades;
+    - nos outros casos, a troca é bloqueada e o cliente escolhe "Um sabor" antes, decidindo qual sabor fica.
+  - Uma borda ou um adicional sem preço no novo tamanho pede confirmação. A mensagem nomeia o que sai, com as opções "Trocar e remover" e "Manter" o tamanho atual.
+  - Uma troca bloqueada ou não confirmada deixa o estado como estava. Na troca aplicada, sabores, remoções, adicionais compatíveis e quantidade ficam, e o preço sai de novo de `evaluatePizza`.
+  - Um cardápio que mudou com o builder aberto ainda pode deixar a pizza inválida para o tamanho; `pizza-pricing` reporta isso como em qualquer outro estado.
   - Cada `PizzaError` vira uma mensagem em português que nomeia a metade quando o erro tem uma.
   - O limite de adicionais (PB-11) também desabilita os chips da metade cheia, mas quem decide é o pacote.
 - **Descrição de cada metade:**
@@ -78,10 +85,17 @@ A [ADR 0020](0020-mobile-app-base.md) deixou para esta etapa o logotipo e a rota
   - Mostra as categorias na ordem da API. Cada sabor aparece com o menor preço ("a partir de") e abre o builder; os produtos aparecem com o preço.
   - As imagens são decorativas (o nome ao lado diz o que são) e vêm da variante `thumbnail`. O logotipo aparece no topo.
   - Uma loja fechada continua navegável, com o aviso no topo. A tela "Pizzaria indisponível" continua para quem não está servindo.
+- **Navegação** (`screenFor`, pura e testada): um só lugar decide a tela.
+  - Loja confirmada como indisponível (403/404) mostra só a tela de indisponibilidade, mesmo com uma montagem aberta.
+  - Uma atualização que confirma a indisponibilidade também fecha a montagem (`buildingAfterRefresh`). Quando a loja volta, o app abre no cardápio, não na pizza antiga.
+  - Loja fechada e loja sem confirmação (offline) mantêm cardápio e builder, com seus avisos. Offline não é suspensão.
+  - O botão voltar do Android e o "Voltar ao cardápio" fecham a montagem.
   - Sem política de preço da loja, o cardápio aparece, mas o builder avisa que a montagem ainda não tem preço.
 - **Carregamento do cardápio:**
-  - Uma carga por vez: uma nova aborta a anterior, e a resposta abortada é descartada.
-  - Uma falha mantém o cardápio que já estava na tela.
+  - Uma carga por vez (`createMenuLoader`): uma nova aborta a anterior, a resposta abortada é descartada e só a carga mais recente muda o estado.
+  - O estado `MenuState` é `loading`, `failed` ou `ok` com `stale`. A primeira carga que falha mostra o erro com "Tentar de novo".
+  - Uma falha com cardápio na tela mantém esse cardápio e marca `stale`. O aviso diz que preços e disponibilidade podem ter mudado e aparece em três lugares: no cardápio (com "Atualizar cardápio"), no topo do builder e junto do total estimado.
+  - Só uma carga bem-sucedida tira o aviso. Ele é separado do `brandStale` da marca (ADR 0020).
   - O cardápio não vai para cache no aparelho: preços mudam, e o pedido é precificado de novo pela API (M5.3).
 - **Fora do escopo:** carrinho, conta, checkout e pedido ficam para M5.3. O builder mostra o "total estimado" com o aviso de que a pizzaria confirma o valor; não há botão de adicionar.
 
