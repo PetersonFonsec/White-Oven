@@ -141,6 +141,43 @@ describe("order request rules", () => {
     assert.equal(request.expectedTotalCents, null);
   });
 
+  it("requires a confirmed total in cents only when asked to (the creation)", () => {
+    const base = {
+      fulfillment: "PICKUP",
+      paymentMethod: "CASH",
+      items: [pizzaLine],
+    };
+    assert.ok(validateOrderRequest(base).ok);
+    assert.ok(validateOrderRequest({ ...base, expectedTotalCents: null }).ok);
+    for (const expectedTotalCents of [
+      undefined,
+      null,
+      -1,
+      1.5,
+      "10",
+      Infinity,
+      NaN,
+      10_000_001,
+    ])
+      assert.deepEqual(
+        validateOrderRequest(
+          expectedTotalCents === undefined
+            ? base
+            : { ...base, expectedTotalCents },
+          { requireExpectedTotal: true },
+        ),
+        { ok: false, paths: ["expectedTotalCents"] },
+        String(expectedTotalCents),
+      );
+    for (const expectedTotalCents of [0, 4000, 10_000_000])
+      assert.ok(
+        validateOrderRequest(
+          { ...base, expectedTotalCents },
+          { requireExpectedTotal: true },
+        ).ok,
+      );
+  });
+
   it("hashes the same order the same whatever the key order, and any change differently", () => {
     const a = valid({
       fulfillment: "PICKUP",
@@ -247,6 +284,51 @@ describe("priceOrder", () => {
         ok: false,
         issues: [{ code: "CHANGE_FOR_TOO_LOW", path: "changeForCents" }],
       },
+    );
+  });
+
+  it("keeps every amount within R$ 100.000,00, the limit included", () => {
+    const priced = (priceCents: number, extra: object = {}, fee = 0) =>
+      priceOrder(
+        valid({
+          fulfillment: "DELIVERY",
+          addressId: ADDRESS,
+          paymentMethod: "CASH",
+          items: [{ kind: "PRODUCT", productId: PRODUCT, quantity: 20 }],
+          ...extra,
+        }),
+        {
+          ...catalog,
+          simpleProducts: catalog.simpleProducts.map((p) => ({
+            ...p,
+            priceCents,
+          })),
+        },
+        catalog.pricingPolicy,
+        { ...settings, deliveryFeeCents: fee },
+        address,
+      );
+    const exceeded = (path: string) => ({
+      ok: false,
+      issues: [{ code: "ORDER_TOTAL_EXCEEDED", path }],
+      maxTotalCents: 10_000_000,
+    });
+    const exact = priced(500_000);
+    assert.ok(exact.ok);
+    assert.equal(exact.quote.totalCents, 10_000_000);
+    assert.deepEqual(priced(500_001), exceeded("items[0]"));
+    assert.deepEqual(priced(2_147_483_647), exceeded("items[0]"));
+    assert.deepEqual(priced(Number.MAX_SAFE_INTEGER), exceeded("items[0]"));
+    assert.deepEqual(priced(500_000, {}, 1), exceeded("items"));
+    assert.deepEqual(
+      priced(250_000, {
+        items: [
+          { kind: "PRODUCT", productId: PRODUCT, quantity: 20 },
+          { kind: "PRODUCT", productId: PRODUCT, quantity: 20 },
+          { kind: "PRODUCT", productId: PRODUCT, quantity: 1 },
+        ],
+      }),
+      exceeded("items"),
     );
   });
 

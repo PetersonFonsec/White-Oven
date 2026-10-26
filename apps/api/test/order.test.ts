@@ -63,12 +63,30 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     });
   const quote = (slug: string, token: string, body: unknown) =>
     request(slug, "me/orders/quote", token, body);
-  const place = (
+  /**
+   * Places an order as the app does: the customer confirms the total of a quote first. A body
+   * that already names `expectedTotalCents` is sent as is; when the quote fails, 0 is sent so the
+   * creation answers its own error.
+   */
+  const place = async (
     slug: string,
     token: string,
-    body: unknown,
+    body: Record<string, unknown>,
     key: string = randomUUID(),
-  ) => request(slug, "me/orders", token, body, { "idempotency-key": key });
+  ) => {
+    let confirmed = body;
+    if (!("expectedTotalCents" in body)) {
+      const quoted = await quote(slug, token, body);
+      confirmed = {
+        ...body,
+        expectedTotalCents:
+          quoted.status === 200 ? (await json(quoted)).totalCents : 0,
+      };
+    }
+    return request(slug, "me/orders", token, confirmed, {
+      "idempotency-key": key,
+    });
+  };
 
   /** A new customer of the store, with one saved address. */
   const customer = async (slug: string) => {
@@ -251,6 +269,146 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     assert.equal((await json(placed)).totalCents, 4000);
   });
 
+  it("asks for the confirmed total to place an order, not to quote one", async () => {
+    const { token } = await customer(stores.a.slug);
+    const c = stores.a.catalog;
+    const quoted = await quote(stores.a.slug, token, pickup(c));
+    assert.equal(quoted.status, 200);
+    assert.equal((await json(quoted)).priceChanged, false);
+
+    const before = await ordersOf(stores.a.id);
+    for (const expected of [undefined, null, -1, 1.5, "4000", 10_000_001]) {
+      const body: Record<string, unknown> = { ...pickup(c) };
+      if (expected !== undefined) body["expectedTotalCents"] = expected;
+      const response = await request(stores.a.slug, "me/orders", token, body, {
+        "idempotency-key": randomUUID(),
+      });
+      assert.equal(response.status, 422, String(expected));
+      const error = await json(response);
+      assert.equal(error.code, "VALIDATION_FAILED");
+      assert.deepEqual(error.details.errors, [
+        { code: "VALIDATION_FAILED", path: "expectedTotalCents" },
+      ]);
+    }
+    assert.equal(await ordersOf(stores.a.id), before);
+
+    const first = await place(stores.a.slug, token, {
+      ...pickup(c),
+      expectedTotalCents: 4000,
+    });
+    assert.equal(first.status, 201);
+    const stale = await place(stores.a.slug, token, {
+      ...pickup(c),
+      expectedTotalCents: 3999,
+    });
+    assert.equal(stale.status, 409);
+    assert.equal((await json(stale)).code, "ORDER_PRICE_CHANGED");
+    const next = await place(stores.a.slug, token, {
+      ...pickup(c),
+      expectedTotalCents: 4000,
+    });
+    assert.equal(next.status, 201);
+    assert.equal(
+      (await json(next)).number,
+      (await json(first)).number + 1,
+      "a refused price consumes no number",
+    );
+  });
+
+  it("returns the original order to a retry after the catalog price changed", async () => {
+    const { token } = await customer(stores.a.slug);
+    const c = stores.a.catalog;
+    const key = randomUUID();
+    const body = { ...pickup(c), expectedTotalCents: 4000 };
+    const first = await place(stores.a.slug, token, body, key);
+    assert.equal(first.status, 201);
+    const order = await json(first);
+    await sql(
+      stores.a.id,
+      "update catalog_flavor_prices set price_cents = 4500 where flavor_id = ? and size_id = ?",
+      [c.calabresa, c.size],
+    );
+    try {
+      const retry = await place(stores.a.slug, token, body, key);
+      assert.equal(retry.status, 200);
+      assert.deepEqual(await json(retry), order);
+      const fresh = await place(stores.a.slug, token, body);
+      assert.equal(fresh.status, 409);
+      const error = await json(fresh);
+      assert.equal(error.code, "ORDER_PRICE_CHANGED");
+      assert.equal(error.details.totalCents, 4500);
+    } finally {
+      await sql(
+        stores.a.id,
+        "update catalog_flavor_prices set price_cents = 4000 where flavor_id = ? and size_id = ?",
+        [c.calabresa, c.size],
+      );
+    }
+  });
+
+  it("refuses amounts above R$ 100.000,00 with a domain error and stores nothing", async () => {
+    const tenant = `limite-${randomUUID().slice(0, 8)}`;
+    const id = await insertTenant(owner, tenant);
+    const catalog = await seedOrderStore(owner, id);
+    const product = async (name: string, cents: number) => {
+      const [row] = await sql<{ id: string }>(
+        id,
+        `insert into catalog_simple_products (tenant_id, category_id, name, price_cents)
+         select ?, category_id, ?, ? from catalog_simple_products where id = ? returning id`,
+        [id, name, cents, catalog.soda],
+      );
+      return row!.id;
+    };
+    const atLimit = await product("Caro", 500_000);
+    const over = await product("Caríssimo", 600_000);
+    const largest = await product("Máximo", 2_147_483_647);
+    const { token, addressId } = await customer(tenant);
+    const line = (productId: string, quantity = 20) => ({
+      kind: "PRODUCT",
+      productId,
+      quantity,
+    });
+
+    const exact = await place(tenant, token, {
+      ...pickup(catalog),
+      items: [line(atLimit)],
+    });
+    assert.equal(exact.status, 201);
+    assert.equal((await json(exact)).totalCents, 10_000_000);
+
+    for (const [body, path] of [
+      [{ ...pickup(catalog), items: [line(over)] }, "items[0]"],
+      [{ ...pickup(catalog), items: [line(largest)] }, "items[0]"],
+      [
+        { ...pickup(catalog), items: [line(atLimit), line(catalog.soda, 1)] },
+        "items",
+      ],
+      [
+        {
+          fulfillment: "DELIVERY",
+          addressId,
+          paymentMethod: "CASH",
+          items: [line(atLimit)],
+        },
+        "items",
+      ],
+    ] as const) {
+      for (const response of [
+        await quote(tenant, token, body),
+        await place(tenant, token, { ...body }),
+      ]) {
+        assert.equal(response.status, 422, path);
+        const error = await json(response);
+        assert.equal(error.code, "ORDER_INVALID");
+        assert.deepEqual(error.details, {
+          errors: [{ code: "ORDER_TOTAL_EXCEEDED", path }],
+          maxTotalCents: 10_000_000,
+        });
+      }
+    }
+    assert.equal(await ordersOf(id), 1);
+  });
+
   it("creates once per key: the same key and body return the same order, another body is a 409", async () => {
     const { token, addressId } = await customer(stores.a.slug);
     const c = stores.a.catalog;
@@ -300,19 +458,21 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     const { token } = await customer(stores.b.slug);
     const c = stores.b.catalog;
     const key = randomUUID();
-    const first = await place(stores.b.slug, token, pickup(c), key);
+    // A retry resends the very body of the first attempt, confirmed total included.
+    const body = { ...pickup(c), expectedTotalCents: 4000 };
+    const first = await place(stores.b.slug, token, body, key);
     assert.equal(first.status, 201);
     const order = await json(first);
     await setPause(stores.b.id, true);
     try {
-      const retry = await place(stores.b.slug, token, pickup(c), key);
+      const retry = await place(stores.b.slug, token, body, key);
       assert.equal(retry.status, 200);
       assert.equal((await json(retry)).id, order.id);
-      const closed = await place(stores.b.slug, token, pickup(c));
+      const closed = await place(stores.b.slug, token, body);
       assert.equal(closed.status, 409);
-      const body = await json(closed);
-      assert.equal(body.code, "STORE_CLOSED");
-      assert.equal(body.details.reason, "PAUSED");
+      const error = await json(closed);
+      assert.equal(error.code, "STORE_CLOSED");
+      assert.equal(error.details.reason, "PAUSED");
       assert.equal((await quote(stores.b.slug, token, pickup(c))).status, 409);
     } finally {
       await setPause(stores.b.id, false);
@@ -369,7 +529,7 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     const other = await customer(stores.a.slug);
     const c = stores.a.catalog;
     const before = await ordersOf(stores.a.id);
-    const refused = async (body: unknown) => {
+    const refused = async (body: Record<string, unknown>) => {
       const response = await place(stores.a.slug, token, body);
       assert.equal(response.status, 422);
       const error = await json(response);
@@ -440,7 +600,13 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
       (await json(malformed)).details.errors.map(
         (e: { path: string }) => e.path,
       ),
-      ["Idempotency-Key", "addressId", "changeForCents", "items"],
+      [
+        "Idempotency-Key",
+        "addressId",
+        "changeForCents",
+        "expectedTotalCents",
+        "items",
+      ],
     );
     assert.equal(
       (await place(stores.a.slug, token, { ...pickup(c), addressId })).status,
@@ -578,7 +744,11 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
           [id],
         ),
       );
-      const pending = place(tenant, token, pickup(catalog));
+      // A confirmed total goes straight to the creation, which waits on the tenant row.
+      const pending = place(tenant, token, {
+        ...pickup(catalog),
+        expectedTotalCents: 4000,
+      });
       await held.lockWaiters(1);
       suspension.commit();
       await suspension.done;

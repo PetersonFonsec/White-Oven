@@ -110,11 +110,9 @@ export class OrderService {
           return { created: false, order: await readOrder(em, prior.orderId) };
         }
 
+        // The controller requires expectedTotalCents here; a null still never matches a total.
         const { quote, address } = await priced(em, request);
-        if (
-          request.expectedTotalCents !== null &&
-          request.expectedTotalCents !== quote.totalCents
-        )
+        if (request.expectedTotalCents !== quote.totalCents)
           throw new ApiError(
             HttpStatus.CONFLICT,
             "ORDER_PRICE_CHANGED",
@@ -251,6 +249,9 @@ async function priced(
         errors: result.issues,
         ...(result.minimumOrderCents !== undefined
           ? { minimumOrderCents: result.minimumOrderCents }
+          : {}),
+        ...(result.maxTotalCents !== undefined
+          ? { maxTotalCents: result.maxTotalCents }
           : {}),
       },
     );

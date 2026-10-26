@@ -22,8 +22,19 @@ export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 export const ORDER_LINES_MAX = 30;
 export const ORDER_LINE_QUANTITY_MAX = 20;
 export const ORDER_NOTES_MAX_LENGTH = 280;
-/** Upper bound of any amount in cents accepted from the app (R$ 100.000,00). */
-const CENTS_MAX = 10_000_000;
+/**
+ * Upper bound of every amount of an order, in cents (R$ 100.000,00): each line's unit price and
+ * total, the items subtotal, the delivery fee and the total, and the amounts the app sends
+ * (`changeForCents`, `expectedTotalCents`). Far below PostgreSQL's `integer` (2.147.483.647) and
+ * JavaScript's safe integers, so no stored amount can overflow or lose precision.
+ */
+export const ORDER_CENTS_MAX = 10_000_000;
+
+/** A whole, non-negative amount of cents within `ORDER_CENTS_MAX`. */
+export const orderCents = (value: unknown): value is number =>
+  Number.isSafeInteger(value) &&
+  (value as number) >= 0 &&
+  (value as number) <= ORDER_CENTS_MAX;
 
 export type OrderLine =
   | { kind: "PIZZA"; pizza: PizzaConfiguration }
@@ -39,8 +50,9 @@ export interface OrderRequest {
   notes: string | null;
   items: OrderLine[];
   /**
-   * The total the app showed. Never used to price: a different server total refuses the
-   * creation (`ORDER_PRICE_CHANGED`) so the customer confirms the new price first.
+   * The total the app showed and the customer confirmed. Never used to price. Optional in a quote
+   * (it only sets `priceChanged`); required to create, where a different server total refuses the
+   * order (`ORDER_PRICE_CHANGED`) so the customer confirms the new price first.
    */
   expectedTotalCents: number | null;
 }
@@ -55,11 +67,6 @@ const plain = (value: unknown): value is Record<string, unknown> =>
   value !== null &&
   !Array.isArray(value) &&
   Object.getPrototypeOf(value) === Object.prototype;
-
-const cents = (value: unknown): value is number =>
-  Number.isSafeInteger(value) &&
-  (value as number) >= 0 &&
-  (value as number) <= CENTS_MAX;
 
 const unknownKeys = (
   value: Record<string, unknown>,
@@ -81,7 +88,14 @@ const REQUEST_KEYS = [
   "expectedTotalCents",
 ] as const;
 
-export function validateOrderRequest(raw: unknown): RuleResult<OrderRequest> {
+/**
+ * `requireExpectedTotal` is the creation's rule: the customer must have confirmed a total, so a
+ * missing or null `expectedTotalCents` is invalid there.
+ */
+export function validateOrderRequest(
+  raw: unknown,
+  { requireExpectedTotal = false }: { requireExpectedTotal?: boolean } = {},
+): RuleResult<OrderRequest> {
   if (!plain(raw)) return { ok: false, paths: [""] };
   const paths = unknownKeys(raw, REQUEST_KEYS);
 
@@ -102,7 +116,9 @@ export function validateOrderRequest(raw: unknown): RuleResult<OrderRequest> {
   const changeForCents = raw["changeForCents"] ?? null;
   if (
     changeForCents !== null &&
-    (paymentMethod !== "CASH" || !cents(changeForCents) || changeForCents === 0)
+    (paymentMethod !== "CASH" ||
+      !orderCents(changeForCents) ||
+      changeForCents === 0)
   )
     paths.push("changeForCents");
 
@@ -118,7 +134,11 @@ export function validateOrderRequest(raw: unknown): RuleResult<OrderRequest> {
   }
 
   const expectedTotalCents = raw["expectedTotalCents"] ?? null;
-  if (expectedTotalCents !== null && !cents(expectedTotalCents))
+  if (
+    expectedTotalCents === null
+      ? requireExpectedTotal
+      : !orderCents(expectedTotalCents)
+  )
     paths.push("expectedTotalCents");
 
   const items: OrderLine[] = [];

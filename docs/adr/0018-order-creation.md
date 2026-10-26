@@ -29,12 +29,16 @@ A Q-04 foi decidida pelo PO em 2026-10-26: **taxa de entrega fixa única por loj
     - Produto: `{ kind: "PRODUCT", productId, quantity }`.
 - **O preço vem só do catálogo.**
   - O corpo não tem campos de preço; um campo desconhecido é `422`.
-  - `expectedTotalCents` é o total que o app mostrou. Na cotação, vira `priceChanged`. Na criação, um total diferente responde `409 ORDER_PRICE_CHANGED` sem gravar, para o cliente confirmar o novo valor.
+  - `expectedTotalCents` é o total que o app mostrou e o cliente confirmou.
+    - Na cotação é opcional e só vira `priceChanged`.
+    - Na criação é **obrigatório** (revisão da PR #29): ausente, nulo ou fora de `0..ORDER_CENTS_MAX` é `422 VALIDATION_FAILED` no caminho `expectedTotalCents`. Um total diferente do servidor responde `409 ORDER_PRICE_CHANGED` sem gravar nem consumir número, para o cliente confirmar o novo valor. Assim nenhum pedido é criado por um preço que o cliente não viu.
+    - A comparação vem depois da chave: a repetição da mesma chave e corpo devolve o pedido original mesmo que o catálogo tenha mudado depois.
 - **Ordem das verificações na criação**, numa transação sob o advisory lock do cliente (ADR 0017):
   1. Chave já usada, viva (24 horas) e com o mesmo corpo (SHA-256 do pedido validado, com chaves em ordem fixa): `200` com o mesmo pedido, mesmo que a loja tenha fechado depois. Corpo diferente: `409 IDEMPOTENCY_CONFLICT`, a semântica do formulário de leads e da plataforma.
   2. Linha do tenant em `FOR SHARE` (`whiteoven_lock_tenant_status`). Se a loja não está `ACTIVE`: `403 TENANT_NOT_ACTIVE`.
   3. Loja aberta (`readStoreStatus`, ADR 0016); fechada ou pausada é `409 STORE_CLOSED`, com o motivo. Sem configurações: `409 STORE_NOT_CONFIGURED`.
   4. `priceOrder` (função pura) checa modo, endereço do próprio cliente, forma de pagamento, itens (pipeline do motor), pedido mínimo sobre o subtotal de itens e troco sobre o total. Qualquer falha é `422 ORDER_INVALID` com `details.errors: [{ code, path }]`.
+     - **Limite de valores** (revisão da PR #29): preço unitário e total de cada linha, subtotal, taxa e total ficam em até `ORDER_CENTS_MAX` = R$ 100.000,00 (10.000.000 centavos), o mesmo teto dos valores que o app envia (troco e total confirmado). Acima disso é `ORDER_TOTAL_EXCEEDED` (no caminho da linha, ou `items` para subtotal e total), com `maxTotalCents`. O teto fica muito abaixo do `integer` do PostgreSQL (2.147.483.647) e dos inteiros seguros do JavaScript: preços do catálogo (até `integer`) vezes quantidade 20 continuam exatos, e nenhuma soma de 30 linhas dentro do teto transborda. Os valores continuam inteiros em centavos; o motor de preço não mudou.
   5. O número vem de `tenant_order_counters`, um contador por loja atualizado com `insert ... on conflict do update`. A linha fica travada até o commit, então os números são sequenciais e sem buracos.
   6. Pedido, itens e chave são gravados. Uma chave expirada é reaproveitada para o novo pedido.
 - **Concorrência:**

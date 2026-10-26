@@ -6,7 +6,13 @@ import type {
 } from "@whiteoven/contracts";
 import { evaluatePizza, indexCatalog } from "@whiteoven/pizza-pricing";
 import type { CustomerAddress } from "../customer/customer-rules";
-import type { Fulfillment, OrderRequest, PaymentMethod } from "./order-rules";
+import {
+  type Fulfillment,
+  ORDER_CENTS_MAX,
+  type OrderRequest,
+  type PaymentMethod,
+  orderCents,
+} from "./order-rules";
 
 /** What the store's settings decide about an order (StoreSettings, ADR 0013). */
 export interface OrderSettings {
@@ -75,7 +81,12 @@ export interface OrderIssue {
 
 export type PricingResult =
   | { ok: true; quote: OrderQuote }
-  | { ok: false; issues: OrderIssue[]; minimumOrderCents?: number };
+  | {
+      ok: false;
+      issues: OrderIssue[];
+      minimumOrderCents?: number;
+      maxTotalCents?: number;
+    };
 
 /**
  * Validations 3 to 7 of order-lifecycle.md#checkout, against the catalog and settings read in the
@@ -204,20 +215,38 @@ export function priceOrder(
   });
   if (issues.length) return { ok: false, issues };
 
+  // Every amount stays within ORDER_CENTS_MAX before it is summed or stored. Catalog prices are
+  // PostgreSQL integers and quantities at most 20, so each product is still a safe integer here.
+  const exceeded = (path: string): PricingResult => ({
+    ok: false,
+    issues: [{ code: "ORDER_TOTAL_EXCEEDED", path }],
+    maxTotalCents: ORDER_CENTS_MAX,
+  });
+  const line = items.findIndex(
+    (item) => !orderCents(item.unitPriceCents) || !orderCents(item.totalCents),
+  );
+  if (line >= 0) return exceeded(`items[${line}]`);
   const itemsSubtotalCents = items.reduce(
     (sum, item) => sum + item.totalCents,
     0,
   );
+  const deliveryFeeCents =
+    request.fulfillment === "DELIVERY" ? settings.deliveryFeeCents : 0;
+  const discountCents = 0;
+  const totalCents = itemsSubtotalCents + deliveryFeeCents - discountCents;
+  if (
+    !orderCents(itemsSubtotalCents) ||
+    !orderCents(deliveryFeeCents) ||
+    !orderCents(totalCents)
+  )
+    return exceeded("items");
+
   if (itemsSubtotalCents < settings.minimumOrderCents)
     return {
       ok: false,
       issues: [{ code: "MINIMUM_ORDER_NOT_REACHED", path: "items" }],
       minimumOrderCents: settings.minimumOrderCents,
     };
-  const deliveryFeeCents =
-    request.fulfillment === "DELIVERY" ? settings.deliveryFeeCents : 0;
-  const discountCents = 0;
-  const totalCents = itemsSubtotalCents + deliveryFeeCents - discountCents;
   if (request.changeForCents !== null && request.changeForCents < totalCents)
     return {
       ok: false,

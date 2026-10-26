@@ -14,19 +14,21 @@ import {
   ApiProperty,
   ApiPropertyOptional,
   ApiTags,
+  OmitType,
 } from "@nestjs/swagger";
 import type { Response } from "express";
 import { ApiError } from "../errors/api-error";
 import { CustomerRoute } from "../customer/customer.guard";
 import {
   FULFILLMENTS,
+  ORDER_CENTS_MAX,
   ORDER_LINES_MAX,
   PAYMENT_METHODS,
   validateOrderRequest,
 } from "./order-rules";
 import { OrderService } from "./order.service";
 
-class OrderBody {
+class QuoteBody {
   @ApiProperty({ enum: FULFILLMENTS }) fulfillment!: string;
   @ApiPropertyOptional({
     format: "uuid",
@@ -49,10 +51,24 @@ class OrderBody {
   items!: unknown[];
   @ApiPropertyOptional({
     nullable: true,
+    minimum: 0,
+    maximum: ORDER_CENTS_MAX,
     description:
-      "The total the app showed. Never used to price; a different total is reported.",
+      "The total the app showed. Optional here: never used to price, a different total only sets priceChanged.",
   })
   expectedTotalCents?: number | null;
+}
+
+class CreateOrderBody extends OmitType(QuoteBody, [
+  "expectedTotalCents",
+] as const) {
+  @ApiProperty({
+    minimum: 0,
+    maximum: ORDER_CENTS_MAX,
+    description:
+      "The total the customer confirmed, in cents. Required: a different server total is 409 ORDER_PRICE_CHANGED and nothing is created.",
+  })
+  expectedTotalCents!: number;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -77,11 +93,11 @@ export class OrderController {
   @Post("quote")
   @CustomerRoute("createOrder")
   @HttpCode(HttpStatus.OK)
-  @ApiBody({ type: OrderBody })
+  @ApiBody({ type: QuoteBody })
   @ApiOperation({
     summary: "Price an order without placing it",
     description:
-      "409 STORE_CLOSED or STORE_NOT_CONFIGURED; 422 ORDER_INVALID with the offending paths.",
+      "409 STORE_CLOSED or STORE_NOT_CONFIGURED; 422 ORDER_INVALID with the offending paths (ORDER_TOTAL_EXCEEDED above maxTotalCents).",
   })
   quote(@Body() raw: unknown, @Res({ passthrough: true }) res: Response) {
     const result = validateOrderRequest(raw);
@@ -92,7 +108,7 @@ export class OrderController {
 
   @Post()
   @CustomerRoute("createOrder")
-  @ApiBody({ type: OrderBody })
+  @ApiBody({ type: CreateOrderBody })
   @ApiHeader({
     name: "Idempotency-Key",
     required: true,
@@ -102,14 +118,14 @@ export class OrderController {
   @ApiOperation({
     summary: "Place an order",
     description:
-      "201 when created; 200 with the same order when the key and body repeat. 409 IDEMPOTENCY_CONFLICT when the key was used for another body, ORDER_PRICE_CHANGED when expectedTotalCents differs.",
+      "201 when created; 200 with the same order when the key and body repeat, even if prices changed since. 422 VALIDATION_FAILED without a valid expectedTotalCents; 409 IDEMPOTENCY_CONFLICT when the key was used for another body, ORDER_PRICE_CHANGED when expectedTotalCents differs from the server total (nothing is created).",
   })
   async create(
     @Body() raw: unknown,
     @Headers("idempotency-key") key: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = validateOrderRequest(raw);
+    const result = validateOrderRequest(raw, { requireExpectedTotal: true });
     const paths = [
       ...(typeof key === "string" && UUID.test(key) ? [] : ["Idempotency-Key"]),
       ...(result.ok ? [] : result.paths),
