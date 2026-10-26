@@ -73,4 +73,16 @@ cp apps/api/.env.migrate.example apps/api/.env.migrate && pnpm api:migrate
 cp apps/api/.env.example apps/api/.env && pnpm api:dev
 ```
 
+### Dados locais para testar o painel
+
+Com PostgreSQL local iniciado e as migrations aplicadas, configure `DATABASE_OWNER_URL` em
+`apps/api/.env.migrate` (a seed valida que o host é `localhost`, `127.0.0.1` ou `::1`) e
+`WHITEOVEN_DEMO_PASSWORD` em `apps/api/.env` com uma senha forte local. Em seguida rode
+`pnpm api:seed-demo`. A seed é repetível e cria a loja ativa `whiteoven-demo`, cardápio básico e
+logins OWNER, MANAGER e STAFF (`owner@whiteoven.local`, `manager@whiteoven.local` e
+`staff@whiteoven.local`), todos com a senha configurada. A API e o painel ficam em
+`http://127.0.0.1:3000` e `http://localhost:4200` (`pnpm admin:dev`). Para entrar na plataforma
+como OPERATOR, use `pnpm api:create-operator` e complete o cadastro MFA pelo fluxo normal; esse
+comando não é substituído pela seed. Tudo usa dados fictícios e a seed recusa `NODE_ENV=production`.
+
 A API conecta apenas como `whiteoven_app` (sem `BYPASSRLS` e sem DDL); as migrations rodam em processo separado como `whiteoven_owner`. Configuração inválida (por exemplo `API_PORT=abc`), credencial de dono no ambiente da API, papel de banco inseguro ou banco inacessível encerram o processo com código 1 antes de abrir a porta. Testes de integração da API usam PostgreSQL real: com `pnpm db:up`, rode `TEST_DATABASE_OWNER_URL=postgres://whiteoven_owner:whiteoven-dev-owner-password@127.0.0.1:5432/whiteoven pnpm test`; sem a variável essas suítes são puladas localmente e falham na CI. Dados de pizzarias ficam isolados por RLS forçado: toda tabela com `tenant_id` segue o padrão do [ADR 0006](docs/adr/0006-tenant-isolation.md) e entra nos testes de isolamento. A equipe autentica em `/v1/admin/auth` ([ADR 0007](docs/adr/0007-staff-authentication.md)); em produção a API exige `AUTH_ACCESS_TOKEN_PRIVATE_KEY` (Ed25519 PKCS#8 DER em base64), `AUTH_MFA_ENCRYPTION_KEY` (32 bytes em base64) e `OWNER_INVITE_SECRET` (32 bytes em base64, exclusivo e persistente; gere com `openssl rand -base64 32`). A chave de convite é independente da assinatura JWT; mantenha o valor estável para que retries idempotentes reproduzam o mesmo link após reinícios. Fora de produção, os segredos ausentes são efêmeros. O primeiro operador é criado com `printf '%s\n' "$SENHA" | pnpm api:create-operator email@exemplo nome` e, no primeiro login, só consegue cadastrar o segundo fator. Imagens do catálogo usam o diretório configurado por `IMAGE_STORAGE_DIRECTORY` (padrão `.data/images`; produção exige caminho absoluto); em Compose de desenvolvimento, ficam no volume `image-data`. Esse volume não é coberto pelo backup operacional da landing: antes de captar imagens reais, defina cópia externa cifrada, retenção/acesso, e ensaie restauração junto dos metadados PostgreSQL. `compose.dev.yaml` e suas senhas são só para desenvolvimento; o `compose.yaml` de produção continua servindo apenas a landing.
