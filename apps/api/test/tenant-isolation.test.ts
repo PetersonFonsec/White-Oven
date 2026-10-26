@@ -730,6 +730,8 @@ describe("tenant isolation", databaseSuite, () => {
         "GET /public/stores/:storeSlug/isolation-probe",
         "GET /public/stores/:storeSlug/menu",
         "GET /public/stores/:storeSlug/status",
+        // The store in the URL only, no id; covered in brand.test.ts.
+        "GET /public/stores/:storeSlug",
         "GET /admin/me",
         "GET /admin/catalog/items",
         "GET /admin/orders",

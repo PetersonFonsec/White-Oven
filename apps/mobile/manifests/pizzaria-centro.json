@@ -1,0 +1,10 @@
+{
+  "slug": "pizzaria-centro",
+  "name": "Pizzaria Centro",
+  "version": "1.0.0",
+  "ios": { "bundleIdentifier": "br.com.whiteoven.pizzariacentro" },
+  "android": { "package": "br.com.whiteoven.pizzariacentro" },
+  "icon": "./assets/tenants/pizzaria-centro/icon.png",
+  "iconBackgroundColor": "#FFF8F0",
+  "fallbackColors": {}
+}

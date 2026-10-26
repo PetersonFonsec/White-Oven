@@ -42,6 +42,6 @@ O [modelo de domínio](../architecture/domain-model.md#brandtheme) define `Brand
 
 ## Consequências
 
-- O endpoint público de marca (`/v1/public/stores/{slug}`), fontes (`fontFamily`) e splash ficam para M5.1 e M5.6, quando o app existir. `version` já está pronto para invalidar o cache do app.
+- O endpoint público de marca (`/v1/public/stores/{slug}`), fontes (`fontFamily`) e splash ficam para M5.1 e M5.6, quando o app existir. `version` já está pronto para invalidar o cache do app. O endpoint chegou em M5.1 ([ADR 0020](0020-mobile-app-base.md)), sem imagens, que entram com o cardápio em M5.2.
 - Um tenant só passa a `ACTIVE` com tema válido (domain-model). Todo tema gravado já é válido. A verificação na ativação entra quando a ativação passar a exigir os pré-requisitos.
 - A imagem escolhida para logotipo e ícone fica no mesmo storage das imagens do cardápio, com as mesmas variantes WebP.

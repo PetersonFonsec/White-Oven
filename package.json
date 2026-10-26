@@ -26,6 +26,7 @@
     "api:create-operator": "pnpm --filter @whiteoven/api create-operator",
     "admin:dev": "pnpm --filter @whiteoven/admin dev",
     "admin:build": "pnpm --filter @whiteoven/admin build",
+    "mobile:start": "pnpm --filter @whiteoven/mobile start",
     "db:up": "docker compose -f compose.dev.yaml up -d --wait postgres",
     "test:e2e:admin": "playwright test -c apps/admin/e2e/playwright.config.ts"
   },

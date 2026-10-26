@@ -36,6 +36,8 @@ describe("M3.5 brand theme", databaseSuite, () => {
   let storageDirectory: string;
   let tenantA: string;
   let tenantB: string;
+  let slugA: string;
+  let slugB: string;
   const tokens: Record<string, string> = {};
   const images: Record<string, string> = {};
 
@@ -75,8 +77,10 @@ describe("M3.5 brand theme", databaseSuite, () => {
   before(async () => {
     database = await createTestDatabase();
     owner = await database.connect(database.ownerUrl);
-    tenantA = await insertTenant(owner, `brand-a-${randomUUID().slice(0, 8)}`);
-    tenantB = await insertTenant(owner, `brand-b-${randomUUID().slice(0, 8)}`);
+    slugA = `brand-a-${randomUUID().slice(0, 8)}`;
+    slugB = `brand-b-${randomUUID().slice(0, 8)}`;
+    tenantA = await insertTenant(owner, slugA);
+    tenantB = await insertTenant(owner, slugB);
     storageDirectory = await mkdtemp(join(tmpdir(), "whiteoven-brand-"));
     server = await startTestServer({
       DATABASE_URL: database.appUrl,
@@ -254,6 +258,44 @@ describe("M3.5 brand theme", databaseSuite, () => {
     });
     assert.equal(response.status, 403);
     assert.equal((await json(response)).code, "STORE_WRITE_FORBIDDEN");
+  });
+
+  it("serves the app the store's name and resolved colors, without asset ids", async () => {
+    const profile = (slug: string) =>
+      fetch(`${server.baseUrl}/v1/public/stores/${slug}`);
+    const before = await profile(slugB);
+    assert.equal(before.status, 200);
+    assert.equal(before.headers.get("cache-control"), "no-cache");
+    assert.deepEqual(await json(before), {
+      slug: slugB,
+      name: `Pizzaria ${slugB}`,
+      brand: { version: 0, colors: DEFAULT_BRAND_COLORS },
+    });
+
+    assert.equal(
+      (
+        await call("ownerB", "PUT", {
+          colorOverrides: RED,
+          logoAssetId: null,
+          iconAssetId: images["otherStore"],
+        })
+      ).status,
+      200,
+    );
+    const saved = await json(await profile(slugB));
+    assert.equal(saved.brand.version, 1);
+    assert.deepEqual(saved.brand.colors, { ...DEFAULT_BRAND_COLORS, ...RED });
+    assert.ok(!JSON.stringify(saved).includes(images["otherStore"]!));
+    // Each store gets its own brand, whatever the other one saved.
+    assert.equal((await json(await profile(slugA))).slug, slugA);
+
+    const suspended = `brand-s-${randomUUID().slice(0, 8)}`;
+    await insertTenant(owner, suspended, "SUSPENDED");
+    const refused = await profile(suspended);
+    assert.equal(refused.status, 403);
+    assert.equal((await json(refused)).code, "TENANT_NOT_ACTIVE");
+    for (const slug of ["nao-existe-loja", "UPPER"])
+      assert.equal((await profile(slug)).status, 404);
   });
 
   it("refuses in the database a manager session, a locked token and another store's image", async () => {
