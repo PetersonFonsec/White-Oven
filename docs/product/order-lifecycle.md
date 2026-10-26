@@ -1,6 +1,6 @@
 # Ciclo de vida do pedido
 
-Status: especificação de produto M0.3; checkout e criação estão implementados em M4.3, e máquina de estados/transições estão implementadas em M4.4. Define carrinho, checkout, estados, transições, cancelamento, histórico, ocorrências e regras de funcionamento da loja. Entidades em [domain-model](../architecture/domain-model.md); preços em [pizza-builder-rules](pizza-builder-rules.md).
+Status: especificação de produto M0.3; checkout e criação estão implementados em M4.3, máquina de estados/transições em M4.4 e quadro da equipe em desenvolvimento no M4.5. Define carrinho, checkout, estados, transições, cancelamento, histórico, ocorrências e regras de funcionamento da loja. Entidades em [domain-model](../architecture/domain-model.md); preços em [pizza-builder-rules](pizza-builder-rules.md).
 
 ## Carrinho
 
@@ -161,6 +161,13 @@ Cenários obrigatórios (pedido em `PLACED`):
 | `OTHER`                | Exige texto livre de até 280 caracteres.       |
 
 O cliente vê um texto amigável derivado do código, nunca o texto interno de `OTHER`.
+
+## Quadro de pedidos da equipe (M4.5)
+
+- `GET /v1/admin/orders?section=active|closed&cursor={number}` retorna até 100 pedidos por página em `{ orders, nextCursor }`. A fila ativa ordena pelo número crescente (mais antigos primeiro); o histórico encerrado ordena pelo número decrescente. Cada seção tem cursor independente e oferece carregamento incremental. Itens e histórico são carregados em lote. `GET /v1/admin/orders/{orderId}` lê o detalhe. Todos usam o tenant do token verificado, `TenantTransactions`, RLS e `Cache-Control: no-store`.
+- O painel atualiza o quadro a cada 10 segundos. Pedidos novos permanecem destacados até a equipe abrir o detalhe. O som precisa ser ativado explicitamente pelo navegador; isso também fornece a interação necessária para liberar áudio.
+- As ações de aceitar, avançar, concluir, recusar e cancelar enviam o estado de origem atual e uma chave de idempotência por intenção. Uma resposta incerta preserva a chave e permite repetição manual do mesmo comando; resultados confirmados ou erros HTTP definitivos encerram a intenção. Se outra aba alterar o pedido primeiro, a API retorna `409 ORDER_STATE_CONFLICT` e o painel atualiza o estado atual.
+- O detalhe mostra endereço quando aplicável, itens do snapshot imutável, total, forma de pagamento e histórico. A impressão usa uma área de comanda dedicada, com os dados operacionais do snapshot e sem elementos de navegação.
 
 ## Cancelamento
 

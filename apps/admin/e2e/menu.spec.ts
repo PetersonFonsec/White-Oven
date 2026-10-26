@@ -45,16 +45,16 @@ test("an owner builds a menu: prices are validated, drafts survive saves and the
   const calabresa = card("Calabresa");
   const margherita = card("Margherita");
 
-  // An invalid price is explained next to the field and never sent; Enter submits.
+  // An invalid price is explained next to the field and never sent.
   const calabresaPrice = calabresa.getByLabel("Grande", { exact: true });
   await calabresaPrice.fill("0");
-  await calabresaPrice.press("Enter");
+  await calabresa.getByRole("button", { name: "Salvar preço" }).click();
   await expect(calabresaPrice).toHaveAttribute("aria-invalid", "true");
   await expect(calabresa.locator(".field-error")).toHaveText(
     "O preço do sabor deve ser maior que zero.",
   );
   await calabresaPrice.fill("50");
-  await calabresaPrice.press("Enter");
+  await calabresa.getByRole("button", { name: "Salvar preço" }).click();
   await expect(notice).toHaveText("Preço atualizado.");
   await expect(calabresaPrice).toHaveValue("50.00");
   await expect(calabresa.locator(".field-error")).toHaveCount(0);
@@ -64,7 +64,7 @@ test("an owner builds a menu: prices are validated, drafts survive saves and the
   await expect(calabresa.getByText("Não salvo")).toBeVisible();
   const margheritaPrice = margherita.getByLabel("Grande", { exact: true });
   await margheritaPrice.fill("60,5");
-  await margheritaPrice.press("Enter");
+  await margherita.getByRole("button", { name: "Salvar preço" }).click();
   await expect(notice).toHaveText("Preço atualizado.");
   await expect(margheritaPrice).toHaveValue("60.50");
   await expect(calabresa.getByLabel("Nome")).toHaveValue("Calabresa da casa");

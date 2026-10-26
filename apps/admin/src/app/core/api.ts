@@ -73,6 +73,11 @@ const MESSAGES: Record<string, string> = {
     "A situação da pizzaria mudou. Atualize a lista e tente de novo.",
   IDEMPOTENCY_CONFLICT:
     "Os dados do cadastro mudaram durante a tentativa. Envie novamente.",
+  ORDER_STATE_CONFLICT:
+    "Outra pessoa atualizou este pedido. O quadro foi recarregado; confira o estado atual.",
+  IDEMPOTENCY_KEY_REUSED:
+    "Este comando já foi usado com outra ação. Atualize o pedido e tente novamente.",
+  TENANT_NOT_ACTIVE: "A loja está suspensa e não permite essa transição.",
   RESOURCE_CONFLICT: "Já existe um cadastro com esses dados.",
   TENANT_NOT_FOUND: "Essa pizzaria não está mais disponível.",
   ADMIN_ORIGIN_NOT_CONFIGURED:

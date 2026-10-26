@@ -316,6 +316,26 @@ describe("tenant isolation", databaseSuite, () => {
     });
   };
 
+  const adminOrderReadCall = async (
+    store: Fixture,
+    victim: Fixture,
+  ): Promise<Response> => {
+    const login = await staffLogin(
+      server.baseUrl,
+      `fixture-${store.slug}@isolamento.test`,
+      STAFF_PASSWORD,
+    );
+    const switched = await switchTenant(
+      server.baseUrl,
+      login.accessToken,
+      store.id,
+    );
+    const { accessToken } = await json(switched);
+    return call(`/admin/orders/${victim.orderId}`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+  };
+
   /** A new customer of `store`, signed up through the API, calling `path` with its token. */
   const customerCall = async (
     store: Fixture,
@@ -565,6 +585,8 @@ describe("tenant isolation", databaseSuite, () => {
         ),
       "POST /admin/orders/:orderId/transitions": (attacker, victim) =>
         adminOrderCall(attacker, victim),
+      "GET /admin/orders/:orderId": (attacker, victim) =>
+        adminOrderReadCall(attacker, victim),
       "POST /customer/stores/:storeSlug/me/orders/:orderId/transitions": (
         attacker,
         victim,
@@ -641,6 +663,7 @@ describe("tenant isolation", databaseSuite, () => {
         "GET /public/stores/:storeSlug/status",
         "GET /admin/me",
         "GET /admin/catalog/items",
+        "GET /admin/orders",
         "GET /admin/catalog/audit-events",
         "POST /admin/catalog/categories",
         "POST /admin/catalog/sizes",

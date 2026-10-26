@@ -68,6 +68,9 @@ export const COOKIE_REQUEST_TIMEOUT_MS = 30_000;
 export interface Credentials {
   token: string;
   tenantId: string | null;
+  /** API-verified identity scope for short-lived browser state. */
+  userId: string | null;
+  sessionId: string | null;
   lineage: number;
 }
 
@@ -142,6 +145,8 @@ export class Session {
       state && {
         token: state.token,
         tenantId: state.tenantId,
+        userId: state.userId,
+        sessionId: state.sessionId,
         lineage: state.lineage,
       }
     );
@@ -331,6 +336,8 @@ export class Session {
       credentials: {
         token: next.token,
         tenantId: next.tenantId,
+        userId: next.userId,
+        sessionId: next.sessionId,
         lineage: next.lineage,
       },
     };
@@ -355,16 +362,18 @@ export class Session {
       authorization: `Bearer ${body.accessToken}`,
     });
     const platform = await this.loadPlatform(headers);
-    const store =
+    const loadedStore =
       body.activeTenantId && platform !== "mfa-setup"
         ? await this.loadStore(body.activeTenantId, headers)
         : null;
     return {
       token: body.accessToken,
       tenantId: body.activeTenantId,
+      userId: loadedStore?.staffUserId ?? null,
+      sessionId: loadedStore?.sessionId ?? null,
       lineage: 0,
       platform,
-      store,
+      store: loadedStore?.store ?? null,
     };
   }
 
@@ -386,27 +395,48 @@ export class Session {
   private async loadStore(
     tenantId: string,
     headers: HttpHeaders,
-  ): Promise<TenantChoice | null> {
-    let me: { tenantId: string; role: Role };
+  ): Promise<{
+    store: TenantChoice | null;
+    staffUserId: string;
+    sessionId: string;
+  } | null> {
+    let me: {
+      staffUserId: string;
+      sessionId: string;
+      tenantId: string;
+      role: Role;
+    };
     let tenants: TenantChoice[];
     try {
       [me, tenants] = await Promise.all([
         firstValueFrom(
-          this.http.get<{ tenantId: string; role: Role }>(AUTH.adminMe, {
-            headers,
-          }),
+          this.http.get<{
+            staffUserId: string;
+            sessionId: string;
+            tenantId: string;
+            role: Role;
+          }>(AUTH.adminMe, { headers }),
         ),
         firstValueFrom(
           this.http.get<TenantChoice[]>(AUTH.tenants, { headers }),
-        ),
+        ).catch((error: unknown) => {
+          if (apiStatus(error) === 403) return [];
+          throw error;
+        }),
       ]);
     } catch (error) {
       if (apiStatus(error) === 403) return null;
       throw error;
     }
     const choice = tenants.find((tenant) => tenant.tenantId === tenantId);
-    if (me.tenantId !== tenantId || !choice) return null;
-    return { ...choice, role: me.role };
+    return {
+      store:
+        me.tenantId === tenantId && choice
+          ? { ...choice, role: me.role }
+          : null,
+      staffUserId: me.staffUserId,
+      sessionId: me.sessionId,
+    };
   }
 }
 

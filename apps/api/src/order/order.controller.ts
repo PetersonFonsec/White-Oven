@@ -7,6 +7,8 @@ import {
   Res,
   HttpCode,
   Param,
+  Get,
+  Query,
 } from "@nestjs/common";
 import {
   ApiBody,
@@ -27,7 +29,7 @@ import {
   PAYMENT_METHODS,
   validateOrderRequest,
 } from "./order-rules";
-import { OrderService } from "./order.service";
+import { OrderService, type StaffOrderSection } from "./order.service";
 import {
   REJECTION_REASONS,
   ORDER_STATUSES,
@@ -217,6 +219,40 @@ export class OrderController {
 @Controller("admin/orders")
 export class AdminOrderController {
   constructor(private readonly orders: OrderService) {}
+
+  @Get()
+  @AdminRoute("OWNER", "MANAGER", "STAFF")
+  @ApiOperation({
+    summary: "List a page of active or closed orders for the active store",
+    description:
+      "Returns up to 100 orders with a nextCursor when more are available. Active orders are oldest first; closed history is newest first. The queues have independent cursors. The active store comes from the verified staff session.",
+  })
+  list(
+    @Query() query: Record<string, string | undefined>,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const section = query["section"];
+    const rawCursor = query["cursor"];
+    if (section !== "active" && section !== "closed")
+      throw invalid(["section"]);
+    const cursor = rawCursor === undefined ? undefined : Number(rawCursor);
+    if (cursor !== undefined && (!Number.isSafeInteger(cursor) || cursor < 1))
+      throw invalid(["cursor"]);
+    res.setHeader("Cache-Control", "no-store");
+    return this.orders.listForStaff(section as StaffOrderSection, cursor);
+  }
+
+  @Get(":orderId")
+  @AdminRoute("OWNER", "MANAGER", "STAFF")
+  @ApiOperation({ summary: "Read an order in the active store" })
+  get(
+    @Param("orderId") orderId: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!UUID.test(orderId)) throw invalid(["orderId"]);
+    res.setHeader("Cache-Control", "no-store");
+    return this.orders.getForStaff(orderId);
+  }
 
   @Post(":orderId/transitions")
   @AdminRoute("OWNER", "MANAGER", "STAFF")

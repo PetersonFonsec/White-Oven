@@ -354,6 +354,7 @@ describe("staff authentication", databaseSuite, () => {
       assert.equal(body.activeTenantId, ids.a);
       assert.deepEqual(await json(await get("/admin/me", body.accessToken)), {
         staffUserId: ids.staff,
+        sessionId: sessionIdOf(staff.cookie),
         tenantId: ids.a,
         role: "STAFF",
       });

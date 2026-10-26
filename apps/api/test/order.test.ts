@@ -724,6 +724,155 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     }
   });
 
+  it("lists and reads recent orders for staff in the active store", async () => {
+    const { token } = await customer(stores.a.slug);
+    const staffToken = await admin(stores.a.id, "STAFF");
+    const placed = await json(
+      await place(stores.a.slug, token, pickup(stores.a.catalog)),
+    );
+    const response = await fetch(
+      `${server.baseUrl}/v1/admin/orders?section=active`,
+      {
+        headers: bearer(staffToken),
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const list = (
+      (await json(response)) as { orders: Record<string, unknown>[] }
+    ).orders;
+    const listed = list.find((entry) => entry["id"] === placed.id);
+    assert.ok(listed);
+    assert.equal(listed["customerName"], "Joana Cliente");
+    assert.equal(listed["status"], "PLACED");
+    assert.ok(Array.isArray(listed["items"]));
+    assert.equal((listed["items"] as unknown[]).length, 1);
+    assert.ok(Array.isArray(listed["history"]));
+
+    const detail = await fetch(
+      `${server.baseUrl}/v1/admin/orders/${placed.id}`,
+      { headers: bearer(staffToken) },
+    );
+    assert.equal(detail.status, 200);
+    assert.equal(detail.headers.get("cache-control"), "no-store");
+    assert.equal((await json(detail)).id, placed.id);
+
+    const otherStoreStaff = await admin(stores.b.id, "STAFF");
+    const otherStoreOrders = await fetch(
+      `${server.baseUrl}/v1/admin/orders?section=active&cursor=1`,
+      {
+        headers: bearer(otherStoreStaff),
+      },
+    );
+    assert.equal(otherStoreOrders.status, 200);
+    assert.equal(
+      (
+        (await json(otherStoreOrders)) as { orders: Record<string, unknown>[] }
+      ).orders.some((entry) => entry["id"] === placed.id),
+      false,
+    );
+
+    const baseNumber = (
+      await runInTenant(owner, stores.a.id, (em) =>
+        em.execute<{ number: number }[]>(
+          "select number from orders where id = ?",
+          [placed.id],
+        ),
+      )
+    )[0]!.number;
+    await runInTenant(owner, stores.a.id, async (em) => {
+      await em.execute(
+        `with seed as (select * from orders where id = ?)
+         insert into orders (tenant_id, number, customer_id, customer_name, customer_phone,
+           fulfillment, delivery_address, payment_method, change_for_cents, notes,
+           items_subtotal_cents, delivery_fee_cents, discount_cents, total_cents, status,
+           placed_at, updated_at)
+         select seed.tenant_id, ? + n, seed.customer_id, seed.customer_name, seed.customer_phone,
+           seed.fulfillment, seed.delivery_address, seed.payment_method, seed.change_for_cents,
+           seed.notes, seed.items_subtotal_cents, seed.delivery_fee_cents, seed.discount_cents,
+           seed.total_cents, 'PLACED', seed.placed_at + n * interval '1 second', now()
+           from seed cross join generate_series(1, 205) n`,
+        [placed.id, baseNumber],
+      );
+      await em.execute(
+        `insert into order_items (tenant_id, order_id, position, kind, quantity,
+           unit_price_cents, total_cents, snapshot)
+         select copy.tenant_id, copy.id, item.position, item.kind, item.quantity,
+           item.unit_price_cents, item.total_cents, item.snapshot
+           from orders source join order_items item on item.order_id = source.id
+           join orders copy on copy.tenant_id = source.tenant_id
+             and copy.number between ? + 1 and ? + 205
+          where source.id = ?`,
+        [baseNumber, baseNumber, placed.id],
+      );
+      await em.execute(
+        "update orders set status = 'COMPLETED' where number between ? and ? and tenant_id = ?",
+        [baseNumber + 201, baseNumber + 205, stores.a.id],
+      );
+      await em.execute(
+        "update tenant_order_counters set last_number = ? where tenant_id = ?",
+        [baseNumber + 205, stores.a.id],
+      );
+    });
+
+    const visited = new Set<string>();
+    const numbers: number[] = [];
+    let cursor: number | undefined;
+    let pages = 0;
+    do {
+      const params = new URLSearchParams({ section: "active" });
+      if (cursor !== undefined) params.set("cursor", String(cursor));
+      const pageResponse = await fetch(
+        `${server.baseUrl}/v1/admin/orders?${params}`,
+        {
+          headers: bearer(staffToken),
+        },
+      );
+      assert.equal(pageResponse.status, 200);
+      assert.equal(pageResponse.headers.get("cache-control"), "no-store");
+      const page = (await json(pageResponse)) as {
+        orders: Record<string, unknown>[];
+        nextCursor: number | null;
+      };
+      assert.ok(page.orders.length <= 100);
+      for (const entry of page.orders) {
+        assert.equal(
+          visited.has(String(entry["id"])),
+          false,
+          "no order appears on two pages",
+        );
+        visited.add(String(entry["id"]));
+        numbers.push(Number(entry["number"]));
+      }
+      pages++;
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    assert.ok(pages >= 3);
+    assert.ok(
+      numbers.every(
+        (number, index) => index === 0 || numbers[index - 1]! < number,
+      ),
+      "active cursor pages prioritize oldest orders in stable ascending number order",
+    );
+    const closed = await fetch(
+      `${server.baseUrl}/v1/admin/orders?section=closed`,
+      {
+        headers: bearer(staffToken),
+      },
+    );
+    const closedPage = (await json(closed)) as {
+      orders: Record<string, unknown>[];
+    };
+    assert.ok(
+      closedPage.orders.length >= 5,
+      "closed history has its own page independent of active orders",
+    );
+    assert.ok(
+      visited.has(placed.id),
+      "the original active order remains reachable after older pages are loaded",
+    );
+  });
+
   it("anonymizes the customer's orders when the account is deleted, keeping items and totals", async () => {
     const { token, addressId } = await customer(stores.a.slug);
     const c = stores.a.catalog;
