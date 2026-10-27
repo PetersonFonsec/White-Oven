@@ -9,6 +9,7 @@ import { flavors } from "../lib/pizza";
   id="demonstracao"
   aria-labelledby="builder-title"
 >
+  <p class="builder-bigword" aria-hidden="true">meio a meio</p>
   <div class="wrap">
     <SectionHeading
       eyebrow="Menos imaginação. Mais sabor."
@@ -19,14 +20,31 @@ import { flavors } from "../lib/pizza";
     />
     <div class="builder-card" data-builder>
       <div class="builder-visual">
-        <span class="tag">Demonstração interativa</span><PizzaArtwork
-          id="builder-pizza"
-          interactive
-        /><div class="half-labels">
-          <span data-left-label>½ Calabresa</span><span data-right-label
-            >½ Margherita</span
+        <div class="builder-visual-top">
+          <span class="tag">Demonstração interativa</span><span
+            class="builder-size">35 cm · 8 fatias</span
           >
-        </div><p class="small muted">
+        </div>
+        <div class="builder-plate">
+          <span class="builder-orbit" aria-hidden="true"></span>
+          <span class="builder-board" aria-hidden="true"></span>
+          <PizzaArtwork id="builder-pizza" interactive />
+          <div class="half-callout half-callout--left" aria-hidden="true">
+            <span data-left-side>Metade esquerda</span><strong data-left-label
+              >Calabresa</strong
+            ><small data-left-callout>Calabresa, cebola e muçarela</small>
+          </div>
+          <div
+            class="half-callout half-callout--right"
+            aria-hidden="true"
+            data-right-callout-box
+          >
+            <span>Metade direita</span><strong data-right-label
+              >Margherita</strong
+            ><small data-right-callout>Tomate, manjericão e muçarela</small>
+          </div>
+        </div>
+        <p class="small muted">
           Prévia visual · tamanho demonstrativo de 35 cm
         </p>
       </div>
@@ -43,60 +61,84 @@ import { flavors } from "../lib/pizza";
           <legend class="sr-only">Configure sua pizza demonstrativa</legend>
           <fieldset class="mode-options">
             <legend>1. Escolha o formato</legend><label
-              ><input
-                type="radio"
-                name="pizza-mode"
-                value="whole"
-              />Inteira</label
+              ><input type="radio" name="pizza-mode" value="whole" /><span
+                class="mode-icon mode-icon--whole"
+                aria-hidden="true"></span>Inteira</label
             ><label
               ><input
                 type="radio"
                 name="pizza-mode"
                 value="halves"
                 checked
-              />Meio a meio</label
+              /><span class="mode-icon mode-icon--halves" aria-hidden="true"
+              ></span>Meio a meio</label
             >
           </fieldset>
           <div class="flavor-selects">
-            <label for="flavor-left"
-              ><span data-left-heading>2. Metade esquerda</span><select
-                id="flavor-left"
-                >{
-                  flavors.map((flavor) => (
-                    <option
-                      value={flavor.id}
-                      selected={flavor.id === "calabresa"}
-                    >
-                      {flavor.name}
-                    </option>
-                  ))
-                }</select
+            <label for="flavor-left" data-flavor-control="left"
+              ><span data-left-heading>2. Metade esquerda</span><span
+                class="select-wrap"
+                ><span class="flavor-swatch" aria-hidden="true"></span><select
+                  id="flavor-left"
+                  >{
+                    flavors.map((flavor) => (
+                      <option
+                        value={flavor.id}
+                        selected={flavor.id === "calabresa"}
+                      >
+                        {flavor.name}
+                      </option>
+                    ))
+                  }</select
+                ></span
               ><small data-left-ingredients>Calabresa, cebola e muçarela</small
               ></label
-            ><label for="flavor-right" data-right-control
-              ><span>3. Metade direita</span><select id="flavor-right"
-                >{
-                  flavors.map((flavor) => (
-                    <option
-                      value={flavor.id}
-                      selected={flavor.id === "margherita"}
-                    >
-                      {flavor.name}
-                    </option>
-                  ))
-                }</select
+            ><label
+              for="flavor-right"
+              data-right-control
+              data-flavor-control="right"
+              ><span>3. Metade direita</span><span class="select-wrap"
+                ><span class="flavor-swatch" aria-hidden="true"></span><select
+                  id="flavor-right"
+                  >{
+                    flavors.map((flavor) => (
+                      <option
+                        value={flavor.id}
+                        selected={flavor.id === "margherita"}
+                      >
+                        {flavor.name}
+                      </option>
+                    ))
+                  }</select
+                ></span
               ><small data-right-ingredients
                 >Tomate, manjericão e muçarela</small
               ></label
             >
           </div>
         </fieldset>
-        <div class="builder-price">
-          <div>
-            <span class="small muted">Preço demonstrativo</span><strong
-              data-price>R$ 52,00</strong
-            >
-          </div><span class="tag">Sem pedido real</span>
+        <div class="builder-receipt">
+          <p class="builder-receipt-title">Resumo da pizza</p>
+          <dl>
+            <div>
+              <dt data-left-line>½ Calabresa</dt><dd data-left-price>
+                R$ 49,00
+              </dd>
+            </div><div data-right-line-row>
+              <dt data-right-line>½ Margherita</dt><dd data-right-price>
+                R$ 52,00
+              </dd>
+            </div><div class="builder-receipt-rule" data-rule-row>
+              <dt>Meio a meio</dt><dd>vale o maior preço</dd>
+            </div>
+          </dl>
+          <div class="builder-price">
+            <div>
+              <span class="small muted">Preço demonstrativo</span><strong
+                data-price>R$ 52,00</strong
+              >
+            </div><span class="tag">Sem pedido real</span>
+          </div>
         </div>
         <p class="small muted">
           Valores fictícios. No meio a meio, vale o maior preço entre os dois
@@ -136,8 +178,54 @@ import { flavors } from "../lib/pizza";
       const element = builder.querySelector(selector);
       if (element) element.textContent = value;
     };
+    // Swatch colours follow the toppings drawn on the artwork.
+    const swatches: Record<FlavorId, string> = {
+      calabresa: "#a93727",
+      margherita: "#416a37",
+      frango: "#b57b3c",
+      queijos: "#efa340",
+    };
+    const price = builder.querySelector<HTMLElement>("[data-price]")!;
+    let rendered = false;
+    const bump = () => {
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      price.animate(
+        [
+          { transform: "scale(1)" },
+          { transform: "scale(1.12)", color: "var(--wo-color-accentText)" },
+          { transform: "scale(1)" },
+        ],
+        { duration: 450, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+      );
+    };
     const render = () => {
       const whole = selection.mode === "whole";
+      const leftFlavor = getFlavor(selection.left);
+      const rightFlavor = getFlavor(selection.right);
+      builder
+        .querySelectorAll<HTMLElement>("[data-flavor-control]")
+        .forEach((control) =>
+          control.style.setProperty(
+            "--flavor",
+            swatches[
+              control.dataset.flavorControl === "left"
+                ? selection.left
+                : selection.right
+            ],
+          ),
+        );
+      text("[data-left-side]", whole ? "Pizza inteira" : "Metade esquerda");
+      text("[data-left-callout]", leftFlavor.ingredients);
+      text("[data-right-callout]", rightFlavor.ingredients);
+      builder.querySelector<HTMLElement>("[data-right-callout-box]")!.hidden =
+        whole;
+      text("[data-left-line]", `${whole ? "Inteira" : "½"} ${leftFlavor.name}`);
+      text("[data-left-price]", formatPrice(leftFlavor.price));
+      text("[data-right-line]", `½ ${rightFlavor.name}`);
+      text("[data-right-price]", formatPrice(rightFlavor.price));
+      builder
+        .querySelectorAll<HTMLElement>("[data-right-line-row], [data-rule-row]")
+        .forEach((row) => (row.hidden = whole));
       builder.dataset.mode = selection.mode;
       right.disabled = whole;
       builder.querySelector<HTMLElement>("[data-right-control]")!.hidden =
@@ -150,19 +238,15 @@ import { flavors } from "../lib/pizza";
       );
       text("[data-left-ingredients]", getFlavor(selection.left).ingredients);
       text("[data-right-ingredients]", getFlavor(selection.right).ingredients);
-      text(
-        "[data-left-label]",
-        `${whole ? "Inteira de" : "½"} ${getFlavor(selection.left).name}`,
-      );
-      const rightLabel =
-        builder.querySelector<HTMLElement>("[data-right-label]")!;
-      rightLabel.hidden = whole;
-      text("[data-right-label]", `½ ${getFlavor(selection.right).name}`);
-      const price = formatPrice(priceInCents(selection));
-      text("[data-price]", price);
+      text("[data-left-label]", leftFlavor.name);
+      text("[data-right-label]", rightFlavor.name);
+      const total = formatPrice(priceInCents(selection));
+      if (rendered && price.textContent !== total) bump();
+      text("[data-price]", total);
+      rendered = true;
       text(
         "[data-builder-status]",
-        `${description}. Preço demonstrativo: ${price}.`,
+        `${description}. Preço demonstrativo: ${total}.`,
       );
       builder.querySelectorAll<SVGGElement>("[data-side]").forEach((side) => {
         const flavor: FlavorId =

@@ -1,4 +1,4 @@
-// Scroll, cursor and entrance motion for the landing. Every effect lives in a
+// Scroll, pointer and entrance motion for the landing. Every effect lives in a
 // gsap.matchMedia context so "reduce motion" (also toggled at runtime) reverts
 // it and leaves the static, fully readable page.
 import gsap from "gsap";
@@ -335,6 +335,33 @@ media.add(MOTION, () => {
     },
   );
 
+  // Builder: the plate turns into place and the half callouts pop out.
+  const builderCard = $("[data-builder]");
+  if (builderCard) {
+    gsap
+      .timeline({
+        scrollTrigger: { trigger: builderCard, start: "top 70%", once: true },
+      })
+      .from($(".builder-plate .pizza-art", builderCard), {
+        rotate: -120,
+        scale: 0.7,
+        opacity: 0,
+        duration: 1.4,
+        ease: "expo.out",
+      })
+      .from(
+        $$(".half-callout", builderCard),
+        {
+          scale: 0.6,
+          opacity: 0,
+          duration: 0.9,
+          stagger: 0.12,
+          ease: "back.out(2)",
+        },
+        "-=0.8",
+      );
+  }
+
   // Dashboard assembles: bars grow and figures count up.
   const admin = $("[data-admin]");
   if (admin) {
@@ -360,9 +387,34 @@ media.add(MOTION, () => {
         "-=0.8",
       )
       .from(
-        $$(".admin-bottom p", admin),
-        { x: -20, opacity: 0, stagger: 0.08 },
+        $$(".admin-side li", admin),
+        { x: -16, opacity: 0, stagger: 0.05, ease: "expo.out" },
         "<",
+      )
+      .from(
+        $$(".admin-orders li", admin),
+        { y: 14, opacity: 0, stagger: 0.1, ease: "expo.out" },
+        "<0.1",
+      )
+      .from(
+        $$(".order-progress > span, .top-bar", admin),
+        { scaleX: 0, duration: 1.2, stagger: 0.06, ease: "expo.out" },
+        "<0.2",
+      )
+      .from(
+        $$(".admin-bottom p, .admin-menu li", admin),
+        { x: -20, opacity: 0, stagger: 0.06 },
+        "<",
+      )
+      .from(
+        ".admin-float--order",
+        { x: 60, opacity: 0, duration: 1, ease: "back.out(1.6)" },
+        "-=0.6",
+      )
+      .from(
+        ".admin-float--time",
+        { y: 40, opacity: 0, duration: 1, ease: "expo.out" },
+        "<0.2",
       );
     $$("[data-count]", admin).forEach((element) => {
       const end = Number(element.dataset.count);
@@ -521,7 +573,17 @@ media.add(`${MOTION} and (min-width: 1024px)`, () => {
   const track = $("[data-features-track]");
   if (!section || !viewport || !track) return;
   section.dataset.pinned = "true";
-  const distance = () => track.scrollWidth - viewport.clientWidth;
+  // The viewport's inline padding frames the first card; the last one needs the
+  // same margin on the right, so it has to travel past the padding too.
+  const distance = () => {
+    const { paddingLeft, paddingRight } = getComputedStyle(viewport);
+    return (
+      track.scrollWidth -
+      viewport.clientWidth +
+      parseFloat(paddingLeft) +
+      parseFloat(paddingRight)
+    );
+  };
   gsap.to(track, {
     x: () => -distance(),
     ease: "none",
@@ -543,21 +605,6 @@ media.add(`${MOTION} and (min-width: 1024px)`, () => {
 
 // Pointer effects only where a precise pointer exists.
 media.add(`${MOTION} and ${FINE_POINTER}`, () => {
-  root.classList.add("has-cursor");
-  const cursor = document.createElement("div");
-  cursor.className = "cursor";
-  cursor.setAttribute("aria-hidden", "true");
-  cursor.innerHTML =
-    '<span class="cursor-dot"></span><span class="cursor-ring"><span class="cursor-label"></span></span>';
-  document.body.append(cursor);
-  const dot = $(".cursor-dot", cursor)!;
-  const ring = $(".cursor-ring", cursor)!;
-  const label = $(".cursor-label", cursor)!;
-  const dotX = gsap.quickTo(dot, "x", { duration: 0.1, ease: "power3" });
-  const dotY = gsap.quickTo(dot, "y", { duration: 0.1, ease: "power3" });
-  const ringX = gsap.quickTo(ring, "x", { duration: 0.45, ease: "power3" });
-  const ringY = gsap.quickTo(ring, "y", { duration: 0.45, ease: "power3" });
-
   const hero = $("[data-hero]");
   const pizza = $("[data-hero-pizza]");
   const ingredients = $$("[data-hero-stage] .ingredient");
@@ -571,48 +618,24 @@ media.add(`${MOTION} and ${FINE_POINTER}`, () => {
     y: gsap.quickTo(item, "yPercent", { duration: 1.2, ease: "power3" }),
   }));
 
+  // The hero pizza tilts and its ingredients drift with the pointer.
   const onMove = (event: PointerEvent) => {
     const { clientX: x, clientY: y } = event;
-    dotX(x);
-    dotY(y);
-    ringX(x);
-    ringY(y);
-    cursor.dataset.visible = "true";
-    if (hero && pizza && tiltX && tiltY) {
-      const rect = hero.getBoundingClientRect();
-      if (rect.bottom > 0) {
-        const nx = x / window.innerWidth - 0.5;
-        const ny = (y - rect.top) / rect.height - 0.5;
-        hero.style.setProperty("--glow-x", `${x}px`);
-        hero.style.setProperty("--glow-y", `${y - rect.top}px`);
-        tiltX(nx * 22);
-        tiltY(-ny * 22);
-        drift.forEach(({ depth, x: moveX, y: moveY }) => {
-          moveX(-nx * 60 * depth);
-          moveY(-ny * 40 * depth);
-        });
-      }
-    }
+    if (!hero || !pizza || !tiltX || !tiltY) return;
+    const rect = hero.getBoundingClientRect();
+    if (rect.bottom <= 0) return;
+    const nx = x / window.innerWidth - 0.5;
+    const ny = (y - rect.top) / rect.height - 0.5;
+    hero.style.setProperty("--glow-x", `${x}px`);
+    hero.style.setProperty("--glow-y", `${y - rect.top}px`);
+    tiltX(nx * 22);
+    tiltY(-ny * 22);
+    drift.forEach(({ depth, x: moveX, y: moveY }) => {
+      moveX(-nx * 60 * depth);
+      moveY(-ny * 40 * depth);
+    });
   };
-  const onOver = (event: PointerEvent) => {
-    const target = (event.target as Element).closest<HTMLElement>(
-      "a, button, summary, select, label, [data-cursor]",
-    );
-    cursor.dataset.state = target ? "hover" : "";
-    const text = target?.dataset.cursor ?? "";
-    label.textContent = text;
-    cursor.dataset.label = text ? "true" : "false";
-    if ((event.target as Element).closest("input, textarea, select"))
-      cursor.dataset.state = "text";
-  };
-  const onLeave = () => (cursor.dataset.visible = "false");
-  const onDown = () => (cursor.dataset.pressed = "true");
-  const onUp = () => (cursor.dataset.pressed = "false");
   window.addEventListener("pointermove", onMove);
-  document.addEventListener("pointerover", onOver);
-  document.documentElement.addEventListener("pointerleave", onLeave);
-  window.addEventListener("pointerdown", onDown);
-  window.addEventListener("pointerup", onUp);
 
   // Magnetic buttons pull toward the pointer and spring back.
   const magnets = $$(".button, .identity-list button, .scroll-cue").map(
@@ -677,13 +700,7 @@ media.add(`${MOTION} and ${FINE_POINTER}`, () => {
   builderVisual?.addEventListener("pointerleave", onLeanEnd);
 
   return () => {
-    root.classList.remove("has-cursor");
-    cursor.remove();
     window.removeEventListener("pointermove", onMove);
-    document.removeEventListener("pointerover", onOver);
-    document.documentElement.removeEventListener("pointerleave", onLeave);
-    window.removeEventListener("pointerdown", onDown);
-    window.removeEventListener("pointerup", onUp);
     magnets.forEach((dispose) => dispose());
     glowCards.forEach((card) =>
       card.removeEventListener("pointermove", onGlow),
