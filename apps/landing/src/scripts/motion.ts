@@ -87,8 +87,11 @@ identityButtons.forEach((button, index) => {
       const { start, end } = identityTrigger;
       const target =
         start + ((index + 0.5) / identityButtons.length) * (end - start);
-      if (lenis) lenis.scrollTo(target, { duration: 1.2 });
-      else window.scrollTo({ top: target });
+      if (lenis) {
+        lenis.resize();
+        lenis.scrollTo(window.scrollY, { immediate: true });
+        lenis.scrollTo(target, { duration: 1.2 });
+      } else window.scrollTo({ top: target });
     }
     showIdentity(index);
   });
@@ -106,16 +109,23 @@ document.addEventListener("click", (event) => {
   if (!target) return;
   event.preventDefault();
   history.pushState(null, "", hash);
-  lenis.scrollTo(target, {
-    offset: -headerOffset(),
-    duration: 1.2,
-    onComplete: () => {
-      if (!target.matches("a, button, input, select, textarea, [tabindex]")) {
-        target.setAttribute("tabindex", "-1");
-      }
-      target.focus({ preventScroll: true });
+  // A native scroll right before the click (e.g. scrollIntoView) may not have
+  // reached Lenis yet, and pin spacers change the page height: resync first
+  // and target an absolute position.
+  lenis.resize();
+  lenis.scrollTo(window.scrollY, { immediate: true });
+  lenis.scrollTo(
+    target.getBoundingClientRect().top + window.scrollY - headerOffset(),
+    {
+      duration: 1.2,
+      onComplete: () => {
+        if (!target.matches("a, button, input, select, textarea, [tabindex]")) {
+          target.setAttribute("tabindex", "-1");
+        }
+        target.focus({ preventScroll: true });
+      },
     },
-  });
+  );
 });
 
 // ScrollTrigger restores the computed scroll-behavior inline after a refresh, which
@@ -130,6 +140,8 @@ media.add(MOTION, () => {
   // Smooth scroll synced with ScrollTrigger on the GSAP ticker.
   lenis = new Lenis({ lerp: 0.09, wheelMultiplier: 0.9 });
   lenis.on("scroll", ScrollTrigger.update);
+  const resizeLenis = () => lenis?.resize();
+  ScrollTrigger.addEventListener("refresh", resizeLenis);
   const raf = (time: number) => lenis?.raf(time * 1000);
   gsap.ticker.add(raf);
   gsap.ticker.lagSmoothing(0);
@@ -436,6 +448,7 @@ media.add(MOTION, () => {
 
   return () => {
     gsap.ticker.remove(raf);
+    ScrollTrigger.removeEventListener("refresh", resizeLenis);
     lenis?.destroy();
     lenis = undefined;
     root.classList.remove("js-intro");

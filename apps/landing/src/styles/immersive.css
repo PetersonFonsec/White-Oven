@@ -12,6 +12,11 @@ body {
   background: var(--wo-color-cream);
   overflow-x: clip;
 }
+/* Body overflow propagates to the viewport, so clip on main instead: pin spacers
+   keep their old width until ScrollTrigger refreshes after a resize. */
+main {
+  overflow-x: clip;
+}
 ::selection {
   background: var(--wo-color-primary);
   color: var(--lp-coal);
