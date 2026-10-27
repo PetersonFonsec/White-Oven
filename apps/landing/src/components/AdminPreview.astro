@@ -18,7 +18,7 @@ import SectionHeading from "./SectionHeading.astro";
         Prévia conceitual. Os recursos do painel estão em desenvolvimento.
       </p>
     </div>
-    <figure class="admin-window">
+    <figure class="admin-window" data-admin>
       <figcaption>
         <span class="window-dots" aria-hidden="true">● ● ●</span><strong
           >Pizzaria Forno da Vila</strong
@@ -32,11 +32,12 @@ import SectionHeading from "./SectionHeading.astro";
           </div><span class="small muted">Hoje</span>
         </div><div class="metric-grid">
           <div>
-            <span>Faturamento</span><strong>R$ 2.480</strong><small
-              >Exemplo do dia</small
-            >
+            <span>Faturamento</span><strong data-count="2480" data-prefix="R$ "
+              >R$ 2.480</strong
+            ><small>Exemplo do dia</small>
           </div><div>
-            <span>Pedidos</span><strong>38</strong><small>Dados fictícios</small
+            <span>Pedidos</span><strong data-count="38">38</strong><small
+              >Dados fictícios</small
             >
           </div>
         </div><div class="chart-title">

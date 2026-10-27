@@ -1,0 +1,134 @@
+---
+import PizzaPhoto from "./PizzaPhoto.astro";
+// Fictional brands: the same app base dressed in each pizzeria's identity.
+const brands = [
+  {
+    name: "Forno da Vila",
+    tagline: "Pizza de verdade.",
+    logo: "F.",
+    brand: "#FF922B",
+    onBrand: "#252525",
+    page: "#FFF8F0",
+    ink: "#252525",
+  },
+  {
+    name: "Nonna Pizzeria",
+    tagline: "Receita de família.",
+    logo: "N",
+    brand: "#2F6B3F",
+    onBrand: "#FFFFFF",
+    page: "#EAF0E2",
+    ink: "#1B2A1E",
+  },
+  {
+    name: "Brasa Norte",
+    tagline: "Lenha e fogo alto.",
+    logo: "B",
+    brand: "#C7362B",
+    onBrand: "#FFFFFF",
+    page: "#1C1310",
+    ink: "#FFF3EA",
+  },
+  {
+    name: "Sua pizzaria",
+    tagline: "Sua marca aqui.",
+    logo: "S",
+    brand: "#16110D",
+    onBrand: "#FFF8F0",
+    page: "#FF922B",
+    ink: "#16110D",
+  },
+];
+const vars = (brand: (typeof brands)[number]) =>
+  `--id-brand:${brand.brand};--id-on-brand:${brand.onBrand};--id-page:${brand.page};--id-ink:${brand.ink}`;
+const [first] = brands;
+---
+
+<section
+  class="identities"
+  id="identidades"
+  aria-labelledby="identities-title"
+  data-identities
+  style={vars(first)}
+>
+  <div class="identities-pin">
+    <p class="identities-bigname" aria-hidden="true" data-identity-big>
+      {first.name}
+    </p>
+    <div class="wrap identities-grid">
+      <div class="identities-copy">
+        <p class="eyebrow">Uma base inteligente</p>
+        <h2 id="identities-title">Infinitas<br />identidades.</h2>
+        <p class="identities-description">
+          A mesma tecnologia veste a marca de cada pizzaria: cores, logotipo,
+          nome e cardápio. Role para ver o aplicativo mudar de dono.
+        </p>
+        <ol class="identity-list" aria-label="Marcas de exemplo">
+          {
+            brands.map((brand, i) => (
+              <li>
+                <button
+                  type="button"
+                  data-identity={i}
+                  data-name={brand.name}
+                  data-tagline={brand.tagline}
+                  data-logo={brand.logo}
+                  style={vars(brand)}
+                  aria-pressed={i === 0 ? "true" : "false"}
+                  disabled
+                >
+                  <span class="identity-swatch" aria-hidden="true" />
+                  {brand.name}
+                </button>
+              </li>
+            ))
+          }
+        </ol>
+        <p class="small identities-note">
+          Marcas fictícias · prévia ilustrativa · app em desenvolvimento
+        </p>
+      </div>
+      <div class="identities-stage">
+        <span class="identities-halo" aria-hidden="true"></span>
+        <a
+          class="phone-preview"
+          href="#demonstracao"
+          data-cursor="Montar"
+          aria-label="Experimentar o Pizza Builder: prévia ilustrativa de um aplicativo com a marca da pizzaria"
+        >
+          <div class="phone-notch" aria-hidden="true"></div>
+          <div class="phone-content" aria-hidden="true">
+            <div class="phone-header">
+              <span class="phone-logo" data-identity-logo>{first.logo}</span>
+              <span
+                ><span data-identity-name>{first.name}</span><small
+                  data-identity-tagline>{first.tagline}</small
+                ></span
+              >
+            </div>
+            <p class="small">Hoje pede uma boa pizza.</p>
+            <strong class="phone-heading">Qual é a sua<br />combinação?</strong>
+            <div class="phone-category">
+              <span>Seu cardápio</span><span>Meio a meio</span>
+            </div>
+            <div class="phone-pizza"><PizzaPhoto decorative /></div>
+            <div class="phone-product">
+              <strong>Sua pizza, seu jeito</strong><span
+                >Calabresa + Margherita · 35 cm</span
+              >
+            </div>
+            <div class="phone-cta">Monte sua pizza <span>↗</span></div>
+          </div>
+        </a>
+        <div class="flavor-sticker">
+          <span aria-hidden="true">◐</span>
+          <div>
+            <strong>Uma metade de cada sabor.</strong><small
+              >Ingredientes no lugar certo.</small
+            >
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
