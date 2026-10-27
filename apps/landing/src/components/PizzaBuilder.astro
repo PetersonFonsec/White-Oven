@@ -1,6 +1,7 @@
 ---
 import SectionHeading from "./SectionHeading.astro";
 import PizzaArtwork from "./PizzaArtwork.astro";
+import Ingredient from "./Ingredient.astro";
 import { flavors } from "../lib/pizza";
 ---
 
@@ -9,6 +10,9 @@ import { flavors } from "../lib/pizza";
   id="demonstracao"
   aria-labelledby="builder-title"
 >
+  <p class="builder-backdrop" aria-hidden="true" data-builder-backdrop>
+    <span>Meio a meio ✺ Do seu jeito ✺ Meio a meio ✺ Do seu jeito ✺</span>
+  </p>
   <div class="wrap">
     <SectionHeading
       eyebrow="Menos imaginação. Mais sabor."
@@ -19,10 +23,35 @@ import { flavors } from "../lib/pizza";
     />
     <div class="builder-card" data-builder>
       <div class="builder-visual">
-        <span class="tag">Demonstração interativa</span><PizzaArtwork
-          id="builder-pizza"
-          interactive
-        /><div class="half-labels">
+        <span class="tag">Demonstração interativa</span>
+        <div class="builder-stage" data-builder-stage>
+          <svg class="builder-ring" viewBox="0 0 500 500" aria-hidden="true">
+            <defs>
+              <path
+                id="builder-ring-path"
+                d="M250 250m-228 0a228 228 0 1 1 456 0a228 228 0 1 1-456 0"
+              ></path>
+            </defs>
+            <text
+              ><textPath
+                href="#builder-ring-path"
+                textLength="1420"
+                lengthAdjust="spacing"
+                >Cada metade, uma escolha ✺ Ingredientes no lugar certo ✺</textPath
+              ></text
+            >
+          </svg>
+          <span class="builder-plate" aria-hidden="true"></span>
+          <PizzaArtwork id="builder-pizza" interactive />
+          <Ingredient kind="basil" class="builder-ingredient-1" depth={1.4} />
+          <Ingredient kind="tomato" class="builder-ingredient-2" depth={0.8} />
+          <Ingredient kind="olive" class="builder-ingredient-3" depth={1.8} />
+          <Ingredient kind="pepper" class="builder-ingredient-4" depth={1.1} />
+          <span class="builder-size" aria-hidden="true"
+            >35<small>cm</small></span
+          >
+        </div>
+        <div class="half-labels">
           <span data-left-label>½ Calabresa</span><span data-right-label
             >½ Margherita</span
           >

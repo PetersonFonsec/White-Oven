@@ -1,4 +1,4 @@
-// Scroll, cursor and entrance motion for the landing. Every effect lives in a
+// Scroll, pointer and entrance motion for the landing. Every effect lives in a
 // gsap.matchMedia context so "reduce motion" (also toggled at runtime) reverts
 // it and leaves the static, fully readable page.
 import gsap from "gsap";
@@ -137,6 +137,7 @@ ScrollTrigger.addEventListener("refresh", releaseScrollBehavior);
 const media = gsap.matchMedia();
 
 media.add(MOTION, () => {
+  const cleanups: (() => void)[] = [];
   // Smooth scroll synced with ScrollTrigger on the GSAP ticker.
   lenis = new Lenis({ lerp: 0.09, wheelMultiplier: 0.9 });
   lenis.on("scroll", ScrollTrigger.update);
@@ -343,11 +344,33 @@ media.add(MOTION, () => {
     });
     tl.from(admin, {
       y: 80,
-      rotateX: 18,
       opacity: 0,
       duration: 1.3,
       ease: "expo.out",
     })
+      .from(
+        $$(".sparkline path", admin),
+        {
+          strokeDasharray: 1,
+          strokeDashoffset: 1,
+          duration: 1.6,
+          ease: "power2.inOut",
+        },
+        0.3,
+      )
+      .from(
+        ".admin-toast, .admin-ticket",
+        {
+          x: (i) => (i % 2 ? -60 : 60),
+          y: 30,
+          opacity: 0,
+          scale: 0.9,
+          duration: 1,
+          stagger: 0.25,
+          ease: "back.out(1.6)",
+        },
+        0.6,
+      )
       .from(
         $$(".bar-chart span", admin),
         {
@@ -382,6 +405,109 @@ media.add(MOTION, () => {
         0.2,
       );
     });
+  }
+
+  // The panel straightens from a 3D tilt as it scrolls into place; toasts
+  // keep floating like live notifications.
+  const adminStage = $("[data-admin-stage]");
+  if (admin && adminStage) {
+    gsap.fromTo(
+      admin,
+      { rotationY: -18, rotationX: 14, rotationZ: 2 },
+      {
+        rotationY: 0,
+        rotationX: 0,
+        rotationZ: 0,
+        ease: "none",
+        scrollTrigger: {
+          trigger: adminStage,
+          start: "top bottom",
+          end: "center 55%",
+          scrub: 0.6,
+        },
+      },
+    );
+    $$(".admin-toast", adminStage).forEach((toast, i) =>
+      gsap.to(toast, {
+        yPercent: i % 2 ? 14 : -14,
+        duration: 2.4 + i * 0.6,
+        ease: "sine.inOut",
+        repeat: -1,
+        yoyo: true,
+      }),
+    );
+  }
+
+  // Builder: the backdrop drifts with scroll, the stage settles in, and every
+  // choice spins the pizza and pops the price.
+  gsap.fromTo(
+    "[data-builder-backdrop]",
+    { xPercent: 0 },
+    {
+      xPercent: -35,
+      ease: "none",
+      scrollTrigger: {
+        trigger: "#demonstracao",
+        start: "top bottom",
+        end: "bottom top",
+        scrub: true,
+      },
+    },
+  );
+  const builderStage = $("[data-builder-stage]");
+  if (builderStage) {
+    gsap
+      .timeline({
+        scrollTrigger: { trigger: builderStage, start: "top 80%", once: true },
+      })
+      .from(builderStage, {
+        scale: 0.7,
+        rotation: -60,
+        opacity: 0,
+        duration: 1.4,
+        ease: "expo.out",
+      })
+      .from(
+        $$(".ingredient, .builder-size", builderStage),
+        {
+          scale: 0,
+          opacity: 0,
+          duration: 0.9,
+          stagger: 0.08,
+          ease: "back.out(2)",
+        },
+        "-=0.8",
+      );
+    const art = $(".pizza-art", builderStage);
+    const onChoice = () => {
+      if (art) {
+        gsap.fromTo(
+          art,
+          { rotation: -200, scale: 0.86 },
+          { rotation: 0, scale: 1, duration: 1.1, ease: "back.out(1.3)" },
+        );
+      }
+      gsap.fromTo(
+        $$(".ingredient", builderStage),
+        { y: 0 },
+        {
+          y: -18,
+          duration: 0.3,
+          stagger: 0.05,
+          yoyo: true,
+          repeat: 1,
+          ease: "power2.out",
+        },
+      );
+      gsap.fromTo(
+        "[data-price]",
+        { yPercent: 50, opacity: 0 },
+        { yPercent: 0, opacity: 1, duration: 0.6, ease: "expo.out" },
+      );
+    };
+    const builder = $("[data-builder]");
+    builder?.addEventListener("change", onChoice);
+    cleanups.push(() => builder?.removeEventListener("change", onChoice));
   }
 
   // Steps: the line burns from left to right and lights each step as it passes.
@@ -449,6 +575,7 @@ media.add(MOTION, () => {
   return () => {
     gsap.ticker.remove(raf);
     ScrollTrigger.removeEventListener("refresh", resizeLenis);
+    cleanups.forEach((dispose) => dispose());
     lenis?.destroy();
     lenis = undefined;
     root.classList.remove("js-intro");
@@ -521,7 +648,12 @@ media.add(`${MOTION} and (min-width: 1024px)`, () => {
   const track = $("[data-features-track]");
   if (!section || !viewport || !track) return;
   section.dataset.pinned = "true";
-  const distance = () => track.scrollWidth - viewport.clientWidth;
+  // The track sits inside the viewport's side padding: travel until the last
+  // card clears the same gutter on the right.
+  const distance = () => {
+    const gutter = parseFloat(getComputedStyle(viewport).paddingLeft);
+    return track.scrollWidth + gutter * 2 - viewport.clientWidth;
+  };
   gsap.to(track, {
     x: () => -distance(),
     ease: "none",
@@ -543,21 +675,6 @@ media.add(`${MOTION} and (min-width: 1024px)`, () => {
 
 // Pointer effects only where a precise pointer exists.
 media.add(`${MOTION} and ${FINE_POINTER}`, () => {
-  root.classList.add("has-cursor");
-  const cursor = document.createElement("div");
-  cursor.className = "cursor";
-  cursor.setAttribute("aria-hidden", "true");
-  cursor.innerHTML =
-    '<span class="cursor-dot"></span><span class="cursor-ring"><span class="cursor-label"></span></span>';
-  document.body.append(cursor);
-  const dot = $(".cursor-dot", cursor)!;
-  const ring = $(".cursor-ring", cursor)!;
-  const label = $(".cursor-label", cursor)!;
-  const dotX = gsap.quickTo(dot, "x", { duration: 0.1, ease: "power3" });
-  const dotY = gsap.quickTo(dot, "y", { duration: 0.1, ease: "power3" });
-  const ringX = gsap.quickTo(ring, "x", { duration: 0.45, ease: "power3" });
-  const ringY = gsap.quickTo(ring, "y", { duration: 0.45, ease: "power3" });
-
   const hero = $("[data-hero]");
   const pizza = $("[data-hero-pizza]");
   const ingredients = $$("[data-hero-stage] .ingredient");
@@ -573,11 +690,6 @@ media.add(`${MOTION} and ${FINE_POINTER}`, () => {
 
   const onMove = (event: PointerEvent) => {
     const { clientX: x, clientY: y } = event;
-    dotX(x);
-    dotY(y);
-    ringX(x);
-    ringY(y);
-    cursor.dataset.visible = "true";
     if (hero && pizza && tiltX && tiltY) {
       const rect = hero.getBoundingClientRect();
       if (rect.bottom > 0) {
@@ -594,25 +706,7 @@ media.add(`${MOTION} and ${FINE_POINTER}`, () => {
       }
     }
   };
-  const onOver = (event: PointerEvent) => {
-    const target = (event.target as Element).closest<HTMLElement>(
-      "a, button, summary, select, label, [data-cursor]",
-    );
-    cursor.dataset.state = target ? "hover" : "";
-    const text = target?.dataset.cursor ?? "";
-    label.textContent = text;
-    cursor.dataset.label = text ? "true" : "false";
-    if ((event.target as Element).closest("input, textarea, select"))
-      cursor.dataset.state = "text";
-  };
-  const onLeave = () => (cursor.dataset.visible = "false");
-  const onDown = () => (cursor.dataset.pressed = "true");
-  const onUp = () => (cursor.dataset.pressed = "false");
   window.addEventListener("pointermove", onMove);
-  document.addEventListener("pointerover", onOver);
-  document.documentElement.addEventListener("pointerleave", onLeave);
-  window.addEventListener("pointerdown", onDown);
-  window.addEventListener("pointerup", onUp);
 
   // Magnetic buttons pull toward the pointer and spring back.
   const magnets = $$(".button, .identity-list button, .scroll-cue").map(
@@ -663,27 +757,36 @@ media.add(`${MOTION} and ${FINE_POINTER}`, () => {
   const leanY =
     builderArt &&
     gsap.quickTo(builderArt, "rotationX", { duration: 0.8, ease: "power3" });
+  const builderDrift = $$("[data-builder-stage] .ingredient").map((item) => ({
+    depth: Number(item.dataset.depth),
+    x: gsap.quickTo(item, "x", { duration: 1, ease: "power3" }),
+    y: gsap.quickTo(item, "yPercent", { duration: 1, ease: "power3" }),
+  }));
   const onLean = (event: PointerEvent) => {
     if (!builderVisual || !leanX || !leanY) return;
     const rect = builderVisual.getBoundingClientRect();
-    leanX(((event.clientX - rect.left) / rect.width - 0.5) * 18);
-    leanY(-((event.clientY - rect.top) / rect.height - 0.5) * 18);
+    const nx = (event.clientX - rect.left) / rect.width - 0.5;
+    const ny = (event.clientY - rect.top) / rect.height - 0.5;
+    leanX(nx * 18);
+    leanY(-ny * 18);
+    builderDrift.forEach(({ depth, x, y }) => {
+      x(-nx * 40 * depth);
+      y(-ny * 40 * depth);
+    });
   };
   const onLeanEnd = () => {
     leanX?.(0);
     leanY?.(0);
+    builderDrift.forEach(({ x, y }) => {
+      x(0);
+      y(0);
+    });
   };
   builderVisual?.addEventListener("pointermove", onLean);
   builderVisual?.addEventListener("pointerleave", onLeanEnd);
 
   return () => {
-    root.classList.remove("has-cursor");
-    cursor.remove();
     window.removeEventListener("pointermove", onMove);
-    document.removeEventListener("pointerover", onOver);
-    document.documentElement.removeEventListener("pointerleave", onLeave);
-    window.removeEventListener("pointerdown", onDown);
-    window.removeEventListener("pointerup", onUp);
     magnets.forEach((dispose) => dispose());
     glowCards.forEach((card) =>
       card.removeEventListener("pointermove", onGlow),

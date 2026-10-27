@@ -1,76 +1,155 @@
 ---
 import SectionHeading from "./SectionHeading.astro";
+const points = [
+  {
+    icon: "◷",
+    title: "Pedidos organizados em um só lugar",
+    description:
+      "Do pedido novo ao entregue, cada um com seu status, na tela da equipe.",
+  },
+  {
+    icon: "≡",
+    title: "Cardápio e disponibilidade sob controle",
+    description:
+      "Acabou o ingrediente? Pause o sabor e o aplicativo deixa de oferecê-lo.",
+  },
+  {
+    icon: "▥",
+    title: "Indicadores para apoiar suas decisões",
+    description: "Movimento da noite, campeões de venda e o resumo do dia.",
+  },
+];
 ---
 
 <section class="admin section" aria-labelledby="admin-title">
   <div class="wrap admin-grid">
-    <div>
+    <div class="admin-copy">
       <SectionHeading
         eyebrow="Clareza para tocar o negócio"
         title="Mais controle. Mais tempo para a sua receita."
         id="admin-title"
         description="Um painel pensado para reunir pedidos, cardápio e indicadores. Menos telas espalhadas na rotina da pizzaria."
-      /><ul class="check-list">
-        <li>Pedidos organizados em um só lugar</li><li>
-          Cardápio e disponibilidade sob controle
-        </li><li>Indicadores para apoiar suas decisões</li>
-      </ul><p class="small muted">
+      />
+      <ul class="admin-points">
+        {
+          points.map((point, i) => (
+            <li>
+              <span class="admin-point-icon" aria-hidden="true">
+                {point.icon}
+              </span>
+              <div>
+                <strong>{point.title}</strong>
+                <span>{point.description}</span>
+              </div>
+              <span class="admin-point-number" aria-hidden="true">
+                0{i + 1}
+              </span>
+            </li>
+          ))
+        }
+      </ul>
+      <p class="small muted">
         Prévia conceitual. Os recursos do painel estão em desenvolvimento.
       </p>
     </div>
-    <figure class="admin-window" data-admin>
-      <figcaption>
-        <span class="window-dots" aria-hidden="true">● ● ●</span><strong
-          >Pizzaria Forno da Vila</strong
-        ><span class="tag">Dados ilustrativos</span>
-      </figcaption><div class="admin-body">
-        <div class="admin-greeting">
-          <div>
-            <span class="small muted">Visão geral</span><h3>
-              Boa noite, Forno da Vila 👋
-            </h3>
-          </div><span class="small muted">Hoje</span>
-        </div><div class="metric-grid">
-          <div>
-            <span>Faturamento</span><strong data-count="2480" data-prefix="R$ "
-              >R$ 2.480</strong
-            ><small>Exemplo do dia</small>
-          </div><div>
-            <span>Pedidos</span><strong data-count="38">38</strong><small
-              >Dados fictícios</small
+    <div class="admin-stage" data-admin-stage>
+      <span class="admin-glow" aria-hidden="true"></span>
+      <figure class="admin-window" data-admin>
+        <figcaption>
+          <span class="window-dots" aria-hidden="true">● ● ●</span><strong
+            >Pizzaria Forno da Vila</strong
+          ><span class="tag">Dados ilustrativos</span>
+        </figcaption><div class="admin-body">
+          <div class="admin-greeting">
+            <div>
+              <span class="small muted">Visão geral</span><h3>
+                Boa noite, Forno da Vila 👋
+              </h3>
+            </div><span class="admin-live"
+              ><span aria-hidden="true"></span>Ao vivo · exemplo</span
             >
-          </div>
-        </div><div class="chart-title">
-          <strong>Movimento da noite</strong><span class="small muted"
-            >Pedidos por hora</span
+          </div><div class="metric-grid">
+            <div>
+              <span>Faturamento</span><strong
+                data-count="2480"
+                data-prefix="R$ ">R$ 2.480</strong
+              ><small>Exemplo do dia</small>
+              <svg
+                class="sparkline"
+                viewBox="0 0 120 36"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+                ><path
+                  d="M2 30 L18 26 L32 28 L46 18 L60 21 L74 12 L90 15 L104 6 L118 8"
+                  pathLength="1"></path></svg
+              >
+            </div><div>
+              <span>Pedidos</span><strong data-count="38">38</strong><small
+                >Dados fictícios</small
+              >
+              <svg
+                class="sparkline"
+                viewBox="0 0 120 36"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+                ><path
+                  d="M2 28 L16 24 L30 26 L44 20 L58 14 L72 18 L86 10 L102 12 L118 4"
+                  pathLength="1"></path></svg
+              >
+            </div>
+          </div><div class="chart-title">
+            <strong>Movimento da noite</strong><span class="small muted"
+              >Pedidos por hora</span
+            >
+          </div><div
+            class="bar-chart"
+            role="img"
+            aria-label="Gráfico ilustrativo: 3 pedidos às 18h, 6 às 19h, 12 às 20h, 9 às 21h e 8 às 22h."
           >
-        </div><div
-          class="bar-chart"
-          role="img"
-          aria-label="Gráfico ilustrativo: 3 pedidos às 18h, 6 às 19h, 12 às 20h, 9 às 21h e 8 às 22h."
-        >
-          {
-            [25, 50, 100, 75, 66].map((height, i) => (
-              <div>
-                <>
-                  <span style={`height:${height}%`} />
-                  <small>{18 + i}h</small>
-                </>
-              </div>
-            ))
-          }
-        </div><div class="admin-bottom">
-          <div>
-            <h4>Mais pedidos</h4><p>
-              01 <strong>Calabresa</strong><span>16 un.</span>
-            </p><p>02 <strong>Margherita</strong><span>12 un.</span></p>
-          </div><div>
-            <h4>Cardápio</h4><p><strong>12 sabores</strong></p><span
-              class="availability">● Disponíveis</span
-            >
+            {
+              [25, 50, 100, 75, 66].map((height, i) => (
+                <div>
+                  <>
+                    <span style={`height:${height}%`} />
+                    <small>{18 + i}h</small>
+                  </>
+                </div>
+              ))
+            }
+          </div><div class="admin-bottom">
+            <div>
+              <h4>Mais pedidos</h4><p>
+                01 <strong>Calabresa</strong><span>16 un.</span>
+              </p><p>02 <strong>Margherita</strong><span>12 un.</span></p>
+            </div><div>
+              <h4>Cardápio</h4><p><strong>12 sabores</strong></p><span
+                class="availability">● Disponíveis</span
+              >
+            </div>
           </div>
         </div>
+      </figure>
+      <div class="admin-toast admin-toast--order" aria-hidden="true">
+        <span class="admin-toast-icon">◐</span>
+        <div>
+          <strong>Novo pedido #039</strong>
+          <small>Meio a meio · Calabresa + Frango</small>
+        </div>
+        <span class="admin-toast-time">agora</span>
       </div>
-    </figure>
+      <div class="admin-toast admin-toast--delivery" aria-hidden="true">
+        <span class="admin-toast-icon">➜</span>
+        <div>
+          <strong>Pedido #036 saiu para entrega</strong>
+          <small>Status atualizado pela equipe</small>
+        </div>
+      </div>
+      <div class="admin-ticket" aria-hidden="true">
+        <strong>Pedido #038</strong>
+        <span>1× Pizza 35 cm</span>
+        <span>½ Calabresa · ½ Margherita</span>
+        <span class="admin-ticket-status">Em preparo</span>
+      </div>
+    </div>
   </div>
 </section>

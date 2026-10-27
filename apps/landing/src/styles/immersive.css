@@ -55,8 +55,11 @@ html.lenis {
   overflow: hidden;
 }
 
-/* Buttons */
+/* Buttons: a fill rises on hover. Each context sets the fill and the text
+   colour on it together, so the label never matches its background. */
 .button {
+  --btn-fill: var(--lp-coal);
+  --btn-ink: var(--wo-color-cream);
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -84,12 +87,13 @@ html.lenis {
   inset: 0;
   z-index: -1;
   border-radius: inherit;
-  background: var(--lp-coal);
+  background: var(--btn-fill);
   transform: translateY(101%);
   transition: transform 0.6s var(--lp-ease);
 }
 .button:hover {
-  color: var(--wo-color-cream);
+  color: var(--btn-ink);
+  border-color: var(--btn-fill);
 }
 .button:hover::before {
   transform: none;
@@ -102,16 +106,11 @@ html.lenis {
   transform: rotate(45deg);
 }
 .button--secondary {
+  --btn-fill: var(--wo-color-primary);
+  --btn-ink: var(--lp-coal);
   background: transparent;
   color: inherit;
   border-color: currentColor;
-}
-.button--secondary::before {
-  background: var(--wo-color-primary);
-}
-.button--secondary:hover {
-  color: var(--lp-coal);
-  border-color: var(--wo-color-primary);
 }
 .button:disabled,
 .button:disabled:hover {
@@ -189,11 +188,9 @@ html.lenis {
   padding-block: 10px;
   font-size: 0.82rem;
 }
-.site-header .button::before {
-  background: var(--wo-color-cream);
-}
-.site-header .button:hover {
-  color: var(--lp-coal);
+.site-header .button {
+  --btn-fill: var(--wo-color-cream);
+  --btn-ink: var(--lp-coal);
 }
 .menu-toggle {
   display: none;
@@ -351,14 +348,9 @@ main[id] {
 .hero .button--secondary {
   color: var(--wo-color-cream);
 }
-.hero .button--secondary:hover {
-  color: var(--lp-coal);
-}
-.hero .button:not(.button--secondary)::before {
-  background: var(--wo-color-cream);
-}
-.hero .button:not(.button--secondary):hover {
-  color: var(--lp-coal);
+.hero .button:not(.button--secondary) {
+  --btn-fill: var(--wo-color-cream);
+  --btn-ink: var(--lp-coal);
 }
 .development-note {
   display: flex;
@@ -964,30 +956,563 @@ html:not(.js) .marquee-track,
   font-size: 0.95rem;
 }
 
-/* Builder and admin keep their light surfaces, with depth and glow. */
+/* Builder: an orange stage with a turning ring, floating ingredients and a
+   receipt-like control panel. */
 .builder {
+  position: relative;
   background: var(--wo-color-cream);
+  overflow: hidden;
+  isolation: isolate;
+}
+.builder-backdrop {
+  position: absolute;
+  top: 38%;
+  left: 0;
+  z-index: -1;
+  margin: 0;
+  white-space: nowrap;
+  font-size: clamp(6rem, 17vw, 17rem);
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  line-height: 1;
+  color: transparent;
+  -webkit-text-stroke: 1.5px rgb(156 67 0 / 16%);
+  pointer-events: none;
+  user-select: none;
 }
 .builder-card {
   position: relative;
   isolation: isolate;
-  border-radius: 36px;
+  grid-template-columns: 1.1fr 1fr;
+  border: 0;
+  border-radius: 40px;
+  box-shadow:
+    0 40px 100px rgb(156 67 0 / 16%),
+    0 0 0 1px rgb(37 37 37 / 6%);
 }
 .builder-visual {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 36px 36px 30px;
   perspective: 900px;
   background:
-    radial-gradient(circle at 50% 45%, #ffd0a3, transparent 65%),
-    var(--wo-color-orangeSoft);
+    radial-gradient(circle at 50% 46%, #ffc58c 0, transparent 58%),
+    linear-gradient(160deg, #ffa043, #ff8a1c);
+  color: var(--lp-coal);
+  overflow: hidden;
 }
-.builder-visual > .pizza-art {
+.builder-visual > .tag {
+  align-self: flex-start;
+  background: var(--lp-coal);
+  color: var(--wo-color-cream);
+}
+.builder-stage {
+  position: relative;
+  width: min(100%, 470px);
+  aspect-ratio: 1;
+  margin: 8px auto 18px;
+  display: grid;
+  place-items: center;
+}
+.builder-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  animation: orbit 40s linear infinite;
+}
+.builder-ring text {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  fill: var(--lp-coal);
+  opacity: 0.7;
+}
+.builder-plate {
+  position: absolute;
+  inset: 13%;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff6ec 60%, #ffe2c4 61%, #fff3e6 100%);
+  box-shadow:
+    0 30px 60px rgb(90 40 0 / 30%),
+    inset 0 -8px 20px rgb(156 67 0 / 15%);
+}
+.builder-stage > .pizza-art {
+  position: relative;
+  width: 74%;
+  filter: drop-shadow(0 18px 18px rgb(37 37 37 / 25%));
   transform-style: preserve-3d;
 }
-.admin-window {
-  transform-origin: center top;
+.builder-stage .ingredient {
+  z-index: 3;
+}
+.builder-ingredient-1 {
+  width: 18%;
+  top: 4%;
+  left: 2%;
+  rotate: -25deg;
+}
+.builder-ingredient-2 {
+  width: 13%;
+  top: 8%;
+  right: 4%;
+}
+.builder-ingredient-3 {
+  width: 8%;
+  bottom: 12%;
+  left: 6%;
+}
+.builder-ingredient-4 {
+  width: 9%;
+  bottom: 6%;
+  right: 16%;
+}
+.builder-size {
+  position: absolute;
+  right: 0;
+  bottom: 18%;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  background: var(--lp-coal);
+  color: var(--wo-color-primary);
+  font-size: 1.5rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  rotate: 12deg;
+  box-shadow: 0 16px 30px rgb(37 37 37 / 30%);
+}
+.builder-size small {
+  display: block;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  color: var(--wo-color-cream);
+}
+.half-labels span {
+  padding: 8px 16px;
+  font-size: 0.82rem;
+  box-shadow: 0 8px 20px rgb(90 40 0 / 18%);
+}
+.builder-visual > p.small {
+  color: var(--lp-coal);
+  opacity: 0.75;
+}
+.builder-controls {
+  padding: 48px 44px;
   background: var(--wo-color-surface);
 }
+.builder-controls h3 {
+  font-size: clamp(1.9rem, 3vw, 2.6rem);
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+.builder-controls .mode-options legend,
+.flavor-selects label > span:first-child {
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.builder-price {
+  margin-top: 28px;
+  padding: 22px 24px;
+  border: 1.5px dashed #e2d3c2;
+  border-radius: 20px;
+  background: var(--wo-color-cream);
+}
+.builder-price strong {
+  font-size: 2.6rem;
+  font-variant-numeric: tabular-nums;
+}
+.builder-price .tag {
+  background: var(--lp-coal);
+  color: var(--wo-color-cream);
+}
+
+/* Admin: the panel in perspective, with live-looking toasts and a ticket. */
 .admin {
-  perspective: 1400px;
+  position: relative;
+  background:
+    linear-gradient(rgb(37 37 37 / 4%) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(90deg, rgb(37 37 37 / 4%) 1px, transparent 1px) 0 0 / 48px
+      48px,
+    var(--wo-color-surface);
+  overflow: hidden;
+}
+.admin-grid {
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: 72px;
+}
+.admin-points {
+  list-style: none;
+  margin: 8px 0 28px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.admin-points li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  border: 1px solid var(--wo-color-border);
+  border-radius: 20px;
+  background: var(--wo-color-surface);
+  transition:
+    transform 0.6s var(--lp-ease),
+    box-shadow 0.6s var(--lp-ease),
+    border-color 0.6s var(--lp-ease);
+}
+.admin-points li:hover {
+  transform: translateX(8px);
+  border-color: var(--wo-color-primary);
+  box-shadow: 0 20px 40px rgb(156 67 0 / 10%);
+}
+.admin-point-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: var(--lp-coal);
+  color: var(--wo-color-primary);
+  font-size: 1.4rem;
+}
+.admin-points strong {
+  display: block;
+  font-size: 0.98rem;
+  letter-spacing: -0.02em;
+}
+.admin-points div > span {
+  display: block;
+  margin-top: 2px;
+  color: var(--wo-color-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+.admin-point-number {
+  align-self: start;
+  color: var(--wo-color-accentText);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.admin-stage {
+  position: relative;
+  padding: 48px 0 64px;
+  perspective: 1600px;
+}
+.admin-glow {
+  position: absolute;
+  inset: 10% -10% 0 10%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(255 146 43 / 35%), transparent 65%);
+  filter: blur(30px);
+}
+.admin-window {
+  position: relative;
+  transform-origin: center center;
+  background: var(--wo-color-surface);
+  box-shadow:
+    0 50px 100px rgb(37 37 37 / 14%),
+    0 0 0 1px rgb(37 37 37 / 5%);
+}
+.admin-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--wo-radius-pill);
+  background: #eaf3ec;
+  color: var(--wo-color-success);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+.admin-live > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: ember-pulse 2s infinite;
+}
+.metric-grid > div {
+  position: relative;
+  overflow: hidden;
+}
+.sparkline {
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin-top: 8px;
+}
+.sparkline path {
+  fill: none;
+  stroke: var(--wo-color-primary);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.bar-chart span {
+  transform-origin: bottom;
+  transition: filter 0.3s;
+}
+.bar-chart > div:hover span {
+  filter: brightness(0.9) saturate(1.4);
+}
+.admin-toast {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px 12px 12px;
+  border-radius: 18px;
+  background: rgb(22 17 13 / 92%);
+  color: var(--wo-color-cream);
+  box-shadow: 0 24px 50px rgb(37 37 37 / 28%);
+  backdrop-filter: blur(10px);
+}
+.admin-toast strong,
+.admin-toast small {
+  display: block;
+}
+.admin-toast strong {
+  font-size: 0.8rem;
+}
+.admin-toast small {
+  font-size: 0.68rem;
+  color: var(--lp-ash);
+}
+.admin-toast-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: var(--wo-color-primary);
+  color: var(--lp-coal);
+  font-weight: 800;
+}
+.admin-toast-time {
+  margin-left: 8px;
+  font-size: 0.62rem;
+  color: var(--wo-color-primary);
+}
+.admin-toast--order {
+  top: 8px;
+  right: -24px;
+}
+.admin-toast--delivery {
+  bottom: 24px;
+  left: -40px;
+}
+.admin-toast--delivery .admin-toast-icon {
+  background: #3d7a4d;
+  color: #fff;
+}
+.admin-ticket {
+  position: absolute;
+  z-index: 2;
+  right: -44px;
+  bottom: -8px;
+  display: grid;
+  gap: 4px;
+  width: 170px;
+  padding: 16px 16px 20px;
+  background: #fffdf8;
+  color: var(--wo-color-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.66rem;
+  box-shadow: 0 24px 40px rgb(37 37 37 / 18%);
+  rotate: 6deg;
+  /* Torn receipt edge. */
+  clip-path: polygon(
+    0 0,
+    100% 0,
+    100% 94%,
+    92% 100%,
+    84% 94%,
+    76% 100%,
+    68% 94%,
+    60% 100%,
+    52% 94%,
+    44% 100%,
+    36% 94%,
+    28% 100%,
+    20% 94%,
+    12% 100%,
+    4% 94%,
+    0 100%
+  );
+}
+.admin-ticket strong {
+  font-size: 0.8rem;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed #cbbfb2;
+  margin-bottom: 4px;
+}
+.admin-ticket-status {
+  margin-top: 6px;
+  justify-self: start;
+  padding: 2px 8px;
+  border-radius: var(--wo-radius-pill);
+  background: var(--wo-color-orangeSoft);
+  color: var(--wo-color-accentText);
+  font-weight: 700;
+}
+
+/* Form controls: soft fields with an orange focus ring and custom choices. */
+input:not([type="radio"]):not([type="checkbox"]),
+select {
+  min-height: 54px;
+  padding: 14px 16px;
+  border: 1.5px solid #ddd1c4;
+  border-radius: 14px;
+  background-color: #fffdfa;
+  color: var(--wo-color-text);
+  font-size: 0.92rem;
+  font-weight: 500;
+  transition:
+    border-color 0.3s var(--lp-ease),
+    box-shadow 0.3s var(--lp-ease),
+    background-color 0.3s var(--lp-ease);
+}
+input::placeholder {
+  font-weight: 400;
+  color: #8a7f74;
+}
+input:not([type="radio"]):not([type="checkbox"]):hover,
+select:hover {
+  border-color: #b9a896;
+}
+input:not([type="radio"]):not([type="checkbox"]):focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--wo-color-accentText);
+  background-color: var(--wo-color-surface);
+  box-shadow: 0 0 0 4px rgb(255 146 43 / 28%);
+}
+input:disabled,
+select:disabled {
+  background-color: #f4eee7;
+  color: var(--wo-color-onDisabled);
+  cursor: not-allowed;
+}
+select {
+  appearance: none;
+  padding-right: 48px;
+  /* Chevron drawn with gradients, no image request. */
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--wo-color-accentText) 50%),
+    linear-gradient(135deg, var(--wo-color-accentText) 50%, transparent 50%);
+  background-position:
+    calc(100% - 24px) 50%,
+    calc(100% - 18px) 50%;
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
+}
+input[aria-invalid="true"],
+select[aria-invalid="true"] {
+  border-color: var(--wo-color-error);
+  box-shadow: 0 0 0 4px rgb(163 33 33 / 12%);
+}
+input[type="radio"],
+input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  border: 2px solid var(--wo-color-inputBorder);
+  background: var(--wo-color-surface);
+  transition:
+    border-color 0.3s var(--lp-ease),
+    background 0.3s var(--lp-ease),
+    box-shadow 0.3s var(--lp-ease);
+}
+input[type="radio"] {
+  border-radius: 50%;
+}
+input[type="checkbox"] {
+  border-radius: 7px;
+}
+input[type="radio"]:checked {
+  border-color: var(--wo-color-accentText);
+  background: var(--wo-color-primary);
+  box-shadow: inset 0 0 0 4px var(--wo-color-surface);
+}
+input[type="checkbox"]:checked {
+  border-color: var(--wo-color-accentText);
+  background: var(--wo-color-primary);
+}
+input[type="checkbox"]::after {
+  content: "";
+  width: 6px;
+  height: 11px;
+  margin-top: -2px;
+  border: solid var(--lp-coal);
+  border-width: 0 2.5px 2.5px 0;
+  transform: rotate(45deg) scale(0);
+  transition: transform 0.3s var(--lp-ease);
+}
+input[type="checkbox"]:checked::after {
+  transform: rotate(45deg) scale(1);
+}
+input[type="radio"]:focus-visible,
+input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgb(255 146 43 / 35%);
+}
+input[type="radio"]:checked:focus-visible {
+  box-shadow:
+    inset 0 0 0 4px var(--wo-color-surface),
+    0 0 0 4px rgb(255 146 43 / 35%);
+}
+.mode-options label {
+  padding: 12px 20px 12px 14px;
+  border: 1.5px solid #ddd1c4;
+  border-radius: var(--wo-radius-pill);
+  font-weight: 700;
+  transition:
+    background 0.4s var(--lp-ease),
+    color 0.4s var(--lp-ease),
+    border-color 0.4s var(--lp-ease);
+}
+.mode-options label:hover {
+  border-color: var(--wo-color-accentText);
+}
+.mode-options label:has(:checked) {
+  background: var(--lp-coal);
+  border-color: var(--lp-coal);
+  color: var(--wo-color-cream);
+}
+.mode-options label:has(:checked) input {
+  border-color: var(--wo-color-primary);
+  box-shadow: inset 0 0 0 4px var(--lp-coal);
+}
+.lead-form {
+  padding: 36px;
+  border: 0;
+  border-radius: 32px;
+  background: var(--wo-color-cream);
+  box-shadow:
+    0 40px 80px rgb(156 67 0 / 10%),
+    0 0 0 1px rgb(37 37 37 / 5%);
+}
+.consent input {
+  margin-top: 1px;
 }
 
 /* How it works: a burning line through the steps. */
@@ -1100,14 +1625,9 @@ html:not(.js) .step-number,
 .pricing-card--pro :focus-visible {
   outline-color: var(--wo-color-primary);
 }
-.pricing-card .button::before {
-  background: var(--lp-coal);
-}
-.pricing-card--pro .button::before {
-  background: var(--wo-color-cream);
-}
-.pricing-card--pro .button:hover {
-  color: var(--lp-coal);
+.pricing-card--pro .button {
+  --btn-fill: var(--wo-color-cream);
+  --btn-ink: var(--lp-coal);
 }
 .price {
   font-size: 3.6rem;
@@ -1167,12 +1687,9 @@ html:not(.js) .step-number,
 .stores .button {
   margin-top: 24px;
 }
-.stores .button--secondary::before {
-  background: var(--lp-coal);
-}
-.stores .button--secondary:hover {
-  color: var(--wo-color-cream);
-  border-color: var(--lp-coal);
+.stores .button--secondary {
+  --btn-fill: var(--lp-coal);
+  --btn-ink: var(--wo-color-cream);
 }
 .stores :focus-visible {
   outline-color: var(--lp-coal);
@@ -1329,85 +1846,25 @@ html:not(.js) .step-number,
   color: var(--wo-color-cream);
 }
 
-/* Custom cursor (precise pointers with motion allowed). */
-.has-cursor,
-.has-cursor a,
-.has-cursor button,
-.has-cursor summary,
-.has-cursor label,
-.has-cursor input[type="radio"],
-.has-cursor input[type="checkbox"] {
-  cursor: none;
-}
-.cursor {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-.cursor[data-visible="true"] {
-  opacity: 1;
-}
-.cursor-dot,
-.cursor-ring {
-  position: absolute;
-  left: 0;
-  top: 0;
-  border-radius: 50%;
-}
-.cursor-dot {
-  width: 8px;
-  height: 8px;
-  margin: -4px 0 0 -4px;
-  background: var(--wo-color-primary);
-  box-shadow: 0 0 12px 2px rgb(255 146 43 / 70%);
-}
-.cursor-ring {
-  width: 44px;
-  height: 44px;
-  margin: -22px 0 0 -22px;
-  display: grid;
-  place-items: center;
-}
-.cursor-ring::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 1px solid rgb(255 146 43 / 80%);
-  transition:
-    transform 0.5s var(--lp-ease),
-    background 0.5s var(--lp-ease),
-    border-color 0.5s var(--lp-ease);
-}
-.cursor[data-state="hover"] .cursor-ring::before {
-  transform: scale(1.6);
-  background: rgb(255 146 43 / 15%);
-}
-.cursor[data-label="true"] .cursor-ring::before {
-  transform: scale(2.2);
-  background: var(--wo-color-primary);
-  border-color: var(--wo-color-primary);
-}
-.cursor[data-state="text"] .cursor-ring::before {
-  transform: scale(0.4);
-}
-.cursor[data-pressed="true"] .cursor-ring::before {
-  transform: scale(0.8);
-}
-.cursor-label {
-  position: relative;
-  color: var(--lp-coal);
-  font-size: 0.7rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
 /* Breakpoints match the shared tokens: tablet 768px, desktop 1024px. */
 @media (max-width: 1023px) {
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+  .admin-stage {
+    max-width: 680px;
+    margin-inline: auto;
+    width: 100%;
+  }
+  .admin-toast--order {
+    right: 0;
+  }
+  .admin-toast--delivery {
+    left: 0;
+  }
+  .admin-ticket {
+    right: 0;
+  }
   .header-inner {
     flex-wrap: wrap;
     padding-left: 18px;
@@ -1442,6 +1899,38 @@ html:not(.js) .step-number,
   }
 }
 @media (max-width: 767px) {
+  .builder-controls {
+    padding: 32px 22px;
+  }
+  .builder-size {
+    width: 62px;
+    height: 62px;
+    font-size: 1.2rem;
+  }
+  .admin-points li {
+    grid-template-columns: 40px 1fr;
+    padding: 14px 16px;
+  }
+  .admin-point-icon {
+    width: 40px;
+    height: 40px;
+  }
+  .admin-point-number,
+  .admin-ticket {
+    display: none;
+  }
+  .admin-toast {
+    padding: 8px 12px 8px 8px;
+  }
+  .admin-toast--order {
+    top: 0;
+  }
+  .admin-toast--delivery {
+    bottom: 12px;
+  }
+  .lead-form {
+    padding: 24px;
+  }
   .site-header {
     inset: 10px 0 auto;
   }
