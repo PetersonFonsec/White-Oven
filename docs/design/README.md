@@ -2,6 +2,17 @@
 
 > Registro histórico da M0.1-A. O formulário e o build foram evoluídos na [M0.1-B](../architecture/m0-1b-lead-capture.md); as capturas preservam a revisão visual anterior.
 
+## Direção "Brasa" (2026-10-27)
+
+O Product Owner aprovou uma revisão imersiva da landing, com GSAP (ScrollTrigger e SplitText) e Lenis como dependências. O creme e o laranja continuam; seções de impacto passam a usar um carvão quente (`#16110D`) e o laranja funciona como luz.
+
+- **Efeitos:** pré-carregamento "aquecendo o forno" em visitas novas, hero com pizza que gira com o scroll e inclina com o cursor, ingredientes em parallax, marquee guiado pela velocidade do scroll, vitrine fixa de marcas fictícias (o mesmo app trocando de identidade), funcionalidades em scroll horizontal no desktop, painel que se monta, linha de etapas que se acende, cursor customizado, botões magnéticos e cards com brilho sob o cursor.
+- **Implementação:** `src/scripts/motion.ts` concentra os efeitos em `gsap.matchMedia`; `src/styles/immersive.css` concentra o visual da direção. A página continua prerenderizada, utilizável sem JavaScript e sem requisições externas.
+- **Acessibilidade:** com movimento reduzido nada se move nem fica fixo; cursor customizado e efeitos de ponteiro só existem com ponteiro preciso. Nenhum dado é guardado no navegador para o pré-carregamento.
+- **Marcas da vitrine:** Forno da Vila, Nonna Pizzeria e Brasa Norte são fictícias e identificadas como prévia ilustrativa.
+
+As capturas abaixo foram regeneradas com movimento reduzido, que mostra o layout estático.
+
 ## Referências recebidas em 2026-10-23
 
 O Product Owner forneceu a imagem `whiteoven.jpeg` e um vídeo MP4 de 20,78 segundos nesta conversa. A imagem está preservada, convertida sem recorte para [whiteoven-visual-reference.png](whiteoven-visual-reference.png). O vídeo foi analisado por quadros em 1,04s, 5,20s, 10,39s, 15,59s e 19,74s. Um [quadro de referência](whiteoven-video-reference.jpg) foi registrado; o vídeo original permanece no anexo do Product Owner, sem integrar o bundle da landing.
