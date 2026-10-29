@@ -7,6 +7,8 @@ import Button from "../components/Button.astro";
 import SectionHeading from "../components/SectionHeading.astro";
 import FeatureCard from "../components/FeatureCard.astro";
 import PizzaPhoto from "../components/PizzaPhoto.astro";
+import Ingredient from "../components/Ingredient.astro";
+import IdentityShowcase from "../components/IdentityShowcase.astro";
 import PizzaBuilder from "../components/PizzaBuilder.astro";
 import AdminPreview from "../components/AdminPreview.astro";
 import PricingCard from "../components/PricingCard.astro";
@@ -93,85 +95,134 @@ const questions = [
     "Ainda não. A plataforma está em desenvolvimento. Você pode explorar a demonstração visual e, quando as inscrições estiverem abertas, registrar seu interesse em acesso antecipado. Isso não representa contratação ou cobrança.",
   ],
 ];
+const marquee = [
+  "Sua marca",
+  "Seu aplicativo",
+  "Seus clientes",
+  "Pizza Builder",
+  "Gestão centralizada",
+];
+const wordmark = [..."whiteoven."];
 ---
 
 <BaseLayout
   title="WhiteOven — Sua pizzaria. Seu aplicativo. Seus clientes."
   description="Conheça o WhiteOven: aplicativos com a marca da sua pizzaria, Pizza Builder meio a meio e gestão em um só lugar. Explore a demonstração e os planos preliminares."
 >
+  <div class="preloader" aria-hidden="true" data-preloader>
+    <span class="preloader-glow"></span>
+    <p class="preloader-label">Aquecendo o forno</p>
+    <p class="preloader-count"><span data-preloader-count>0</span>°</p>
+  </div>
   <Header />
-  <div class="reading-progress" aria-hidden="true"></div>
   <main id="inicio" tabindex="-1">
-    <section class="hero">
+    <section class="hero" data-hero>
+      <span class="hero-glow" aria-hidden="true"></span>
       <div class="wrap hero-grid">
         <div class="hero-copy">
           <p class="eyebrow">
             <span class="eyebrow-line" aria-hidden="true"></span>O próximo
             capítulo da sua pizzaria
-          </p><h1>
-            Sua marca.<br /><span>Seu app.</span>
-          </h1><p class="hero-description">
-            Um aplicativo com a marca da sua pizzaria. Um jeito visual de montar
-            pizzas. Seus pedidos, na sua mão.
-          </p><div class="hero-actions">
+          </p>
+          <h1 class="hero-title">
+            <span class="line"><span>Sua pizzaria.</span></span>
+            <span class="line"><span>Seu aplicativo.</span></span>
+            <span class="line"
+              ><span class="hero-accent">Seus clientes.</span></span
+            >
+          </h1>
+          <p class="hero-description" data-hero-fade>
+            Transforme a experiência de pedidos da sua pizzaria com um
+            aplicativo próprio, pizzas personalizadas e um painel para gerenciar
+            seu negócio.
+          </p>
+          <div class="hero-actions" data-hero-fade>
             <Button href="#interesse">Quero acesso antecipado</Button><Button
               href="#demonstracao"
               variant="secondary">Experimentar demonstração</Button
             >
-          </div><p class="development-note">
+          </div>
+          <p class="development-note" data-hero-fade>
             <span aria-hidden="true"></span>Em desenvolvimento · inscrições em
             breve
           </p>
         </div>
-        <div class="hero-composition" data-pointer-stage>
-          <a class="hero-demo-link" href="#demonstracao"
-            >Monte sua combinação <span aria-hidden="true">↗</span></a
-          >
-          <span class="hero-orbit" aria-hidden="true"></span><div
-            class="hero-pizza"
-          >
+        <div class="hero-stage" data-hero-stage>
+          <span class="hero-orbit" aria-hidden="true"></span>
+          <div class="hero-pizza" data-hero-pizza>
             <PizzaPhoto hero />
-          </div><div class="flavor-sticker">
-            <span aria-hidden="true">◐</span><div>
-              <strong>Uma metade de cada sabor.</strong><small
-                >Ingredientes no lugar certo.</small
-              >
-            </div>
           </div>
+          <Ingredient kind="basil" class="ingredient--a" depth={1.4} />
+          <Ingredient kind="tomato" class="ingredient--b" depth={0.9} />
+          <Ingredient kind="chili" class="ingredient--c" depth={1.8} />
+          <Ingredient kind="olive" class="ingredient--d" depth={0.6} />
+          <Ingredient kind="basil" class="ingredient--e" depth={2.2} />
+          <Ingredient kind="pepper" class="ingredient--f" depth={1.1} />
+          <Ingredient kind="tomato" class="ingredient--g" depth={1.6} />
         </div>
       </div>
+      <a class="scroll-cue" href="#identidades"
+        ><span class="scroll-cue-line" aria-hidden="true"></span>Role para
+        acender o forno</a
+      >
     </section>
-    <div class="promise-strip">
-      <div class="wrap">
-        <span
-          >Uma base inteligente.<br /><strong>Infinitas identidades.</strong
-          ></span
-        ><span>Aplicativo com sua marca</span><span>Pizza Builder visual</span
-        ><span>Gestão centralizada</span>
-      </div>
+    <div class="marquee" data-marquee>
+      <p class="sr-only">{marquee.join(" · ")}</p>
+      {
+        [0, 1].map((row) => (
+          <div
+            class:list={["marquee-row", { "marquee-row--reverse": row === 1 }]}
+            aria-hidden="true"
+          >
+            <div class="marquee-track" data-marquee-track={row === 1 ? -1 : 1}>
+              {[0, 1].map(() => (
+                <div class="marquee-group">
+                  {marquee.map((item) => (
+                    <span>
+                      {item}
+                      <i>✺</i>
+                    </span>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))
+      }
     </div>
+    <IdentityShowcase />
     <section
       class="features section"
       id="funcionalidades"
       aria-labelledby="features-title"
+      data-features
     >
-      <div class="wrap">
-        <div class="section-heading-row">
-          <SectionHeading
-            eyebrow="Da primeira escolha à próxima visita"
-            title="Sua receita, conectada."
-            id="features-title"
-          /><p class="muted">
+      <div class="wrap features-head">
+        <SectionHeading
+          eyebrow="Da primeira escolha à próxima visita"
+          title="Sua receita. Nossa tecnologia."
+          id="features-title"
+        />
+        <div class="features-aside">
+          <p>
             Recursos planejados para valorizar sua marca e simplificar a rotina.
             Tudo conectado à experiência da sua pizzaria.
           </p>
-        </div><div class="feature-grid">
+          <span class="features-progress" aria-hidden="true"
+            ><span data-features-progress></span></span
+          >
+        </div>
+      </div>
+      <div class="features-viewport" data-features-viewport>
+        <ol class="feature-track" data-features-track>
           {
             features.map((feature, i) => (
-              <FeatureCard number={`0${i + 1}`} {...feature} />
+              <li>
+                <FeatureCard number={`0${i + 1}`} {...feature} />
+              </li>
             ))
           }
-        </div>
+        </ol>
       </div>
     </section>
     <PizzaBuilder />
@@ -180,22 +231,28 @@ const questions = [
       <div class="wrap">
         <SectionHeading
           eyebrow="Da sua cozinha para a tela"
-          title="Da cozinha ao cliente."
+          title="Sua marca no centro. Do início ao fim."
           id="how-title"
           centered
-        /><ol class="steps">
-          {
-            steps.map((step, i) => (
-              <li>
-                <>
-                  <span class="step-number">0{i + 1}</span>
-                  <h3>{step.title}</h3>
-                  <p>{step.description}</p>
-                </>
-              </li>
-            ))
-          }
-        </ol>
+        />
+        <div class="steps-wrap" data-steps>
+          <span class="steps-line" aria-hidden="true"
+            ><span data-steps-line></span></span
+          >
+          <ol class="steps">
+            {
+              steps.map((step, i) => (
+                <li data-step>
+                  <>
+                    <span class="step-number">0{i + 1}</span>
+                    <h3>{step.title}</h3>
+                    <p>{step.description}</p>
+                  </>
+                </li>
+              ))
+            }
+          </ol>
+        </div>
       </div>
     </section>
     <section
@@ -206,7 +263,7 @@ const questions = [
       <div class="wrap">
         <SectionHeading
           eyebrow="Duas formas de começar"
-          title="Dois jeitos de começar."
+          title="O mesmo produto. A escolha é sua."
           id="pricing-title"
           description="Compare os modelos comerciais que estamos validando. No MVP, Flex e Pro terão as mesmas funcionalidades."
           centered
@@ -226,49 +283,28 @@ const questions = [
           <p class="eyebrow">Sua pizzaria também na tela inicial</p><h2
             id="stores-title"
           >
-            Seu app.<br />Sua identidade.
+            O app é seu.<br />A vontade de voltar, do cliente.
           </h2><p>
             Aplicativos próprios para cada pizzaria, com sua identidade. Estamos
             preparando essa experiência para Android e iOS.
           </p><div class="store-badges">
             <StoreBadge store="apple" /><StoreBadge store="google" />
-          </div><p class="small muted">
+          </div><p class="small">
             Nenhum aplicativo publicado nesta etapa. Publicação sujeita à
             aprovação das lojas.
           </p><Button href="#interesse" variant="secondary"
             >Quero conhecer um aplicativo de demonstração</Button
           >
-        </div><div class="store-visual">
-          <a
-            class="phone-preview"
-            data-ui
-            href="#demonstracao"
-            aria-label="Experimentar o Pizza Builder: prévia ilustrativa do aplicativo da Pizzaria Forno da Vila"
-          >
-            <div class="phone-notch" aria-hidden="true"></div><div
-              class="phone-content"
-            >
-              <div class="phone-header">
-                <span class="phone-logo" aria-hidden="true">F.</span><span
-                  >FORNO DA VILA<small>Pizza de verdade.</small></span
-                >
-              </div><p class="small muted">Hoje pede uma boa pizza.</p><strong
-                class="phone-heading">Qual é a sua<br />combinação?</strong
-              ><div class="phone-category">
-                <span>Seu cardápio</span><span>Meio a meio</span>
-              </div><div class="phone-pizza">
-                <PizzaPhoto decorative />
-              </div><div class="phone-product">
-                <strong>Sua pizza, seu jeito</strong><span
-                  >Calabresa + Margherita · 35 cm</span
-                >
-              </div><div class="phone-cta">
-                Monte sua pizza <span aria-hidden="true">↗</span>
-              </div><p class="phone-caption">
-                Prévia ilustrativa · app em desenvolvimento
-              </p>
-            </div>
-          </a>
+        </div><div class="store-visual" aria-hidden="true">
+          <span class="store-ring"></span><span
+            class="store-tile"
+            data-speed="1.2">F.</span
+          ><span class="store-tile" data-speed="0.6">N</span><span
+            class="store-tile"
+            data-speed="1.6">B</span
+          ><span class="store-tile" data-speed="0.9">S</span><p>
+            Mesma tecnologia.<br /><strong>Personalidades únicas.</strong>
+          </p>
         </div>
       </div>
     </section>
@@ -298,8 +334,12 @@ const questions = [
       </div>
     </section>
   </main>
-  <Footer />
+  <Footer>
+    <p class="footer-wordmark" aria-hidden="true" data-wordmark>
+      {wordmark.map((letter) => <span>{letter}</span>)}
+    </p>
+  </Footer>
   <script>
-    import "../scripts/landing-motion";
+    import "../scripts/motion.ts";
   </script>
 </BaseLayout>

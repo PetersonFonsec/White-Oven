@@ -17,18 +17,7 @@ const links = [
       type="button"
       aria-expanded="false"
       aria-controls="main-nav"
-      hidden
-      ><span>Menu</span><svg
-        aria-hidden="true"
-        width="16"
-        height="16"
-        viewBox="0 0 16 16"
-        fill="none"
-        ><path
-          d="M2 4h12M2 8h12M2 12h12"
-          stroke="currentColor"
-          stroke-width="1.5"></path></svg
-      ></button
+      hidden><span>Menu</span><span aria-hidden="true">☰</span></button
     >
     <nav id="main-nav" aria-label="Navegação principal">
       {links.map(([href, label]) => <a href={href}>{label}</a>)}

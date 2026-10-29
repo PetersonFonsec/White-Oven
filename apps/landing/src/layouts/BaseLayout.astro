@@ -1,6 +1,6 @@
 ---
 import "../styles/global.css";
-import "../styles/landing-experiment.css";
+import "../styles/immersive.css";
 import tokens from "@whiteoven/design-tokens";
 
 const cssTokens = Object.entries(tokens)
@@ -42,7 +42,7 @@ const { title, description } = Astro.props;
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#FFF8F0" />
+    <meta name="theme-color" content="#16110D" />
     <title>{title}</title>
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="pt_BR" />
@@ -51,15 +51,23 @@ const { title, description } = Astro.props;
     <meta property="og:description" content={description} />
     <meta name="twitter:card" content="summary" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=Nunito:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
+    <script is:inline>
+      // Gate entrance states on JavaScript. The intro plays on fresh visits only (no storage is used) and never with reduced motion.
+      (function () {
+        const root = document.documentElement;
+        root.classList.add("js");
+        const [navigation] = performance.getEntriesByType("navigation");
+        if (
+          navigation?.type === "navigate" &&
+          !matchMedia("(prefers-reduced-motion: reduce)").matches
+        ) {
+          root.classList.add("js-intro");
+        }
+      })();
+    </script>
     <style set:html={`:root { ${cssTokens} ${shadowCss} }`}></style>
   </head>
-  <body class={Astro.url.pathname === "/" ? "landing-experiment" : undefined}>
+  <body>
     <a class="skip-link" href="#inicio">Pular para o conteúdo</a>
     <slot />
   </body>

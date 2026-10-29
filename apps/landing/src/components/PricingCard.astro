@@ -9,7 +9,9 @@ const isPro = plan === "pro";
 
 <article class:list={["pricing-card", { "pricing-card--pro": isPro }]}>
   <div class="pricing-top">
-    <h3>WhiteOven {isPro ? "Pro" : "Flex"}</h3>
+    <h3>WhiteOven {isPro ? "Pro" : "Flex"}</h3><span class="tag"
+      >{isPro ? "Custo mensal previsível" : "Para começar no seu ritmo"}</span
+    >
   </div>
   <p class="price">
     {isPro ? "R$ 199" : "3%"}<span>{isPro ? "/mês" : " por venda paga"}</span>

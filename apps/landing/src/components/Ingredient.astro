@@ -1,0 +1,102 @@
+---
+// Decorative ingredients that float around the hero pizza.
+interface Props {
+  kind: "basil" | "tomato" | "chili" | "olive" | "pepper";
+  class?: string;
+  depth: number;
+}
+const { kind, class: className, depth } = Astro.props;
+---
+
+<span
+  class:list={["ingredient", `ingredient--${kind}`, className]}
+  data-depth={depth}
+  aria-hidden="true"
+>
+  {
+    kind === "basil" && (
+      <svg viewBox="0 0 120 80">
+        <path d="M6 58C26 14 76 2 114 10 100 50 58 78 6 58Z" fill="#3E7D3A" />
+        <path
+          d="M10 56C42 40 74 26 110 12"
+          fill="none"
+          stroke="#2A5A27"
+          stroke-width="3"
+          stroke-linecap="round"
+        />
+        <path
+          d="M40 44 44 24M60 36 66 16M80 28 88 12M40 44 58 54M60 36 80 44"
+          fill="none"
+          stroke="#2A5A27"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          opacity=".7"
+        />
+      </svg>
+    )
+  }
+  {
+    kind === "tomato" && (
+      <svg viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="46" fill="#D83A2A" />
+        <circle cx="50" cy="50" r="38" fill="#EF5B3F" />
+        <g fill="#F7C873">
+          <ellipse cx="50" cy="28" rx="7" ry="10" />
+          <ellipse cx="72" cy="50" rx="10" ry="7" />
+          <ellipse cx="50" cy="72" rx="7" ry="10" />
+          <ellipse cx="28" cy="50" rx="10" ry="7" />
+        </g>
+        <circle cx="50" cy="50" r="8" fill="#D83A2A" />
+      </svg>
+    )
+  }
+  {
+    kind === "chili" && (
+      <svg viewBox="0 0 120 60">
+        <path d="M18 30C40 8 82 10 108 40 84 56 46 54 18 30Z" fill="#C8261B" />
+        <path
+          d="M30 26C52 16 78 18 98 34"
+          fill="none"
+          stroke="#F06A55"
+          stroke-width="4"
+          stroke-linecap="round"
+          opacity=".6"
+        />
+        <path
+          d="M20 30C12 22 8 14 12 6"
+          fill="none"
+          stroke="#3E7D3A"
+          stroke-width="6"
+          stroke-linecap="round"
+        />
+      </svg>
+    )
+  }
+  {
+    kind === "olive" && (
+      <svg viewBox="0 0 80 80">
+        <ellipse cx="40" cy="40" rx="34" ry="28" fill="#2B2420" />
+        <ellipse cx="40" cy="40" rx="12" ry="9" fill="#16110D" />
+        <ellipse
+          cx="28"
+          cy="26"
+          rx="8"
+          ry="4"
+          fill="#fff"
+          opacity=".2"
+          transform="rotate(-20 28 26)"
+        />
+      </svg>
+    )
+  }
+  {
+    kind === "pepper" && (
+      <svg viewBox="0 0 60 60">
+        <circle cx="30" cy="30" r="10" fill="#F2E3C6" />
+        <circle cx="14" cy="16" r="4" fill="#F2E3C6" />
+        <circle cx="46" cy="44" r="5" fill="#F2E3C6" />
+        <circle cx="48" cy="12" r="3" fill="#F2E3C6" />
+      </svg>
+    )
+  }
+</span>

@@ -1,75 +1,225 @@
 ---
 import SectionHeading from "./SectionHeading.astro";
+const points = [
+  {
+    icon: "▤",
+    title: "Pedidos organizados",
+    description:
+      "Cada pedido com status, horário e os sabores de cada metade, do forno até a entrega.",
+  },
+  {
+    icon: "≡",
+    title: "Cardápio sob controle",
+    description:
+      "Acabou um ingrediente? Pause o sabor na hora e volte a oferecer quando quiser.",
+  },
+  {
+    icon: "▥",
+    title: "Indicadores para decidir",
+    description:
+      "Faturamento, horários de pico e sabores favoritos reunidos em uma só tela.",
+  },
+];
+const orders = [
+  {
+    id: "#1042",
+    pizza: "½ Calabresa · ½ Margherita",
+    status: "No forno",
+    step: 2,
+  },
+  {
+    id: "#1041",
+    pizza: "Quatro queijos",
+    status: "Saiu para entrega",
+    step: 3,
+  },
+  { id: "#1040", pizza: "Frango com catupiry", status: "Recebido", step: 1 },
+];
+const menu = [
+  { name: "Calabresa", on: true },
+  { name: "Margherita", on: true },
+  { name: "Frango com catupiry", on: false },
+];
+const top = [
+  { name: "Calabresa", units: 16 },
+  { name: "Margherita", units: 12 },
+  { name: "Quatro queijos", units: 7 },
+];
 ---
 
 <section class="admin section" aria-labelledby="admin-title">
   <div class="wrap admin-grid">
-    <div>
+    <div class="admin-copy">
       <SectionHeading
         eyebrow="Clareza para tocar o negócio"
-        title="Sua operação, reunida."
+        title="Mais controle. Mais tempo para a sua receita."
         id="admin-title"
         description="Um painel pensado para reunir pedidos, cardápio e indicadores. Menos telas espalhadas na rotina da pizzaria."
-      /><ul class="check-list">
-        <li>Pedidos organizados em um só lugar</li><li>
-          Cardápio e disponibilidade sob controle
-        </li><li>Indicadores para apoiar suas decisões</li>
-      </ul><p class="small muted">
+      /><ol class="admin-points">
+        {
+          points.map((point, i) => (
+            <li>
+              <>
+                <span class="admin-point-icon" aria-hidden="true">
+                  {point.icon}
+                </span>
+                <div>
+                  <h3>
+                    <span class="admin-point-number">0{i + 1}</span>
+                    {point.title}
+                  </h3>
+                  <p>{point.description}</p>
+                </div>
+              </>
+            </li>
+          ))
+        }
+      </ol><p class="small muted">
         Prévia conceitual. Os recursos do painel estão em desenvolvimento.
       </p>
     </div>
-    <figure class="admin-window" data-ui>
-      <figcaption>
-        <span class="window-dots" aria-hidden="true">● ● ●</span><strong
-          >Pizzaria Forno da Vila</strong
-        ><span class="tag">Dados ilustrativos</span>
-      </figcaption><div class="admin-body">
-        <div class="admin-greeting">
-          <div>
-            <span class="small muted">Visão geral</span><h3>
-              Boa noite, Forno da Vila
-            </h3>
-          </div><span class="small muted">Hoje</span>
-        </div><div class="metric-grid">
-          <div>
-            <span>Faturamento</span><strong>R$ 2.480</strong><small
-              >Exemplo do dia</small
-            >
-          </div><div>
-            <span>Pedidos</span><strong>38</strong><small>Dados fictícios</small
-            >
-          </div>
-        </div><div class="chart-title">
-          <strong>Movimento da noite</strong><span class="small muted"
-            >Pedidos por hora</span
-          >
-        </div><div
-          class="bar-chart"
-          role="img"
-          aria-label="Gráfico ilustrativo: 3 pedidos às 18h, 6 às 19h, 12 às 20h, 9 às 21h e 8 às 22h."
-        >
-          {
-            [25, 50, 100, 75, 66].map((height, i) => (
+    <div class="admin-stage">
+      <span class="admin-glow" aria-hidden="true"></span>
+      <figure class="admin-window" data-admin>
+        <figcaption>
+          <span class="window-dots" aria-hidden="true">● ● ●</span><strong
+            >Pizzaria Forno da Vila</strong
+          ><span class="tag">Dados ilustrativos</span>
+        </figcaption><div class="admin-layout">
+          <ul class="admin-side" aria-hidden="true">
+            <li class="admin-side-logo">F.</li>
+            <li data-active>▦ <span>Visão geral</span></li>
+            <li>▤ <span>Pedidos</span><b>3</b></li>
+            <li>≡ <span>Cardápio</span></li>
+            <li>♡ <span>Clientes</span></li>
+            <li>▥ <span>Relatórios</span></li>
+          </ul>
+          <div class="admin-body">
+            <div class="admin-greeting">
               <div>
-                <>
-                  <span style={`height:${height}%`} />
-                  <small>{18 + i}h</small>
-                </>
+                <span class="small muted">Visão geral · hoje</span><h3>
+                  Boa noite, Forno da Vila 👋
+                </h3>
+              </div><span class="admin-open">Loja aberta</span>
+            </div><div class="metric-grid">
+              <div>
+                <span>Faturamento</span><strong
+                  data-count="2480"
+                  data-prefix="R$ ">R$ 2.480</strong
+                ><small>Exemplo do dia</small>
+              </div><div>
+                <span>Pedidos</span><strong data-count="38">38</strong><small
+                  >Dados fictícios</small
+                >
+              </div><div>
+                <span>Ticket médio</span><strong
+                  data-count="65"
+                  data-prefix="R$ ">R$ 65</strong
+                ><small>Faturamento ÷ pedidos</small>
               </div>
-            ))
-          }
-        </div><div class="admin-bottom">
-          <div>
-            <h4>Mais pedidos</h4><p>
-              <strong>Calabresa</strong><span>16 un.</span>
-            </p><p><strong>Margherita</strong><span>12 un.</span></p>
-          </div><div>
-            <h4>Cardápio</h4><p><strong>12 sabores</strong></p><span
-              class="availability">● Disponíveis</span
-            >
+            </div><div class="admin-panels">
+              <div class="admin-panel">
+                <div class="chart-title">
+                  <strong>Movimento da noite</strong><span class="small muted"
+                    >Pedidos por hora</span
+                  >
+                </div><div
+                  class="bar-chart"
+                  role="img"
+                  aria-label="Gráfico ilustrativo: 3 pedidos às 18h, 6 às 19h, 12 às 20h, 9 às 21h e 8 às 22h."
+                >
+                  {
+                    [25, 50, 100, 75, 66].map((height, i) => (
+                      <div>
+                        <>
+                          {i === 2 && (
+                            <em class="bar-peak" aria-hidden="true">
+                              Pico · 12
+                            </em>
+                          )}
+                          <span style={`height:${height}%`} />
+                          <small>{18 + i}h</small>
+                        </>
+                      </div>
+                    ))
+                  }
+                </div>
+              </div><div class="admin-panel">
+                <div class="chart-title">
+                  <strong>Em andamento</strong><span class="small muted"
+                    >{orders.length} pedidos</span
+                  >
+                </div><ul class="admin-orders">
+                  {
+                    orders.map((order) => (
+                      <li data-step={order.step}>
+                        <>
+                          <div>
+                            <strong>{order.id}</strong>
+                            <span>{order.pizza}</span>
+                          </div>
+                          <em>{order.status}</em>
+                          <span class="order-progress" aria-hidden="true">
+                            <span style={`width:${(order.step / 3) * 100}%`} />
+                          </span>
+                        </>
+                      </li>
+                    ))
+                  }
+                </ul>
+              </div>
+            </div><div class="admin-bottom">
+              <div>
+                <h4>Mais pedidos</h4>
+                {
+                  top.map((item, i) => (
+                    <p>
+                      <>
+                        0{i + 1} <strong>{item.name}</strong>
+                        <span>{item.units} un.</span>
+                        <i
+                          class="top-bar"
+                          aria-hidden="true"
+                          style={`width:${(item.units / top[0].units) * 100}%`}
+                        />
+                      </>
+                    </p>
+                  ))
+                }
+              </div><div>
+                <h4>Cardápio</h4>
+                <ul class="admin-menu">
+                  {
+                    menu.map((item) => (
+                      <li data-on={item.on ? "true" : "false"}>
+                        <>
+                          <span>{item.name}</span>
+                          <span class="admin-toggle">
+                            {item.on ? "Disponível" : "Pausado"}
+                          </span>
+                        </>
+                      </li>
+                    ))
+                  }
+                </ul>
+              </div>
+            </div>
           </div>
         </div>
+      </figure>
+      <div class="admin-float admin-float--order" aria-hidden="true">
+        <span class="admin-float-icon">🔔</span>
+        <div>
+          <strong>Novo pedido #1043</strong><small
+            >½ Frango · ½ Quatro queijos · agora</small
+          >
+        </div>
       </div>
-    </figure>
+      <div class="admin-float admin-float--time" aria-hidden="true">
+        <small>Tempo médio de preparo</small><strong>18 min</strong><span
+          class="admin-float-meter"><span></span></span
+        >
+      </div>
+    </div>
   </div>
 </section>
