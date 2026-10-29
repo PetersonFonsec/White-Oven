@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -16,6 +17,9 @@ export type MenuLoad =
   | { kind: "failed" };
 
 interface Props {
+  addingDisabled: boolean;
+  cart: ReactNode;
+  onAddProduct: (id: string) => void;
   storeName: string;
   /** From `menuNotices`: closed, unconfirmed, stale brand or stale menu. */
   notices: string[];
@@ -31,10 +35,13 @@ interface Props {
 }
 
 /**
- * The store's menu (M5.2): pizzas open the builder; other products are listed with their price
- * and reach the cart in M5.3. A closed store can still be browsed, with its notice on top.
+ * Pizzas open the builder and products enter the persisted cart (M5.3).
+ * A closed store can still be browsed, with its notice on top.
  */
 export function MenuScreen({
+  addingDisabled,
+  cart,
+  onAddProduct,
   storeName,
   notices,
   menuStale,
@@ -110,6 +117,7 @@ export function MenuScreen({
         </View>
       ) : null}
 
+      {cart}
       {menu.kind === "loading" ? (
         <ActivityIndicator
           accessibilityLabel="Carregando o cardápio"
@@ -221,14 +229,19 @@ export function MenuScreen({
                   {content}
                 </Pressable>
               ) : (
-                <View
+                <Pressable
                   key={item.id}
+                  accessibilityRole="button"
+                  accessibilityHint="Adicionar ao carrinho"
+                  disabled={addingDisabled}
+                  accessibilityState={{ disabled: addingDisabled }}
+                  onPress={() => onAddProduct(item.id)}
                   accessible
                   accessibilityLabel={`${item.name}, ${price}`}
                   style={[styles.item, card]}
                 >
                   {content}
-                </View>
+                </Pressable>
               );
             })}
           </View>

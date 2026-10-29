@@ -40,6 +40,15 @@ const LOADED: MenuState = { kind: "ok", menu, stale: false };
 const isStale = (state: MenuState) => state.kind === "ok" && state.stale;
 
 describe("app navigation", () => {
+  it("keeps account accessible during suspension but blocks cart", () => {
+    assert.deepEqual(screenFor(UNAVAILABLE, LOADED, null, "account"), {
+      kind: "account",
+    });
+    assert.deepEqual(screenFor(UNAVAILABLE, LOADED, null, "cart"), {
+      kind: "unavailable",
+    });
+    assert.deepEqual(screenFor(CLOSED, LOADED, null, "cart"), { kind: "cart" });
+  });
   it("opens the builder for open, closed and unconfirmed stores", () => {
     for (const store of [OPEN, CLOSED, OFFLINE])
       assert.deepEqual(screenFor(store, LOADED, "calabresa"), {

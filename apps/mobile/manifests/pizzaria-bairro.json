@@ -2,8 +2,12 @@
   "slug": "pizzaria-bairro",
   "name": "Forno do Bairro",
   "version": "1.0.0",
-  "ios": { "bundleIdentifier": "br.com.whiteoven.fornodobairro" },
-  "android": { "package": "br.com.whiteoven.fornodobairro" },
+  "ios": {
+    "bundleIdentifier": "br.com.whiteoven.fornodobairro"
+  },
+  "android": {
+    "package": "br.com.whiteoven.fornodobairro"
+  },
   "icon": "./assets/tenants/pizzaria-bairro/icon.png",
   "iconBackgroundColor": "#1F4D3A",
   "fallbackColors": {
@@ -12,5 +16,9 @@
     "primaryPressed": "#601410",
     "onPrimary": "#FFFFFF",
     "accentText": "#8C1D18"
+  },
+  "privacyPolicy": {
+    "version": "demo-2026-10-27",
+    "text": "Ambiente demonstrativo do WhiteOven. Use somente dados fictícios. Nome, e-mail, telefone opcional e endereços são utilizados para criar a conta e simular pedidos nesta loja. A sessão e o carrinho ficam protegidos no dispositivo. É possível excluir a conta pela tela Minha conta. Este aviso é exclusivo da demonstração e deve ser substituído pelo texto jurídico aprovado antes da publicação para clientes reais (M7.2)."
   }
 }

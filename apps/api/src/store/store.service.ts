@@ -55,7 +55,18 @@ export interface PublicStoreStatus {
  * `/v1/public/stores/{slug}/images/{logoImageId}/{variant}` (M5.2, ADR 0021); the icon belongs to
  * the build and is not exposed.
  */
+export type PublicCheckoutSettings = Pick<
+  StoreSettings,
+  | "fulfillmentModes"
+  | "deliveryFeeCents"
+  | "minimumOrderCents"
+  | "deliveryAreaDescription"
+  | "acceptedPaymentMethods"
+  | "pickupAddress"
+>;
+
 export interface PublicStoreProfile {
+  checkout: PublicCheckoutSettings | null;
   slug: string;
   name: string;
   brand: {
@@ -181,14 +192,18 @@ export class StoreService {
   /** Name and brand colors of the store in the URL; read on every request, never cached here. */
   getPublicProfile(): Promise<PublicStoreProfile> {
     return this.transactions.run(async (em) => {
-      const [[tenant], brand] = await Promise.all([
+      const [[tenant], brand, [checkout]] = await Promise.all([
         em.execute<{ slug: string; name: string }[]>(
           "select slug, display_name as name from tenants where id = ?",
           [currentTenantContext().tenantId],
         ),
         this.readBrand(em),
+        em.execute<PublicCheckoutSettings[]>(
+          `select fulfillment_modes as "fulfillmentModes", delivery_fee_cents as "deliveryFeeCents", minimum_order_cents as "minimumOrderCents", delivery_area_description as "deliveryAreaDescription", accepted_payment_methods as "acceptedPaymentMethods", pickup_address as "pickupAddress" from store_settings`,
+        ),
       ]);
       return {
+        checkout: checkout ?? null,
         slug: tenant!.slug,
         name: tenant!.name,
         brand: {

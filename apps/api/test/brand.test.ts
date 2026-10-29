@@ -267,6 +267,7 @@ describe("M3.5 brand theme", databaseSuite, () => {
     assert.equal(before.status, 200);
     assert.equal(before.headers.get("cache-control"), "no-cache");
     assert.deepEqual(await json(before), {
+      checkout: null,
       slug: slugB,
       name: `Pizzaria ${slugB}`,
       brand: { version: 0, colors: DEFAULT_BRAND_COLORS, logoImageId: null },
