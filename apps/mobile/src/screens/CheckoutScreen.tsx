@@ -129,6 +129,13 @@ export function CheckoutScreen({
           disabled={state.busy}
         />
       ) : null}
+      {state.ready && state.session === "failed" ? (
+        <Button
+          label="Tentar restaurar a sessão"
+          onPress={() => void model.init()}
+          disabled={state.busy}
+        />
+      ) : null}
       <Button
         label={
           state.profile

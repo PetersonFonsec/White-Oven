@@ -57,8 +57,22 @@ function setup() {
     identity: string = customerId;
   let quoted = 500;
   let onQuote: (() => void) | null = null;
+  let loginFailure: "invalid" | "network" | null = null,
+    meFailures = 0;
+  const calls = { refresh: 0, login: 0 };
   const fetcher: typeof fetch = async (url, init) => {
     const path = String(url);
+    if (path.endsWith("/auth/refresh")) calls.refresh++;
+    if (path.endsWith("/auth/login")) {
+      calls.login++;
+      if (loginFailure === "network") throw new Error("offline");
+      if (loginFailure === "invalid")
+        return Response.json({ code: "INVALID_CREDENTIALS" }, { status: 401 });
+    }
+    if (path.endsWith("/me") && meFailures > 0) {
+      meFailures--;
+      throw new Error("offline");
+    }
     if (path.includes("/auth/"))
       return Response.json({
         accessToken: "access",
@@ -111,7 +125,14 @@ function setup() {
     storage,
     secret,
     requests,
+    calls,
     model,
+    failLogin(kind: "invalid" | "network" | null) {
+      loginFailure = kind;
+    },
+    failProfile(times: number) {
+      meFailures = times;
+    },
     lose() {
       loseResponse = true;
     },
@@ -269,4 +290,92 @@ test("corrupt saved data fails closed, quantities stay bounded and money is deci
   assert.equal(moneyInput("12,34"), 1234);
   assert.equal(moneyInput(""), null);
   assert.throws(() => moneyInput("1e3"));
+});
+
+test("failed account switch never restores the previous identity; the original account recovers the pending order", async () => {
+  for (const kind of ["invalid", "network"] as const) {
+    const h = setup(),
+      model = await prepare(h);
+    h.lose();
+    assert.equal(await model.confirm(), false);
+    const pending = model.getSnapshot().pending;
+    assert.ok(pending);
+    h.failLogin(kind);
+    h.identity(otherCustomer);
+    assert.equal(await model.signIn("login", {}), false);
+    assert.equal(model.getSnapshot().profile, null);
+    assert.ok(model.getSnapshot().error);
+    assert.equal(h.secret.value, null, "previous session ended locally");
+    const refreshes = h.calls.refresh;
+    assert.equal(await model.refreshAccount(), false);
+    assert.equal(model.getSnapshot().profile, null);
+    assert.equal(h.calls.refresh, refreshes, "no refresh into the old session");
+    assert.equal(await model.confirm(), false);
+    assert.equal(await model.acknowledgePending(), false);
+    assert.equal(h.requests.length, 1);
+    assert.deepEqual(model.getSnapshot().pending, pending);
+    h.failLogin(null);
+    h.identity(customerId);
+    assert.equal(await model.signIn("login", {}), true);
+    assert.equal(model.getSnapshot().profile?.id, customerId);
+    assert.equal(await model.confirm(), true);
+    assert.equal(h.requests.length, 2);
+    assert.deepEqual(h.requests[0], h.requests[1], "same key and body");
+    assert.equal(model.getSnapshot().receipt?.number, 12);
+  }
+});
+
+test("init loads the cart once, retries a failed session restore and never runs concurrently", async () => {
+  const h = setup(),
+    first = await prepare(h);
+  assert.equal(first.getSnapshot().cart.length, 1);
+  h.failProfile(1);
+  const model = h.model();
+  const refreshes = h.calls.refresh;
+  const [a, b] = [model.init(), model.init()];
+  assert.equal(a, b, "concurrent calls share one initialization");
+  assert.equal(await a, false);
+  assert.equal(h.calls.refresh, refreshes + 1);
+  let snapshot = model.getSnapshot();
+  assert.equal(snapshot.ready, true);
+  assert.equal(snapshot.session, "failed");
+  assert.equal(snapshot.profile, null);
+  assert.ok(snapshot.error);
+  assert.equal(snapshot.cart.length, 1, "cart stays available");
+  const extra: CartLine = { ...line, id: randomUUID() };
+  assert.equal(await model.changeCart((lines) => [...lines, extra]), true);
+  assert.equal(await model.init(), true);
+  snapshot = model.getSnapshot();
+  assert.equal(snapshot.session, "restored");
+  assert.equal(snapshot.profile?.id, customerId);
+  assert.equal(
+    snapshot.cart.length,
+    2,
+    "retry does not reload over newer changes",
+  );
+  const calls = h.calls.refresh;
+  assert.equal(await model.init(), true);
+  assert.equal(
+    h.calls.refresh,
+    calls,
+    "a restored session is not restored again",
+  );
+});
+
+test("a transient storage read failure leaves init retryable", async () => {
+  const h = setup();
+  await prepare(h);
+  const read = h.storage.read;
+  h.storage.read = async () => {
+    throw new Error("keychain locked");
+  };
+  const model = h.model();
+  assert.equal(await model.init(), false);
+  assert.equal(model.getSnapshot().ready, false);
+  assert.equal(model.getSnapshot().session, "idle");
+  assert.equal(await model.changeCart(() => []), false);
+  h.storage.read = read;
+  assert.equal(await model.init(), true);
+  assert.equal(model.getSnapshot().cart.length, 1);
+  assert.equal(model.getSnapshot().profile?.id, customerId);
 });

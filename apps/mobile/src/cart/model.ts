@@ -34,8 +34,12 @@ interface Saved {
   pending: Pending | null;
   receipt: Receipt | null;
 }
+/** Restoring the saved session is tracked apart from the cart so either can be retried alone. */
+export type SessionStatus = "idle" | "restoring" | "restored" | "failed";
 export interface CommerceState extends Saved {
+  /** The persisted cart/confirmation was read; commerce actions may run. */
   ready: boolean;
+  session: SessionStatus;
   busy: boolean;
   error: string | null;
   profile: Profile | null;
@@ -195,6 +199,7 @@ export function createCommerceModel(options: {
     pending: null,
     receipt: null,
     ready: false,
+    session: "idle",
     busy: false,
     error: null,
     profile: null,
@@ -202,6 +207,7 @@ export function createCommerceModel(options: {
     quote: null,
   };
   let quoteGeneration = 0;
+  let initializing: Promise<boolean> | null = null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<CommerceState>) => {
     state = { ...state, ...patch };
@@ -347,17 +353,43 @@ export function createCommerceModel(options: {
         listeners.delete(listener);
       };
     },
-    init: () =>
-      run(async () => {
-        if (state.ready) return;
-        const saved = parseSaved(await options.storage.read());
-        update({ ...saved, ready: true });
-        await client.restore();
-        if (client.signedIn) await loadProfile();
-      }, false),
+    /**
+     * Loads the saved commerce state once, then restores the session. Each step is retried
+     * independently: a session failure keeps the cart usable and never re-reads it over newer changes.
+     */
+    init() {
+      if (initializing) return initializing;
+      if (state.ready && state.session === "restored")
+        return Promise.resolve(true);
+      initializing = run(async () => {
+        if (!state.ready) {
+          const saved = parseSaved(await options.storage.read());
+          update({ ...saved, ready: true });
+        }
+        if (state.session === "restored") return;
+        update({ session: "restoring" });
+        try {
+          await client.restore();
+          if (client.signedIn) await loadProfile();
+          update({ session: "restored" });
+        } catch (error) {
+          update({ session: "failed" });
+          throw error;
+        }
+      }, false).finally(() => {
+        initializing = null;
+      });
+      return initializing;
+    },
     signIn: (mode: "login" | "register", body: unknown) =>
       run(async () => {
-        update({ profile: null, addresses: [], quote: null });
+        // An explicit sign-in supersedes any saved session still waiting for restoration.
+        update({
+          profile: null,
+          addresses: [],
+          quote: null,
+          session: "restored",
+        });
         await client.signIn(mode, body);
         await loadProfile();
       }),

@@ -118,3 +118,114 @@ test("chunked secure records preserve Unicode, isolate scopes, and keep the old 
   values.delete(`store-a.${head.id}.0`);
   await assert.rejects(a.read(), /incompletos/);
 });
+
+test("a failed sign-in ends the previous session instead of silently refreshing back into it", async () => {
+  for (const failure of ["invalid", "network", "storage"] as const) {
+    const saved = secret("old-refresh");
+    const paths: string[] = [];
+    const client = createCustomerClient({
+      apiUrl: "https://api.test",
+      storeSlug: "loja-a",
+      secret: saved,
+      fetch: async (url, init) => {
+        const path = String(url).split("/loja-a/")[1]!;
+        paths.push(path);
+        if (path === "auth/logout") {
+          assert.equal(
+            JSON.parse(init!.body as string).refreshToken,
+            "old-refresh",
+          );
+          return new Response(null, { status: 204 });
+        }
+        if (path === "auth/refresh")
+          return Response.json({
+            accessToken: "old-access",
+            refreshToken: "old-rotated",
+            expiresIn: 900,
+          });
+        if (path === "auth/login") {
+          if (failure === "network") throw new Error("offline");
+          return Response.json(
+            { code: "INVALID_CREDENTIALS" },
+            { status: 401 },
+          );
+        }
+        return Response.json({ ok: true });
+      },
+    });
+    await client.request("me");
+    assert.equal(saved.value, "old-rotated");
+    if (failure === "storage")
+      saved.remove = async () => {
+        throw new Error("keychain unavailable");
+      };
+    paths.length = 0;
+    await assert.rejects(
+      client.signIn("login", { email: "x@example.invalid", password: "x" }),
+      (error: { code?: string }) =>
+        error.code ===
+        {
+          invalid: "INVALID_CREDENTIALS",
+          network: "NETWORK",
+          storage: "STORAGE",
+        }[failure],
+    );
+    assert.equal(client.signedIn, false);
+    await assert.rejects(client.request("me"), { code: "LOGIN_REQUIRED" });
+    await client.restore();
+    assert.equal(client.signedIn, false);
+    assert.ok(
+      !paths.includes("auth/refresh"),
+      `${failure}: old token never refreshed`,
+    );
+    if (failure === "storage") {
+      assert.deepEqual(
+        paths,
+        [],
+        "nothing is sent when the old session cannot be removed",
+      );
+    } else {
+      assert.equal(saved.value, null);
+      assert.deepEqual(paths, ["auth/logout", "auth/login"]);
+    }
+  }
+});
+
+test("a sign-in waits for an in-flight rotation so the previous identity is not persisted afterwards", async () => {
+  const saved = secret("old-refresh");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const client = createCustomerClient({
+    apiUrl: "https://api.test",
+    storeSlug: "loja-a",
+    secret: saved,
+    fetch: async (url) => {
+      const path = String(url);
+      if (path.endsWith("auth/refresh")) {
+        await gate;
+        return Response.json({
+          accessToken: "old-access",
+          refreshToken: "old-rotated",
+          expiresIn: 900,
+        });
+      }
+      if (path.endsWith("auth/logout"))
+        return new Response(null, { status: 204 });
+      if (path.endsWith("auth/login"))
+        return Response.json({
+          accessToken: "new-access",
+          refreshToken: "new-refresh",
+          expiresIn: 900,
+        });
+      return Response.json({ ok: true });
+    },
+  });
+  const earlier = client.request("me");
+  await new Promise((resolve) => setImmediate(resolve));
+  const signingIn = client.signIn("login", {});
+  release();
+  await earlier;
+  await signingIn;
+  assert.equal(saved.value, "new-refresh");
+  assert.equal(client.signedIn, true);
+});

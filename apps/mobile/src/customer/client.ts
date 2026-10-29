@@ -65,6 +65,8 @@ export function createCustomerClient(options: {
   let access: string | null = null;
   let expires = 0;
   let refreshing: Promise<void> | null = null;
+  // Set when a sign-in replaces the session: nothing may refresh back into the previous identity.
+  let replaced = false;
   async function raw(
     path: string,
     method: string,
@@ -107,16 +109,25 @@ export function createCustomerClient(options: {
       clearTimeout(timeout);
     }
   }
+  async function persist(step: () => Promise<void>) {
+    try {
+      await step();
+    } catch {
+      throw new CustomerError(0, "STORAGE");
+    }
+  }
   async function accept(value: unknown) {
     const next = tokens(value);
-    await options.secret.write(next.refreshToken);
+    await persist(() => options.secret.write(next.refreshToken));
     access = next.accessToken;
     expires = now() + next.expiresIn * 1000 - 30000;
+    replaced = false;
   }
   function refresh(): Promise<void> {
     if (refreshing) return refreshing;
     refreshing = (async () => {
       access = null;
+      if (replaced) throw new CustomerError(401, "LOGIN_REQUIRED");
       const saved = await options.secret.read();
       if (!saved) throw new CustomerError(401, "LOGIN_REQUIRED");
       // Consume before rotation: a lost response must never replay a spent refresh token.
@@ -138,10 +149,31 @@ export function createCustomerClient(options: {
       return access !== null;
     },
     async restore() {
-      if (await options.secret.read()) await refresh();
+      if (replaced) return;
+      const saved = await options.secret.read();
+      // A sign-in may have started while reading; it owns the session from then on.
+      if (saved && !replaced) await refresh();
     },
+    /**
+     * Replacing the session ends the previous one first, so a failed attempt (wrong password,
+     * network, storage) leaves the client signed out instead of silently refreshing back into it.
+     */
     async signIn(mode: "login" | "register", body: unknown) {
+      replaced = true;
       access = null;
+      // A rotation already in flight could persist the previous identity after the removal below.
+      await refreshing?.catch(() => undefined);
+      replaced = true;
+      access = null;
+      const previous = await options.secret.read().catch(() => null);
+      await persist(() => options.secret.remove());
+      // Best-effort server revocation; the token is already gone locally and is never replayed.
+      if (previous)
+        await raw(
+          "auth/logout",
+          "POST",
+          JSON.stringify({ refreshToken: previous }),
+        ).catch(() => undefined);
       await accept(await raw(`auth/${mode}`, "POST", JSON.stringify(body)));
     },
     async request(
@@ -189,6 +221,8 @@ export function createCustomerClient(options: {
 export type CustomerClient = ReturnType<typeof createCustomerClient>;
 
 const messages: Record<string, string> = {
+  STORAGE:
+    "Não foi possível salvar a sessão com segurança neste dispositivo. Entre novamente.",
   NETWORK:
     "Não foi possível confirmar a resposta. Confira a conexão e tente novamente.",
   INVALID_RESPONSE:
