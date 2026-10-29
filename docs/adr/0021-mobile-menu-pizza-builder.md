@@ -1,6 +1,6 @@
 # ADR 0021: cardápio, Pizza Builder e imagens públicas no app
 
-- **Status:** em desenvolvimento em M5.2
+- **Status:** implementado em M5.2 (PR #34)
 - **Data:** 2026-10-26
 - **Milestone:** M5.2
 

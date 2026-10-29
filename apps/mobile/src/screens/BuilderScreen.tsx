@@ -4,6 +4,7 @@ import {
   PIZZA_QUANTITY_MAX,
   PIZZA_QUANTITY_MIN,
   type HalfSide,
+  type PizzaConfiguration,
 } from "@whiteoven/contracts";
 import { useTheme } from "../brand/theme.tsx";
 import {
@@ -32,18 +33,29 @@ import { MENU_STALE_NOTICE } from "./store-messages.ts";
 import { PizzaVisual } from "../components/PizzaVisual.tsx";
 
 interface Props {
+  addingDisabled: boolean;
+  addError: string | null;
   builder: BuilderMenu;
   flavorId: string;
   /** The menu could not be reloaded: prices and availability may be old. */
   menuStale: boolean;
   onBack: () => void;
+  onAdd: (pizza: PizzaConfiguration) => void;
 }
 
 /**
  * The Pizza Builder (M5.2, ADR 0021). Every choice goes through `pizza-pricing`, the same
  * pipeline the API runs; the price shown is an estimate the order confirms (M5.3).
  */
-export function BuilderScreen({ builder, flavorId, menuStale, onBack }: Props) {
+export function BuilderScreen({
+  addingDisabled,
+  addError,
+  builder,
+  flavorId,
+  menuStale,
+  onBack,
+  onAdd,
+}: Props) {
   const theme = useTheme();
   const [state, setState] = useState<BuilderState | null>(() =>
     startBuilder(builder, flavorId),
@@ -497,6 +509,19 @@ export function BuilderScreen({ builder, flavorId, menuStale, onBack }: Props) {
           </Text>
         )}
       </View>
+      {addError ? (
+        <Text accessibilityRole="alert" style={{ color: theme.colors.error }}>
+          {addError}
+        </Text>
+      ) : null}
+      {result.kind === "priced" ? (
+        <Action
+          disabled={addingDisabled}
+          label="Adicionar ao carrinho"
+          primary
+          onPress={() => onAdd(result.configuration)}
+        />
+      ) : null}
     </ScrollView>
   );
 }
@@ -504,6 +529,7 @@ export function BuilderScreen({ builder, flavorId, menuStale, onBack }: Props) {
 function Action(props: {
   label: string;
   primary?: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }) {
   const theme = useTheme();
@@ -511,8 +537,11 @@ function Action(props: {
     <Pressable
       accessibilityRole="button"
       onPress={props.onPress}
+      disabled={props.disabled}
+      accessibilityState={{ disabled: props.disabled }}
       style={({ pressed }) => [
         styles.action,
+        { opacity: props.disabled ? 0.5 : 1 },
         {
           borderRadius: theme.radius.pill,
           borderColor: theme.colors.primary,

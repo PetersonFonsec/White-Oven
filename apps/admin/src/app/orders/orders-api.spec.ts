@@ -224,14 +224,15 @@ describe("OrdersApi", () => {
   });
 
   it("requires a current GET reconciliation before retrying an aged intent", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1);
+    const startedAt = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(startedAt);
     const first = api.transition(order, "PREPARING");
     const request = http.expectOne(`/v1/admin/orders/${order.id}/transitions`);
     request.error(new ProgressEvent("network failure"));
     await expect(first).rejects.toMatchObject({ status: 0 });
     vi.restoreAllMocks();
     vi.spyOn(Date, "now").mockReturnValue(
-      Date.now() + ORDER_INTENT_RECONCILIATION_AGE_MS + 1,
+      startedAt + ORDER_INTENT_RECONCILIATION_AGE_MS + 1,
     );
     TestBed.resetTestingModule();
     makeApi();

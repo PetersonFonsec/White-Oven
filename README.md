@@ -107,3 +107,22 @@ a plataforma como OPERATOR, use `pnpm api:create-operator` e complete o cadastro
 normal; a seed não cria operadores nem contorna MFA.
 
 A API conecta apenas como `whiteoven_app` (sem `BYPASSRLS` e sem DDL); as migrations rodam em processo separado como `whiteoven_owner`. Configuração inválida (por exemplo `API_PORT=abc`), credencial de dono no ambiente da API, papel de banco inseguro ou banco inacessível encerram o processo com código 1 antes de abrir a porta. Testes de integração da API usam PostgreSQL real: com `pnpm db:up`, rode `TEST_DATABASE_OWNER_URL=postgres://whiteoven_owner:whiteoven-dev-owner-password@127.0.0.1:5432/whiteoven pnpm test`; sem a variável essas suítes são puladas localmente e falham na CI. Dados de pizzarias ficam isolados por RLS forçado: toda tabela com `tenant_id` segue o padrão do [ADR 0006](docs/adr/0006-tenant-isolation.md) e entra nos testes de isolamento. A equipe autentica em `/v1/admin/auth` ([ADR 0007](docs/adr/0007-staff-authentication.md)); em produção a API exige `AUTH_ACCESS_TOKEN_PRIVATE_KEY` (Ed25519 PKCS#8 DER em base64), `AUTH_MFA_ENCRYPTION_KEY` (32 bytes em base64) e `OWNER_INVITE_SECRET` (32 bytes em base64, exclusivo e persistente; gere com `openssl rand -base64 32`). A chave de convite é independente da assinatura JWT; mantenha o valor estável para que retries idempotentes reproduzam o mesmo link após reinícios. Fora de produção, os segredos ausentes são efêmeros. O primeiro operador é criado com `printf '%s\n' "$SENHA" | pnpm api:create-operator email@exemplo nome` e, no primeiro login, só consegue cadastrar o segundo fator. Imagens do catálogo usam o diretório configurado por `IMAGE_STORAGE_DIRECTORY` (padrão `.data/images`; produção exige caminho absoluto); em Compose de desenvolvimento, ficam no volume `image-data`. Esse volume não é coberto pelo backup operacional da landing: antes de captar imagens reais, defina cópia externa cifrada, retenção/acesso, e ensaie restauração junto dos metadados PostgreSQL. `compose.dev.yaml` e suas senhas são só para desenvolvimento; o `compose.yaml` de produção continua servindo apenas a landing.
+
+### App: conta, carrinho e checkout (M5.3)
+
+O app permite cadastro/login por loja, endereços, exclusão da conta, carrinho com pizzas e produtos,
+e cotação/confirmação de pedidos. Consulte o [ADR 0022](docs/adr/0022-mobile-account-checkout.md).
+O refresh token e o estado comercial são protegidos por SecureStore, separados por API + loja;
+o access token fica só em memória. O cache de marca continua contendo apenas dados públicos.
+
+Em resposta perdida, use **Recuperar resultado do pedido**: o app preserva a mesma chave e corpo
+inclusive após reiniciar. Não monte um segundo pedido antes de confirmar o resultado do primeiro.
+Mudança de preço exige nova cotação e confirmação. Pagamentos são apenas registrados para entrega/retirada.
+
+Os manifestos de demonstração têm `privacyPolicy: { version, text }` exclusivamente para dados fictícios.
+Sem aviso configurado, cadastro fica desabilitado. O texto aprovado para clientes reais continua no M7.2.
+
+`pnpm test:e2e:mobile`, com `TEST_DATABASE_OWNER_URL`, usa o cliente e controlador do app contra API real
+em banco PostgreSQL descartável: inclui resposta perdida, reinício, unicidade do pedido, alteração de preço
+e anonimização. A CI executa esse teste; validação visual e do armazenamento nativo em dispositivo continua
+sendo necessária antes da publicação. Não há acompanhamento/histórico ou push neste marco.
