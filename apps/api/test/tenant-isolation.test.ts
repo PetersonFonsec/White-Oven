@@ -973,6 +973,48 @@ describe("tenant isolation", databaseSuite, () => {
       assert.doesNotMatch(JSON.stringify(body), /SUSPENDED/);
     });
 
+    it("public checkout settings are selected only by the store slug", async () => {
+      for (const [store, fee] of [
+        [a, 111],
+        [b, 222],
+      ] as const) {
+        await runInTenant(owner, store.id, (em) =>
+          em.execute(
+            `insert into store_settings (tenant_id, fulfillment_modes, delivery_fee_cents, minimum_order_cents, estimated_prep_minutes, estimated_delivery_minutes, accept_timeout_minutes, accepted_payment_methods, delivery_area_description)
+           values (?, '{DELIVERY}', ?, 0, 30, 30, 10, '{CASH}', ?)`,
+            [store.id, fee, `Área ${store.slug}`],
+          ),
+        );
+      }
+      try {
+        for (const [store, other, fee] of [
+          [a, b, 111],
+          [b, a, 222],
+        ] as const) {
+          const response = await call(
+            `/public/stores/${store.slug}?tenantId=${other.id}`,
+            { headers: { "x-tenant-id": other.id } },
+          );
+          assert.equal(response.status, 200);
+          const body = await json(response);
+          assert.deepEqual(body.checkout, {
+            fulfillmentModes: ["DELIVERY"],
+            deliveryFeeCents: fee,
+            minimumOrderCents: 0,
+            deliveryAreaDescription: `Área ${store.slug}`,
+            acceptedPaymentMethods: ["CASH"],
+            pickupAddress: null,
+          });
+          assert.ok(!JSON.stringify(body).includes(other.slug));
+        }
+      } finally {
+        for (const store of [a, b])
+          await runInTenant(owner, store.id, (em) =>
+            em.execute("delete from store_settings"),
+          );
+      }
+    });
+
     it("the public menu lists only the store's own catalog", async () => {
       for (const [store, other] of [
         [a, b],

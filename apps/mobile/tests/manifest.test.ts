@@ -61,6 +61,7 @@ describe("tenant manifests and the Expo config", () => {
       assert.equal(config.android.adaptiveIcon.foregroundImage, config.icon);
     }
     assert.deepEqual(bairro!.extra.whiteoven, {
+      privacyPolicy: manifestFile("pizzaria-bairro").privacyPolicy,
       storeSlug: "pizzaria-bairro",
       storeName: "Forno do Bairro",
       apiUrl: "http://localhost:3000",
@@ -71,6 +72,23 @@ describe("tenant manifests and the Expo config", () => {
       centro!.extra.whiteoven.fallbackColors,
       DEFAULT_BRAND_COLORS,
     );
+  });
+
+  it("requires a valid privacy version and text when configured", () => {
+    const valid = manifestFile("pizzaria-bairro");
+    for (const privacyPolicy of [
+      null,
+      {},
+      { version: "", text: "Aviso" },
+      { version: "v1", text: "" },
+    ])
+      assert.throws(
+        () => parseManifest({ ...valid, privacyPolicy }),
+        ManifestError,
+      );
+    const { privacyPolicy: _policy, ...withoutPolicy } = valid;
+    assert.ok(_policy);
+    assert.equal(parseManifest(withoutPolicy).privacyPolicy, undefined);
   });
 
   it("needs a tenant that has a manifest, naming the same store", () => {

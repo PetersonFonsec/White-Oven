@@ -74,21 +74,27 @@ export type Screen =
   | { kind: "starting" }
   /** The API confirmed the store is not serving: nothing else is reachable. */
   | { kind: "unavailable" }
+  | { kind: "account" }
+  | { kind: "cart" }
   | { kind: "menu" }
   | { kind: "builder"; flavorId: string };
 
 /**
  * The one place that decides what the app shows. A store confirmed unavailable wins over
- * everything, the builder included; closed and offline stores keep the menu and the builder,
+ * the builder and checkout. Account remains reachable for deletion (ADR 0017).
+ * Closed and offline stores keep the menu and the builder,
  * with their notices. The builder needs a menu to price with.
  */
 export function screenFor(
   view: StoreView | null,
   menu: MenuState,
   building: string | null,
+  destination: "account" | "cart" | null = null,
 ): Screen {
+  if (destination === "account") return { kind: "account" };
   if (!view) return { kind: "starting" };
   if (view.availability.kind === "unavailable") return { kind: "unavailable" };
+  if (destination === "cart") return { kind: "cart" };
   if (building && menu.kind === "ok")
     return { kind: "builder", flavorId: building };
   return { kind: "menu" };

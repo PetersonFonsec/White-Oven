@@ -7,7 +7,6 @@ import Button from "../components/Button.astro";
 import SectionHeading from "../components/SectionHeading.astro";
 import FeatureCard from "../components/FeatureCard.astro";
 import PizzaPhoto from "../components/PizzaPhoto.astro";
-import HeroDashboard from "../components/HeroDashboard.astro";
 import PizzaBuilder from "../components/PizzaBuilder.astro";
 import AdminPreview from "../components/AdminPreview.astro";
 import PricingCard from "../components/PricingCard.astro";
@@ -101,6 +100,7 @@ const questions = [
   description="Conheça o WhiteOven: aplicativos com a marca da sua pizzaria, Pizza Builder meio a meio e gestão em um só lugar. Explore a demonstração e os planos preliminares."
 >
   <Header />
+  <div class="reading-progress" aria-hidden="true"></div>
   <main id="inicio" tabindex="-1">
     <section class="hero">
       <div class="wrap hero-grid">
@@ -109,11 +109,10 @@ const questions = [
             <span class="eyebrow-line" aria-hidden="true"></span>O próximo
             capítulo da sua pizzaria
           </p><h1>
-            Sua pizzaria.<br />Seu aplicativo.<br /><span>Seus clientes.</span>
+            Sua marca.<br /><span>Seu app.</span>
           </h1><p class="hero-description">
-            Transforme a experiência de pedidos da sua pizzaria com um
-            aplicativo próprio, pizzas personalizadas e um painel para gerenciar
-            seu negócio.
+            Um aplicativo com a marca da sua pizzaria. Um jeito visual de montar
+            pizzas. Seus pedidos, na sua mão.
           </p><div class="hero-actions">
             <Button href="#interesse">Quero acesso antecipado</Button><Button
               href="#demonstracao"
@@ -124,7 +123,10 @@ const questions = [
             breve
           </p>
         </div>
-        <div class="hero-composition">
+        <div class="hero-composition" data-pointer-stage>
+          <a class="hero-demo-link" href="#demonstracao"
+            >Monte sua combinação <span aria-hidden="true">↗</span></a
+          >
           <span class="hero-orbit" aria-hidden="true"></span><div
             class="hero-pizza"
           >
@@ -135,8 +137,111 @@ const questions = [
                 >Ingredientes no lugar certo.</small
               >
             </div>
-          </div><a
+          </div>
+        </div>
+      </div>
+    </section>
+    <div class="promise-strip">
+      <div class="wrap">
+        <span
+          >Uma base inteligente.<br /><strong>Infinitas identidades.</strong
+          ></span
+        ><span>Aplicativo com sua marca</span><span>Pizza Builder visual</span
+        ><span>Gestão centralizada</span>
+      </div>
+    </div>
+    <section
+      class="features section"
+      id="funcionalidades"
+      aria-labelledby="features-title"
+    >
+      <div class="wrap">
+        <div class="section-heading-row">
+          <SectionHeading
+            eyebrow="Da primeira escolha à próxima visita"
+            title="Sua receita, conectada."
+            id="features-title"
+          /><p class="muted">
+            Recursos planejados para valorizar sua marca e simplificar a rotina.
+            Tudo conectado à experiência da sua pizzaria.
+          </p>
+        </div><div class="feature-grid">
+          {
+            features.map((feature, i) => (
+              <FeatureCard number={`0${i + 1}`} {...feature} />
+            ))
+          }
+        </div>
+      </div>
+    </section>
+    <PizzaBuilder />
+    <AdminPreview />
+    <section class="how section" id="como-funciona" aria-labelledby="how-title">
+      <div class="wrap">
+        <SectionHeading
+          eyebrow="Da sua cozinha para a tela"
+          title="Da cozinha ao cliente."
+          id="how-title"
+          centered
+        /><ol class="steps">
+          {
+            steps.map((step, i) => (
+              <li>
+                <>
+                  <span class="step-number">0{i + 1}</span>
+                  <h3>{step.title}</h3>
+                  <p>{step.description}</p>
+                </>
+              </li>
+            ))
+          }
+        </ol>
+      </div>
+    </section>
+    <section
+      class="pricing section"
+      id="planos"
+      aria-labelledby="pricing-title"
+    >
+      <div class="wrap">
+        <SectionHeading
+          eyebrow="Duas formas de começar"
+          title="Dois jeitos de começar."
+          id="pricing-title"
+          description="Compare os modelos comerciais que estamos validando. No MVP, Flex e Pro terão as mesmas funcionalidades."
+          centered
+        /><div class="pricing-grid">
+          <PricingCard plan="flex" /><PricingCard plan="pro" />
+        </div><div class="pricing-notes">
+          <p>Taxas dos provedores de pagamento cobradas separadamente.</p><p>
+            Condições preliminares de validação. Planos ainda não disponíveis
+            para contratação.
+          </p>
+        </div>
+      </div>
+    </section>
+    <section class="stores section" aria-labelledby="stores-title">
+      <div class="wrap stores-inner">
+        <div>
+          <p class="eyebrow">Sua pizzaria também na tela inicial</p><h2
+            id="stores-title"
+          >
+            Seu app.<br />Sua identidade.
+          </h2><p>
+            Aplicativos próprios para cada pizzaria, com sua identidade. Estamos
+            preparando essa experiência para Android e iOS.
+          </p><div class="store-badges">
+            <StoreBadge store="apple" /><StoreBadge store="google" />
+          </div><p class="small muted">
+            Nenhum aplicativo publicado nesta etapa. Publicação sujeita à
+            aprovação das lojas.
+          </p><Button href="#interesse" variant="secondary"
+            >Quero conhecer um aplicativo de demonstração</Button
+          >
+        </div><div class="store-visual">
+          <a
             class="phone-preview"
+            data-ui
             href="#demonstracao"
             aria-label="Experimentar o Pizza Builder: prévia ilustrativa do aplicativo da Pizzaria Forno da Vila"
           >
@@ -164,114 +269,6 @@ const questions = [
               </p>
             </div>
           </a>
-          <HeroDashboard />
-        </div>
-      </div>
-    </section>
-    <div class="promise-strip">
-      <div class="wrap">
-        <span
-          >Uma base inteligente.<br /><strong>Infinitas identidades.</strong
-          ></span
-        ><span>Aplicativo com sua marca</span><span>Pizza Builder visual</span
-        ><span>Gestão centralizada</span>
-      </div>
-    </div>
-    <section
-      class="features section"
-      id="funcionalidades"
-      aria-labelledby="features-title"
-    >
-      <div class="wrap">
-        <div class="section-heading-row">
-          <SectionHeading
-            eyebrow="Da primeira escolha à próxima visita"
-            title="Sua receita. Nossa tecnologia."
-            id="features-title"
-          /><p class="muted">
-            Recursos planejados para valorizar sua marca e simplificar a rotina.
-            Tudo conectado à experiência da sua pizzaria.
-          </p>
-        </div><div class="feature-grid">
-          {
-            features.map((feature, i) => (
-              <FeatureCard number={`0${i + 1}`} {...feature} />
-            ))
-          }
-        </div>
-      </div>
-    </section>
-    <PizzaBuilder />
-    <AdminPreview />
-    <section class="how section" id="como-funciona" aria-labelledby="how-title">
-      <div class="wrap">
-        <SectionHeading
-          eyebrow="Da sua cozinha para a tela"
-          title="Sua marca no centro. Do início ao fim."
-          id="how-title"
-          centered
-        /><ol class="steps">
-          {
-            steps.map((step, i) => (
-              <li>
-                <>
-                  <span class="step-number">0{i + 1}</span>
-                  <h3>{step.title}</h3>
-                  <p>{step.description}</p>
-                </>
-              </li>
-            ))
-          }
-        </ol>
-      </div>
-    </section>
-    <section
-      class="pricing section"
-      id="planos"
-      aria-labelledby="pricing-title"
-    >
-      <div class="wrap">
-        <SectionHeading
-          eyebrow="Duas formas de começar"
-          title="O mesmo produto. A escolha é sua."
-          id="pricing-title"
-          description="Compare os modelos comerciais que estamos validando. No MVP, Flex e Pro terão as mesmas funcionalidades."
-          centered
-        /><div class="pricing-grid">
-          <PricingCard plan="flex" /><PricingCard plan="pro" />
-        </div><div class="pricing-notes">
-          <p>Taxas dos provedores de pagamento cobradas separadamente.</p><p>
-            Condições preliminares de validação. Planos ainda não disponíveis
-            para contratação.
-          </p>
-        </div>
-      </div>
-    </section>
-    <section class="stores section" aria-labelledby="stores-title">
-      <div class="wrap stores-inner">
-        <div>
-          <p class="eyebrow">Sua pizzaria também na tela inicial</p><h2
-            id="stores-title"
-          >
-            O app é seu.<br />A vontade de voltar, do cliente.
-          </h2><p>
-            Aplicativos próprios para cada pizzaria, com sua identidade. Estamos
-            preparando essa experiência para Android e iOS.
-          </p><div class="store-badges">
-            <StoreBadge store="apple" /><StoreBadge store="google" />
-          </div><p class="small muted">
-            Nenhum aplicativo publicado nesta etapa. Publicação sujeita à
-            aprovação das lojas.
-          </p><Button href="#interesse" variant="secondary"
-            >Quero conhecer um aplicativo de demonstração</Button
-          >
-        </div><div class="store-visual" aria-hidden="true">
-          <span class="store-ring"></span><span class="store-tile">F.</span
-          ><span class="store-tile">P<span>IZZA</span></span><span
-            class="store-tile">🍕</span
-          ><span class="store-tile">V<span>ILA</span></span><p>
-            Mesma tecnologia.<br /><strong>Personalidades únicas.</strong>
-          </p>
         </div>
       </div>
     </section>
@@ -302,4 +299,7 @@ const questions = [
     </section>
   </main>
   <Footer />
+  <script>
+    import "../scripts/landing-motion";
+  </script>
 </BaseLayout>

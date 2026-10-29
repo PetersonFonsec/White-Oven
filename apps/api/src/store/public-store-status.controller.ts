@@ -31,7 +31,7 @@ export class PublicStoreController {
   @Header("Cache-Control", "no-cache")
   @ApiOperation({
     summary:
-      "The store's name and resolved brand colors, for the white label app",
+      "The store's name, resolved brand and public checkout settings, for the white label app",
   })
   get() {
     return this.store.getPublicProfile();

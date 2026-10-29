@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import "../styles/landing-experiment.css";
 import tokens from "@whiteoven/design-tokens";
 
 const cssTokens = Object.entries(tokens)
@@ -50,9 +51,15 @@ const { title, description } = Astro.props;
     <meta property="og:description" content={description} />
     <meta name="twitter:card" content="summary" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=Nunito:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
     <style set:html={`:root { ${cssTokens} ${shadowCss} }`}></style>
   </head>
-  <body>
+  <body class={Astro.url.pathname === "/" ? "landing-experiment" : undefined}>
     <a class="skip-link" href="#inicio">Pular para o conteúdo</a>
     <slot />
   </body>
