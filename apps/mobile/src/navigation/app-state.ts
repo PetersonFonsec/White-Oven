@@ -75,13 +75,21 @@ export type Screen =
   /** The API confirmed the store is not serving: nothing else is reachable. */
   | { kind: "unavailable" }
   | { kind: "account" }
-  | { kind: "cart" }
+  /** `recoveryOnly`: the store is unavailable; only a pending confirmation and its result show. */
+  | { kind: "cart"; recoveryOnly: boolean }
   | { kind: "menu" }
   | { kind: "builder"; flavorId: string };
 
 /**
+ * What the saved commerce state needs from the cart screen while the store is unavailable:
+ * a pending confirmation to recover, or the receipt that recovery just produced.
+ */
+export type Recovery = "pending" | "receipt" | null;
+
+/**
  * The one place that decides what the app shows. A store confirmed unavailable wins over
- * the builder and checkout. Account remains reachable for deletion (ADR 0017).
+ * the builder and checkout. Account remains reachable for deletion (ADR 0017), and the cart
+ * only to recover a pending confirmation (ADR 0022): never to quote or to change the cart.
  * Closed and offline stores keep the menu and the builder,
  * with their notices. The builder needs a menu to price with.
  */
@@ -90,11 +98,15 @@ export function screenFor(
   menu: MenuState,
   building: string | null,
   destination: "account" | "cart" | null = null,
+  recovery: Recovery = null,
 ): Screen {
   if (destination === "account") return { kind: "account" };
   if (!view) return { kind: "starting" };
-  if (view.availability.kind === "unavailable") return { kind: "unavailable" };
-  if (destination === "cart") return { kind: "cart" };
+  if (view.availability.kind === "unavailable")
+    return destination === "cart" && recovery
+      ? { kind: "cart", recoveryOnly: true }
+      : { kind: "unavailable" };
+  if (destination === "cart") return { kind: "cart", recoveryOnly: false };
   if (building && menu.kind === "ok")
     return { kind: "builder", flavorId: building };
   return { kind: "menu" };
@@ -109,4 +121,20 @@ export function buildingAfterRefresh(
   view: StoreView,
 ): string | null {
   return view.availability.kind === "unavailable" ? null : building;
+}
+
+/**
+ * The destination after a store refresh: a store confirmed unavailable closes the cart unless it
+ * is recovering a pending confirmation, which a status change must not interrupt.
+ */
+export function destinationAfterRefresh(
+  destination: "account" | "cart" | null,
+  view: StoreView,
+  recovery: Recovery,
+): "account" | "cart" | null {
+  return destination === "cart" &&
+    view.availability.kind === "unavailable" &&
+    !recovery
+    ? null
+    : destination;
 }

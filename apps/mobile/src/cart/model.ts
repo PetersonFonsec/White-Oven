@@ -213,6 +213,14 @@ export function createCommerceModel(options: {
     state = { ...state, ...patch };
     listeners.forEach((listener) => listener());
   };
+  /**
+   * The only way a quote stops being valid: clears it and bumps the generation, so a quote
+   * response already in flight can never bring back one computed from older inputs.
+   */
+  function dropQuote() {
+    quoteGeneration++;
+    if (state.quote) update({ quote: null });
+  }
   async function save(patch: Partial<Saved>) {
     const next = {
       version: 1 as const,
@@ -234,11 +242,10 @@ export function createCommerceModel(options: {
       await action();
       return true;
     } catch (error) {
+      if (!client.signedIn) dropQuote();
       update({
         error: customerMessage(error),
-        ...(client.signedIn
-          ? {}
-          : { profile: null, addresses: [], quote: null }),
+        ...(client.signedIn ? {} : { profile: null, addresses: [] }),
       });
       return false;
     } finally {
@@ -319,8 +326,13 @@ export function createCommerceModel(options: {
         ].includes(error.code)
       ) {
         await save({ pending: null });
-        update({ quote: null });
+        dropQuote();
       }
+      // A store that stopped serving cannot reconcile the key: the result stays unknown.
+      if (error instanceof CustomerError && error.code === "TENANT_NOT_ACTIVE")
+        throw new Error(
+          "Não foi possível confirmar se o pedido foi recebido: a loja está indisponível. Confira diretamente com a pizzaria antes de liberar o carrinho.",
+        );
       throw error;
     }
     const r = record(raw);
@@ -343,7 +355,7 @@ export function createCommerceModel(options: {
         totalCents: r.totalCents,
       },
     });
-    update({ quote: null });
+    dropQuote();
   }
   return {
     getSnapshot: () => state,
@@ -384,19 +396,16 @@ export function createCommerceModel(options: {
     signIn: (mode: "login" | "register", body: unknown) =>
       run(async () => {
         // An explicit sign-in supersedes any saved session still waiting for restoration.
-        update({
-          profile: null,
-          addresses: [],
-          quote: null,
-          session: "restored",
-        });
+        dropQuote();
+        update({ profile: null, addresses: [], session: "restored" });
         await client.signIn(mode, body);
         await loadProfile();
       }),
     logout: () =>
       run(async () => {
         await client.logout();
-        update({ profile: null, addresses: [], quote: null });
+        dropQuote();
+        update({ profile: null, addresses: [] });
         if (!state.pending) await save({ cart: [], receipt: null });
       }),
     deleteAccount: (password: string) =>
@@ -405,7 +414,8 @@ export function createCommerceModel(options: {
           throw new Error("Confira primeiro o resultado do pedido pendente.");
         await client.request("me", "DELETE", { password });
         await client.forget();
-        update({ profile: null, addresses: [], quote: null });
+        dropQuote();
+        update({ profile: null, addresses: [] });
         await save({ cart: [], receipt: null });
       }),
     refreshAccount: () => run(loadProfile),
@@ -413,7 +423,7 @@ export function createCommerceModel(options: {
       run(async () => {
         if (state.pending)
           throw new Error("Confira primeiro o resultado do pedido pendente.");
-        update({ quote: null });
+        dropQuote();
         await client.request(
           id ? `me/addresses/${encodeURIComponent(id)}` : "me/addresses",
           id ? "PUT" : "POST",
@@ -425,7 +435,7 @@ export function createCommerceModel(options: {
       run(async () => {
         if (state.pending)
           throw new Error("Confira primeiro o resultado do pedido pendente.");
-        update({ quote: null });
+        dropQuote();
         await client.request(
           `me/addresses/${encodeURIComponent(id)}`,
           "DELETE",
@@ -438,23 +448,20 @@ export function createCommerceModel(options: {
           throw new Error(
             "Recupere o pedido pendente antes de alterar o carrinho.",
           );
-        update({ quote: null });
+        dropQuote();
         const cart = change(state.cart);
         await save({ cart, receipt: null });
       }),
-    invalidateQuote() {
-      quoteGeneration++;
-      if (state.quote) update({ quote: null });
-    },
+    invalidateQuote: dropQuote,
     quote: (details: CheckoutDetails, expectedTotalCents: number) =>
       run(async () => {
         if (!state.profile) throw new CustomerError(401, "LOGIN_REQUIRED");
         if (state.pending)
           throw new Error("Recupere o pedido pendente primeiro.");
         if (!state.cart.length) throw new Error("Adicione itens ao carrinho.");
-        const generation = quoteGeneration;
         const body = orderBody(state.cart, details);
-        update({ quote: null });
+        dropQuote();
+        const generation = quoteGeneration;
         const totals = parseQuote(
           await client.request("me/orders/quote", "POST", {
             ...body,
@@ -480,7 +487,7 @@ export function createCommerceModel(options: {
               }),
             },
           });
-          update({ quote: null });
+          dropQuote();
         }
         await sendPending();
       }),
@@ -490,7 +497,7 @@ export function createCommerceModel(options: {
         if (!state.pending || state.profile?.id !== state.pending.customerId)
           throw new Error("Entre na conta que confirmou o pedido.");
         await save({ pending: null, cart: [] });
-        update({ quote: null });
+        dropQuote();
       }),
   };
 }

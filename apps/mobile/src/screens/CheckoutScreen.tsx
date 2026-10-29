@@ -30,6 +30,7 @@ export function CheckoutScreen({
   menu,
   settings,
   canOrder,
+  recoveryOnly,
   stale,
   onBack,
   onAccount,
@@ -40,6 +41,8 @@ export function CheckoutScreen({
   menu: PublicMenu | null;
   settings: CheckoutSettings | null;
   canOrder: boolean;
+  /** The store is unavailable: only a pending confirmation may be recovered (ADR 0022). */
+  recoveryOnly: boolean;
   stale: boolean;
   onBack: () => void;
   onAccount: () => void;
@@ -161,6 +164,13 @@ export function CheckoutScreen({
             A resposta ainda não foi confirmada. Recupere este pedido antes de
             montar outro.
           </Body>
+          {recoveryOnly ? (
+            <Body>
+              A loja está indisponível. Tentar recuperar usa a mesma
+              confirmação, sem criar outro pedido; se a loja não puder
+              responder, confira o resultado diretamente com a pizzaria.
+            </Body>
+          ) : null}
           {state.profile?.id !== state.pending.customerId ? (
             <Body>
               Entre na mesma conta usada na confirmação para recuperar o
@@ -198,6 +208,11 @@ export function CheckoutScreen({
             }
           />
         </>
+      ) : recoveryOnly ? (
+        <Body>
+          A loja está indisponível no momento. Novos pedidos e alterações no
+          carrinho ficam bloqueados até ela voltar a atender.
+        </Body>
       ) : (
         <>
           {stale ? (

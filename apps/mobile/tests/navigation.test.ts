@@ -7,6 +7,7 @@ import {
   type MenuState,
   buildingAfterRefresh,
   createMenuLoader,
+  destinationAfterRefresh,
   menuAfterLoad,
   menuWhileLoading,
   screenFor,
@@ -47,7 +48,51 @@ describe("app navigation", () => {
     assert.deepEqual(screenFor(UNAVAILABLE, LOADED, null, "cart"), {
       kind: "unavailable",
     });
-    assert.deepEqual(screenFor(CLOSED, LOADED, null, "cart"), { kind: "cart" });
+    assert.deepEqual(screenFor(CLOSED, LOADED, null, "cart"), {
+      kind: "cart",
+      recoveryOnly: false,
+    });
+  });
+
+  it("opens the cart of an unavailable store only to recover a pending confirmation", () => {
+    // Available store: the normal checkout.
+    for (const store of [OPEN, CLOSED, OFFLINE])
+      assert.deepEqual(screenFor(store, LOADED, null, "cart", null), {
+        kind: "cart",
+        recoveryOnly: false,
+      });
+    // Unavailable without a pending confirmation: blocked.
+    assert.deepEqual(screenFor(UNAVAILABLE, LOADED, null, "cart", null), {
+      kind: "unavailable",
+    });
+    // Unavailable with one: recovery only (the screen offers no quote or cart change).
+    assert.deepEqual(screenFor(UNAVAILABLE, LOADED, null, "cart", "pending"), {
+      kind: "cart",
+      recoveryOnly: true,
+    });
+    // A pending confirmation does not reopen the menu or the builder of an unavailable store.
+    assert.deepEqual(
+      screenFor(UNAVAILABLE, LOADED, "calabresa", null, "pending"),
+      { kind: "unavailable" },
+    );
+  });
+
+  it("keeps a recovery open when a refresh confirms the store unavailable", () => {
+    assert.equal(
+      destinationAfterRefresh("cart", UNAVAILABLE, "pending"),
+      "cart",
+    );
+    // Recovery succeeded while unavailable: its receipt stays on screen.
+    assert.equal(
+      destinationAfterRefresh("cart", UNAVAILABLE, "receipt"),
+      "cart",
+    );
+    assert.equal(destinationAfterRefresh("cart", UNAVAILABLE, null), null);
+    assert.equal(destinationAfterRefresh("cart", OPEN, null), "cart");
+    assert.equal(
+      destinationAfterRefresh("account", UNAVAILABLE, null),
+      "account",
+    );
   });
   it("opens the builder for open, closed and unconfirmed stores", () => {
     for (const store of [OPEN, CLOSED, OFFLINE])

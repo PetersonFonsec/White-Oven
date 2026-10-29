@@ -24,8 +24,10 @@ import { imageUrl, loadMenu, menuSections } from "./src/menu/menu.ts";
 import {
   type MenuLoader,
   type MenuState,
+  type Recovery,
   buildingAfterRefresh,
   createMenuLoader,
+  destinationAfterRefresh,
   screenFor,
 } from "./src/navigation/app-state.ts";
 import { BuilderScreen } from "./src/screens/BuilderScreen.tsx";
@@ -151,8 +153,14 @@ export default function App() {
       setView(next);
       // A store confirmed unavailable closes the builder for good (ADR 0021).
       setBuilding((open) => buildingAfterRefresh(open, next));
-      if (next.availability.kind === "unavailable")
-        setDestination((open) => (open === "cart" ? null : open));
+      const snapshot = commerceRef.current?.getSnapshot();
+      setDestination((open) =>
+        destinationAfterRefresh(
+          open,
+          next,
+          snapshot ? recoveryOf(snapshot) : null,
+        ),
+      );
     }
     setRefreshing(current.refreshing);
   }, []);
@@ -202,7 +210,13 @@ export default function App() {
   useEffect(() => {
     model?.invalidateQuote();
   }, [model, menu]);
-  const screen = screenFor(view, menu, building, destination);
+  const screen = screenFor(
+    view,
+    menu,
+    building,
+    destination,
+    commerce ? recoveryOf(commerce) : null,
+  );
   const inBuilder = screen.kind === "builder";
   // Android's back button leaves the builder for the menu.
   useEffect(() => {
@@ -266,6 +280,7 @@ export default function App() {
           menu={menuData}
           settings={checkoutSettings}
           canOrder={view?.availability.kind === "open" && !refreshing}
+          recoveryOnly={screen.recoveryOnly}
           stale={menuStale}
           onBack={() => navigate(null)}
           onAccount={() => navigate("account")}
@@ -375,6 +390,13 @@ export default function App() {
             disabled={!commerce || commerce.busy}
             onPress={() => navigate("account")}
           />
+          {commerce?.pending ? (
+            <Button
+              label="Recuperar pedido pendente"
+              disabled={commerce.busy}
+              onPress={() => navigate("cart")}
+            />
+          ) : null}
           <StoreScreen
             message={storeMessage(view)}
             refreshing={refreshing}
@@ -392,6 +414,12 @@ export default function App() {
       )}
     </ThemeProvider>
   );
+}
+
+/** Only a pending confirmation opens the cart of an unavailable store; its receipt keeps it open. */
+function recoveryOf(state: CommerceState): Recovery {
+  if (state.pending) return "pending";
+  return state.receipt ? "receipt" : null;
 }
 
 const styles = StyleSheet.create({

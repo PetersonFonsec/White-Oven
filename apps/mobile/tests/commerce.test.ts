@@ -56,7 +56,7 @@ function setup() {
     rejectCode: string | null = null,
     identity: string = customerId;
   let quoted = 500;
-  let onQuote: (() => void) | null = null;
+  let onQuote: (() => void | Promise<void>) | null = null;
   let loginFailure: "invalid" | "network" | null = null,
     meFailures = 0;
   const calls = { refresh: 0, login: 0 };
@@ -88,7 +88,7 @@ function setup() {
       });
     if (path.endsWith("/me/addresses")) return Response.json([]);
     if (path.endsWith("/quote")) {
-      onQuote?.();
+      await onQuote?.();
       return Response.json({
         itemsSubtotalCents: quoted,
         deliveryFeeCents: 0,
@@ -119,8 +119,8 @@ function setup() {
       fetch: fetcher,
       secret,
     });
-  const model = () =>
-    createCommerceModel({ client: client(), storage, uuid: randomUUID });
+  const model = (now?: () => number) =>
+    createCommerceModel({ client: client(), storage, uuid: randomUUID, now });
   return {
     storage,
     secret,
@@ -145,7 +145,7 @@ function setup() {
     price(value: number) {
       quoted = value;
     },
-    onQuote(fn: () => void) {
+    onQuote(fn: () => void | Promise<void>) {
       onQuote = fn;
     },
   };
@@ -378,4 +378,134 @@ test("a transient storage read failure leaves init retryable", async () => {
   assert.equal(await model.init(), true);
   assert.equal(model.getSnapshot().cart.length, 1);
   assert.equal(model.getSnapshot().profile?.id, customerId);
+});
+
+test("a suspended store keeps the pending confirmation indeterminate and recoverable with the same key", async () => {
+  const h = setup(),
+    model = await prepare(h);
+  h.lose();
+  assert.equal(await model.confirm(), false);
+  const pending = model.getSnapshot().pending;
+  assert.ok(pending);
+  // The store is suspended while the customer recovers: the API refuses to reconcile.
+  h.reject("TENANT_NOT_ACTIVE");
+  assert.equal(await model.confirm(), false);
+  assert.match(
+    model.getSnapshot().error!,
+    /Confira diretamente com a pizzaria/,
+  );
+  assert.deepEqual(model.getSnapshot().pending, pending, "not discarded");
+  assert.equal(await model.changeCart(() => []), false, "cart stays locked");
+  assert.equal(await model.quote(details, 500), false, "no new quote");
+  // Restart during the suspension: still the same confirmation.
+  const restarted = h.model();
+  assert.equal(await restarted.init(), true);
+  assert.deepEqual(restarted.getSnapshot().pending, pending);
+  // The store serves again: the same key and body recover the order.
+  h.reject(null);
+  assert.equal(await restarted.confirm(), true);
+  assert.equal(h.requests.length, 3);
+  assert.ok(
+    h.requests.every((r) => r.key === pending.key && r.body === pending.body),
+  );
+  assert.equal(restarted.getSnapshot().receipt?.number, 12);
+});
+
+test("an expired confirmation is never resent by the model, even when the store is unavailable", async () => {
+  const h = setup(),
+    model = await prepare(h);
+  h.lose();
+  await model.confirm();
+  const pending = model.getSnapshot().pending!;
+  const later = h.model(() => pending.createdAt + 23 * 60 * 60 * 1000);
+  assert.equal(await later.init(), true);
+  assert.equal(await later.confirm(), false);
+  assert.match(later.getSnapshot().error!, /prazo de recuperação terminou/);
+  assert.equal(h.requests.length, 1);
+  assert.deepEqual(later.getSnapshot().pending, pending);
+  const earlier = h.model(() => pending.createdAt - 1);
+  await earlier.init();
+  assert.equal(await earlier.confirm(), false, "clock rolled back");
+  assert.equal(h.requests.length, 1);
+});
+
+test("every cart, address and form change invalidates the quote", async () => {
+  const h = setup(),
+    model = await prepare(h);
+  const quoted = async () => {
+    assert.equal(await model.quote(details, 500), true);
+    assert.ok(model.getSnapshot().quote);
+  };
+  const second: CartLine = { ...line, id: randomUUID() };
+  // Quantity change.
+  assert.equal(
+    await model.changeCart((lines) => changeQuantity(lines, line.id, 2)),
+    true,
+  );
+  assert.equal(model.getSnapshot().quote, null);
+  // Item removal.
+  await model.changeCart((lines) => [...lines, second]);
+  await quoted();
+  assert.equal(
+    await model.changeCart((lines) => lines.filter((l) => l.id !== second.id)),
+    true,
+  );
+  assert.equal(model.getSnapshot().quote, null);
+  // Address change (saved in the account).
+  await quoted();
+  const savedAddress = await model.saveAddress({
+    label: "Casa",
+    postalCode: "01000-000",
+    street: "Rua A",
+    number: "1",
+    complement: null,
+    district: "Centro",
+    city: "São Paulo",
+    state: "SP",
+    reference: null,
+  });
+  assert.equal(model.getSnapshot().quote, null);
+  assert.equal(savedAddress, true);
+  // Fulfillment, payment and address selection are screen state: the screen calls invalidateQuote.
+  for (let change = 0; change < 3; change++) {
+    await quoted();
+    model.invalidateQuote();
+    assert.equal(model.getSnapshot().quote, null);
+    assert.equal(
+      await model.confirm(),
+      false,
+      "no confirmation without a new quote",
+    );
+  }
+  assert.equal(h.requests.length, 0);
+  // A new quote after the changes is valid and confirms the current cart.
+  await quoted();
+  assert.equal(await model.confirm(), true);
+  assert.equal(JSON.parse(h.requests[0]!.body).items.length, 1);
+  assert.equal(JSON.parse(h.requests[0]!.body).items[0].quantity, 2);
+});
+
+test("a quote answer that arrives after an invalidation is dropped; cart changes cannot overlap a quote", async () => {
+  const h = setup(),
+    model = await prepare(h);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let arrived!: () => void;
+  const inFlight = new Promise<void>((resolve) => (arrived = resolve));
+  h.onQuote(() => {
+    arrived();
+    return gate;
+  });
+  const quoting = model.quote(details, 500);
+  await inFlight;
+  // Serialization: a cart change while the quote runs is refused, so it cannot race the answer.
+  assert.equal(await model.changeCart(() => []), false);
+  // Screen-level invalidation (form or navigation) is not serialized: the generation guards it.
+  model.invalidateQuote();
+  release();
+  assert.equal(await quoting, true);
+  assert.equal(model.getSnapshot().quote, null, "late answer dropped");
+  assert.equal(model.getSnapshot().cart.length, 1);
+  assert.equal(await model.confirm(), false);
+  assert.equal(h.requests.length, 0);
 });

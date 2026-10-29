@@ -229,3 +229,150 @@ test("a sign-in waits for an in-flight rotation so the previous identity is not 
   assert.equal(saved.value, "new-refresh");
   assert.equal(client.signedIn, true);
 });
+
+function faultyKV() {
+  const values = new Map<string, string>();
+  const faults = {
+    set: ((): boolean => false) as (key: string, value: string) => boolean,
+    remove: ((): boolean => false) as (key: string) => boolean,
+    /** Set lands, then throws (a native error reported after the write). */
+    lateSet: ((): boolean => false) as (key: string) => boolean,
+  };
+  const kv: SecureKV = {
+    async get(key) {
+      return values.get(key) ?? null;
+    },
+    async set(key, value) {
+      assert.ok(Buffer.byteLength(value) <= 2048);
+      if (faults.set(key, value)) throw new Error(`set failed: ${key}`);
+      values.set(key, value);
+      if (faults.lateSet(key)) throw new Error(`late failure: ${key}`);
+    },
+    async remove(key) {
+      if (faults.remove(key)) throw new Error(`remove failed: ${key}`);
+      values.delete(key);
+    },
+  };
+  /** Only the chunks the head references remain: nothing orphaned, no journal left. */
+  const clean = (prefix: string) => {
+    const head = values.get(`${prefix}.head`);
+    const expected = new Set<string>();
+    if (head) {
+      const { id, count } = JSON.parse(head);
+      expected.add(`${prefix}.head`);
+      for (let i = 0; i < count; i++) expected.add(`${prefix}.${id}.${i}`);
+    }
+    assert.deepEqual(new Set(values.keys()), expected);
+  };
+  return { kv, values, faults, clean };
+}
+const previousText = JSON.stringify({
+  cart: "Pizza 🍕 Calabresa — São João ".repeat(30),
+});
+const nextText = JSON.stringify({ cart: "Margherita ✓ 半分 ".repeat(60) });
+const chunkKey = (key: string, index: number) =>
+  /\.[a-f0-9-]{36}\.\d+$/.test(key) && key.endsWith(`.${index}`);
+
+test("secure record: failed writes before the commit keep the previous version and leave no orphans", async () => {
+  const cases: [string, (h: ReturnType<typeof faultyKV>) => void][] = [
+    ["first chunk", (h) => (h.faults.set = (key) => chunkKey(key, 0))],
+    ["middle chunk", (h) => (h.faults.set = (key) => chunkKey(key, 2))],
+    ["pointer", (h) => (h.faults.set = (key) => key.endsWith(".head"))],
+  ];
+  for (const [name, fail] of cases) {
+    const h = faultyKV();
+    const record = secureRecord(h.kv, "s", randomUUID);
+    await record.write(previousText);
+    h.clean("s");
+    fail(h);
+    await assert.rejects(record.write(nextText), /set failed/, name);
+    assert.equal(await record.read(), previousText, `${name}: previous kept`);
+    h.clean("s");
+    h.faults.set = () => false;
+    await record.write(nextText);
+    assert.equal(await record.read(), nextText);
+    h.clean("s");
+  }
+});
+
+test("secure record: a failed compensation never masks the original error and is swept later", async () => {
+  const h = faultyKV();
+  const record = secureRecord(h.kv, "s", randomUUID);
+  await record.write(previousText);
+  h.faults.set = (key) => chunkKey(key, 3);
+  h.faults.remove = () => true;
+  await assert.rejects(record.write(nextText), /set failed/);
+  assert.equal(await record.read(), previousText);
+  assert.ok(h.values.has("s.journal"), "orphans stay named by the journal");
+  h.faults.set = () => false;
+  h.faults.remove = () => false;
+  await record.write(nextText);
+  assert.equal(await record.read(), nextText);
+  h.clean("s");
+});
+
+test("secure record: a committed write succeeds even when cleanup fails, and never loses the head", async () => {
+  const h = faultyKV();
+  const record = secureRecord(h.kv, "s", randomUUID);
+  await record.write(previousText);
+  // Cleanup of the replaced version fails: the write is still reported as done.
+  h.faults.remove = (key) => /\.[a-f0-9-]{36}\.\d+$/.test(key);
+  await record.write(nextText);
+  assert.equal(await record.read(), nextText);
+  h.faults.remove = () => false;
+  // The pointer lands but its write reports an error: the new chunks are not removed.
+  h.faults.lateSet = (key) => key.endsWith(".head");
+  await record.write(previousText);
+  assert.equal(await record.read(), previousText);
+  h.faults.lateSet = () => false;
+  await record.write(nextText);
+  assert.equal(await record.read(), nextText);
+  h.clean("s");
+});
+
+test("secure record: chunks of a process killed mid-write or mid-removal are swept by the next operation", async () => {
+  const h = faultyKV();
+  await secureRecord(h.kv, "s", randomUUID).write(previousText);
+  // Killed after two chunks: every later storage call of that process fails.
+  h.faults.set = (key) =>
+    key.endsWith(".head") ||
+    (/\.[a-f0-9-]{36}\.\d+$/.test(key) &&
+      !chunkKey(key, 0) &&
+      !chunkKey(key, 1));
+  h.faults.remove = () => true;
+  await assert.rejects(secureRecord(h.kv, "s", randomUUID).write(nextText));
+  assert.ok(
+    [...h.values.keys()].filter((key) => /\.\d+$/.test(key)).length > 3,
+    "the killed write left chunks behind",
+  );
+  h.faults.set = () => false;
+  h.faults.remove = () => false;
+  const restarted = secureRecord(h.kv, "s", randomUUID);
+  assert.equal(await restarted.read(), previousText);
+  await restarted.write(nextText);
+  assert.equal(await restarted.read(), nextText);
+  h.clean("s");
+  // Killed after the pointer was removed but before the chunks were.
+  h.faults.remove = (key) => !key.endsWith(".head");
+  await secureRecord(h.kv, "s", randomUUID).remove();
+  h.faults.remove = () => false;
+  const again = secureRecord(h.kv, "s", randomUUID);
+  assert.equal(await again.read(), null);
+  await again.write(previousText);
+  h.clean("s");
+  await again.remove();
+  h.clean("s");
+});
+
+test("secure record: concurrent writes and removals run one at a time", async () => {
+  const h = faultyKV();
+  const record = secureRecord(h.kv, "s", randomUUID);
+  await Promise.all([
+    record.write(previousText),
+    record.write(nextText),
+    record.remove(),
+    record.write("🍕 final"),
+  ]);
+  assert.equal(await record.read(), "🍕 final");
+  h.clean("s");
+});
