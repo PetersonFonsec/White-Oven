@@ -1109,6 +1109,7 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "pizza_sizes", forced: true },
         { table: "plan_subscriptions", forced: true },
         { table: "push_deliveries", forced: true },
+        { table: "push_messages", forced: true },
         { table: "staff_invites", forced: true },
         { table: "store_opening_hours", forced: true },
         { table: "store_pauses", forced: true },

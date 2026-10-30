@@ -15,8 +15,9 @@ export interface PushNative {
 }
 export interface PushApi {
   status(): Promise<unknown>;
-  register(token: string): Promise<unknown>;
-  unregister(): Promise<unknown>;
+  register(token: string, installationId: string): Promise<unknown>;
+  /** Ends this session's subscription and any older one of this installation. */
+  unregister(installationId: string): Promise<unknown>;
 }
 
 /**
@@ -50,9 +51,15 @@ export function orderIdFromNotification(data: unknown): string | null {
     : null;
 }
 
+/**
+ * Order notifications as one app installation (ADR 0027): `installation` is a random id kept in
+ * the device's secure storage, created on first use. It is not a hardware id; reinstalling the
+ * app creates another.
+ */
 export function createPushModel(options: {
   api: PushApi;
   native: PushNative | null;
+  installation: () => Promise<string>;
 }) {
   let state: PushState = {
     status: options.native ? "unknown" : "unavailable",
@@ -86,10 +93,31 @@ export function createPushModel(options: {
       if (started === generation) update({ busy: false });
     }
   }
-  /** On when the API has this session's device and the OS still allows notifications. */
+  async function installationId(): Promise<string> {
+    const id = await options.installation();
+    if (!UUID.test(id)) throw new Error("installation id unavailable");
+    return id;
+  }
+  async function register(native: PushNative): Promise<PushStatus> {
+    const token = await native.token();
+    if (!EXPO_PUSH_TOKEN.test(token))
+      throw new Error("Este aparelho não forneceu um endereço de avisos.");
+    return enabledOf(await options.api.register(token, await installationId()))
+      ? "on"
+      : "off";
+  }
+  /**
+   * Reads the signed-in session's opt-in. When on and allowed, the current token is registered
+   * again, so a token Expo rotated replaces the old one. When off, any subscription an earlier
+   * account left on this installation is ended: the device now belongs to this account.
+   */
   async function current(native: PushNative): Promise<PushStatus> {
-    if (!enabledOf(await options.api.status())) return "off";
-    return (await native.permission()) === "granted" ? "on" : "denied";
+    if (!enabledOf(await options.api.status())) {
+      await options.api.unregister(await installationId());
+      return "off";
+    }
+    if ((await native.permission()) !== "granted") return "denied";
+    return register(native);
   }
   return {
     getSnapshot: () => state,
@@ -110,14 +138,11 @@ export function createPushModel(options: {
         let permission = await native.permission();
         if (permission !== "granted") permission = await native.request();
         if (permission !== "granted") return "denied";
-        const token = await native.token();
-        if (!EXPO_PUSH_TOKEN.test(token))
-          throw new Error("Este aparelho não forneceu um endereço de avisos.");
-        return enabledOf(await options.api.register(token)) ? "on" : "off";
+        return register(native);
       }),
     disable: () =>
       run(async () => {
-        await options.api.unregister();
+        await options.api.unregister(await installationId());
         return "off";
       }),
     /** Signed out or another account: the server already ended the old session's device. */
@@ -132,3 +157,46 @@ export function createPushModel(options: {
   };
 }
 export type PushModel = ReturnType<typeof createPushModel>;
+
+/** Where a tapped order notification leads, once the session is known. */
+export type NotificationRoute =
+  | { kind: "none" }
+  | { kind: "wait" }
+  | { kind: "order"; orderId: string }
+  | { kind: "login"; orderId: string };
+
+/**
+ * Tapped order notifications (ADR 0027). A tap is kept until the session restoration ended, so
+ * no order opens for a session that is still being restored, and a signed-out app goes to the
+ * account screen instead. The id only names the order: the API still decides whether this
+ * account may read it (another account's order is a 404). Each notification opens once, whether
+ * the cold-start response and the listener both report it.
+ */
+export function createNotificationRouter() {
+  const seen = new Set<string>();
+  let pending: string | null = null;
+  return {
+    /** Records a tap; false when the data is not an order of this app or was handled already. */
+    opened(notificationId: string, data: unknown): boolean {
+      const orderId = orderIdFromNotification(data);
+      if (!orderId || seen.has(notificationId)) return false;
+      seen.add(notificationId);
+      pending = orderId;
+      return true;
+    },
+    /** `session` as the commerce model reports it; `signedIn` once a profile is loaded. */
+    take(session: {
+      status: "idle" | "restoring" | "restored" | "failed";
+      signedIn: boolean;
+    }): NotificationRoute {
+      if (!pending) return { kind: "none" };
+      if (session.status === "idle" || session.status === "restoring")
+        return { kind: "wait" };
+      const orderId = pending;
+      pending = null;
+      return session.signedIn
+        ? { kind: "order", orderId }
+        : { kind: "login", orderId };
+    },
+  };
+}

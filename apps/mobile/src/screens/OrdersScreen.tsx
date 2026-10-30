@@ -19,6 +19,7 @@ import {
   type CustomerOrderPage,
   type CustomerOrderDetail,
   type CustomerOrderSummary,
+  orderDetailMessage,
   reorderLines,
   statusLabel,
 } from "../customer/orders.ts";
@@ -167,7 +168,7 @@ export function OrdersScreen({
         )
           setDetailError((current) =>
             sessionFence.current!.isCurrent(generation)
-              ? customerMessage(cause)
+              ? orderDetailMessage(cause)
               : current,
           );
       },

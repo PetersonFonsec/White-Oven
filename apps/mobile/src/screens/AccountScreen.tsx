@@ -103,6 +103,7 @@ export function AccountScreen({
   model,
   state,
   push,
+  notice,
   policy,
   onBack,
   onOrders,
@@ -110,6 +111,8 @@ export function AccountScreen({
   model: CommerceModel;
   state: CommerceState;
   push: PushModel;
+  /** Why the app opened this screen, such as a tapped notification while signed out. */
+  notice?: string | null;
   policy?: CustomerPrivacyPolicy;
   onBack: () => void;
   onOrders: () => void;
@@ -145,6 +148,7 @@ export function AccountScreen({
     <FormPage>
       <Button label="Voltar" onPress={onBack} disabled={state.busy} />
       <Heading>Minha conta</Heading>
+      {notice ? <Body alert>{notice}</Body> : null}
       {state.error ? <Body alert>{state.error}</Body> : null}
       {state.busy ? <Body>Processando…</Body> : null}
       {!state.ready ? (

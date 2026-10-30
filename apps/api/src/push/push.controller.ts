@@ -6,9 +6,16 @@ import {
   HttpCode,
   HttpStatus,
   Put,
+  Query,
   Res,
 } from "@nestjs/common";
-import { ApiBody, ApiOperation, ApiProperty, ApiTags } from "@nestjs/swagger";
+import {
+  ApiBody,
+  ApiOperation,
+  ApiProperty,
+  ApiQuery,
+  ApiTags,
+} from "@nestjs/swagger";
 import type { Response } from "express";
 import { ApiError } from "../errors/api-error";
 import { CustomerRoute } from "../customer/customer.guard";
@@ -21,11 +28,27 @@ class PushDeviceBody {
     description: "From expo-notifications getExpoPushTokenAsync",
   })
   token!: string;
+  @ApiProperty({
+    format: "uuid",
+    description:
+      "Random id the app created for this installation and keeps in its secure storage",
+  })
+  installationId!: string;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+const invalid = (paths: string[]) =>
+  new ApiError(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    "VALIDATION_FAILED",
+    "Invalid request body.",
+    { errors: paths.map((path) => ({ code: "VALIDATION_FAILED", path })) },
+  );
+
 /**
- * Opt-in order notifications of the signed-in device (M5.5, ADR 0027). The device is the current
- * customer session: logging out, a revoked session or a deleted account ends its notifications.
+ * Opt-in order notifications of an app installation (M5.5, ADR 0027), subscribed by the signed-in
+ * session: logging out, a revoked session or a deleted account ends its notifications.
  */
 @ApiTags("customer")
 @Controller("customer/stores/:storeSlug/me/push-device")
@@ -52,30 +75,47 @@ export class PushController {
     @Body() raw: unknown,
     @Res({ passthrough: true }) res: Response,
   ): Promise<PushDeviceStatus> {
-    const token = (raw as { token?: unknown } | null)?.token;
-    if (
-      typeof raw !== "object" ||
-      raw === null ||
-      Array.isArray(raw) ||
-      Object.keys(raw).some((key) => key !== "token") ||
-      typeof token !== "string" ||
-      !EXPO_PUSH_TOKEN.test(token)
-    )
-      throw new ApiError(
-        HttpStatus.UNPROCESSABLE_ENTITY,
-        "VALIDATION_FAILED",
-        "Invalid request body.",
-        { errors: [{ code: "VALIDATION_FAILED", path: "token" }] },
-      );
+    const body = raw as Record<string, unknown> | null;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+      throw invalid([""]);
+    const paths = [
+      ...(typeof body!.token === "string" && EXPO_PUSH_TOKEN.test(body!.token)
+        ? []
+        : ["token"]),
+      ...(typeof body!.installationId === "string" &&
+      UUID.test(body!.installationId)
+        ? []
+        : ["installationId"]),
+      ...Object.keys(raw).filter(
+        (key) => key !== "token" && key !== "installationId",
+      ),
+    ];
+    if (paths.length) throw invalid(paths);
     res.setHeader("Cache-Control", "no-store");
-    return this.push.register(token);
+    return this.push.register(
+      body!.token as string,
+      body!.installationId as string,
+    );
   }
 
   @Delete()
   @CustomerRoute()
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiQuery({
+    name: "installationId",
+    required: false,
+    description:
+      "Also ends this installation's subscription by an account signed in before",
+  })
   @ApiOperation({ summary: "Opt out: stop this device's notifications" })
-  async unregister(): Promise<void> {
-    await this.push.unregister();
+  async unregister(
+    @Query("installationId") installationId?: unknown,
+  ): Promise<void> {
+    if (
+      installationId !== undefined &&
+      (typeof installationId !== "string" || !UUID.test(installationId))
+    )
+      throw invalid(["installationId"]);
+    await this.push.unregister(installationId ?? null);
   }
 }

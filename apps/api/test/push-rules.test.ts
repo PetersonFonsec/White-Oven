@@ -4,6 +4,7 @@ import {
   EXPO_PUSH_TOKEN,
   PushRequestError,
   deliveryOutcome,
+  messageOutcome,
   parseExpoTickets,
   pushBody,
   pushRetryDelaySeconds,
@@ -100,15 +101,31 @@ describe("push rules", () => {
     assert.throws(() => parseExpoTickets({ data: [] }, 1), PushRequestError);
     assert.throws(() => parseExpoTickets({ errors: [] }, 1), PushRequestError);
 
-    const ok = { ok: true } as const;
-    const gone = { ok: false, deviceGone: true, retry: false } as const;
-    const limited = { ok: false, deviceGone: false, retry: true } as const;
-    assert.equal(deliveryOutcome([gone, ok]), "SENT");
-    assert.equal(deliveryOutcome([gone, limited]), "RETRY");
-    assert.equal(deliveryOutcome([gone]), "FAILED");
+    assert.equal(messageOutcome({ ok: true }), "SENT");
+    assert.equal(
+      messageOutcome({ ok: false, deviceGone: true, retry: false }),
+      "GONE",
+    );
+    assert.equal(
+      messageOutcome({ ok: false, deviceGone: false, retry: true }),
+      "RETRY",
+    );
+    assert.equal(
+      messageOutcome({ ok: false, deviceGone: false, retry: false }),
+      "FAILED",
+    );
   });
 
-  it("posts batches of 100 to Expo with the access token and maps failures to retries", async () => {
+  it("retries a delivery only for its unanswered messages, up to five attempts", () => {
+    assert.equal(deliveryOutcome(["SENT", "FAILED"], 0), "SENT");
+    assert.equal(deliveryOutcome(["SENT", "PENDING"], 0), "RETRY");
+    assert.equal(deliveryOutcome(["FAILED", "PENDING"], 3), "RETRY");
+    assert.equal(deliveryOutcome(["SENT", "PENDING"], 4), "FAILED");
+    assert.equal(deliveryOutcome(["FAILED", "SKIPPED"], 0), "FAILED");
+    assert.equal(deliveryOutcome(["SKIPPED", "SKIPPED"], 0), "SKIPPED");
+  });
+
+  it("posts one request of at most 100 messages with the access token and maps failures to retries", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const fetchFn = (async (url: string, init: RequestInit) => {
       calls.push({ url, init });
@@ -119,12 +136,12 @@ describe("push rules", () => {
       );
     }) as unknown as typeof fetch;
     const sender = new ExpoPushSender("secret-token", fetchFn);
-    const messages = Array.from({ length: 150 }, (_, index) =>
+    const messages = Array.from({ length: 100 }, (_, index) =>
       message(`ExponentPushToken[${index}]`),
     );
     const tickets = await sender.send(messages);
-    assert.equal(tickets.length, 150);
-    assert.equal(calls.length, 2);
+    assert.equal(tickets.length, 100);
+    assert.equal(calls.length, 1);
     assert.equal(calls[0]!.url, EXPO_PUSH_URL);
     const headers = calls[0]!.init.headers as Record<string, string>;
     assert.equal(headers.Authorization, "Bearer secret-token");
@@ -135,7 +152,19 @@ describe("push rules", () => {
       sound: "default",
       ttl: 1800,
     });
+    // Splitting is the worker's job, so each request is settled on its own.
+    await assert.rejects(
+      sender.send([...messages, message("ExponentPushToken[extra]")]),
+      /at most 100/,
+    );
+    assert.equal(calls.length, 1);
 
+    const limited = new ExpoPushSender(
+      null,
+      (async () =>
+        new Response("slow down", { status: 429 })) as unknown as typeof fetch,
+    );
+    await assert.rejects(limited.send([message("x")]), PushRequestError);
     const failing = new ExpoPushSender(
       null,
       (async () =>

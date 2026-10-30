@@ -6,7 +6,10 @@ import {
   parseExpoTickets,
 } from "./push-rules";
 
-/** Sends notifications; one ticket per message, in order. Throws `PushRequestError` to retry. */
+/**
+ * Sends one request of at most `EXPO_BATCH_SIZE` messages: one ticket per message, in order.
+ * Throws `PushRequestError` when the request as a whole failed and may be tried again.
+ */
 export interface PushSender {
   send(messages: readonly PushMessage[]): Promise<PushTicket[]>;
 }
@@ -22,38 +25,35 @@ export class ExpoPushSender implements PushSender {
   ) {}
 
   async send(messages: readonly PushMessage[]): Promise<PushTicket[]> {
-    const tickets: PushTicket[] = [];
-    for (let start = 0; start < messages.length; start += EXPO_BATCH_SIZE) {
-      const batch = messages.slice(start, start + EXPO_BATCH_SIZE);
-      let response: Response;
-      try {
-        response = await this.fetchFn(EXPO_PUSH_URL, {
-          method: "POST",
-          redirect: "error",
-          signal: AbortSignal.timeout(EXPO_TIMEOUT_MS),
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-            ...(this.accessToken
-              ? { Authorization: `Bearer ${this.accessToken}` }
-              : {}),
-          },
-          body: JSON.stringify(
-            batch.map((message) => ({
-              ...message,
-              sound: "default",
-              ttl: 30 * 60,
-            })),
-          ),
-        });
-      } catch {
-        throw new PushRequestError("Expo request failed");
-      }
-      if (!response.ok)
-        throw new PushRequestError(`Expo answered ${response.status}`);
-      const body: unknown = await response.json().catch(() => null);
-      tickets.push(...parseExpoTickets(body, batch.length));
+    if (messages.length > EXPO_BATCH_SIZE)
+      throw new Error(`at most ${EXPO_BATCH_SIZE} messages per request`);
+    let response: Response;
+    try {
+      response = await this.fetchFn(EXPO_PUSH_URL, {
+        method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(EXPO_TIMEOUT_MS),
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...(this.accessToken
+            ? { Authorization: `Bearer ${this.accessToken}` }
+            : {}),
+        },
+        body: JSON.stringify(
+          messages.map((message) => ({
+            ...message,
+            sound: "default",
+            ttl: 30 * 60,
+          })),
+        ),
+      });
+    } catch {
+      throw new PushRequestError("Expo request failed");
     }
-    return tickets;
+    if (!response.ok)
+      throw new PushRequestError(`Expo answered ${response.status}`);
+    const body: unknown = await response.json().catch(() => null);
+    return parseExpoTickets(body, messages.length);
   }
 }

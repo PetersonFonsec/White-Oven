@@ -1,6 +1,6 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import { type PushNative, orderIdFromNotification } from "./push.ts";
+import type { PushNative } from "./push.ts";
 
 // A notification that arrives with the app open is shown too: the order screen may be closed.
 Notifications.setNotificationHandler({
@@ -38,18 +38,20 @@ export function nativePush(projectId: string | undefined): PushNative | null {
 }
 
 /**
- * Calls `open` with the order of a tapped notification, including the one that launched the app.
- * Returns the unsubscribe function.
+ * Reports every tapped notification with its id and data: the one that launched or resumed the
+ * app (`getLastNotificationResponseAsync`) and later taps while it runs, in the background or in
+ * the foreground. The same tap may arrive through both; the router keeps each id once.
  */
-export function onOrderNotificationOpened(
-  open: (orderId: string) => void,
+export function onNotificationOpened(
+  open: (notificationId: string, data: unknown) => void,
 ): () => void {
   let active = true;
   const handle = (response: Notifications.NotificationResponse | null) => {
-    const orderId = orderIdFromNotification(
-      response?.notification.request.content.data,
-    );
-    if (active && orderId) open(orderId);
+    if (active && response)
+      open(
+        response.notification.request.identifier,
+        response.notification.request.content.data,
+      );
   };
   void Notifications.getLastNotificationResponseAsync().then(handle);
   const subscription =

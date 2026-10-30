@@ -102,12 +102,28 @@ export class PushRequestError extends Error {
   }
 }
 
-/** Outcome of one delivery from the tickets of its messages. */
+export type MessageState = "PENDING" | "SENT" | "FAILED" | "SKIPPED";
+
+/** What one ticket does to its message: `GONE` also deletes the device. */
+export function messageOutcome(
+  ticket: PushTicket,
+): "SENT" | "FAILED" | "GONE" | "RETRY" {
+  if (ticket.ok) return "SENT";
+  if (ticket.deviceGone) return "GONE";
+  return ticket.retry ? "RETRY" : "FAILED";
+}
+
+/**
+ * The delivery after a pass, from its messages' states. Messages still `PENDING` (a failed
+ * request or a rate limit) are retried alone, until `attempts` reaches the limit; messages Expo
+ * already accepted are never part of a retry.
+ */
 export function deliveryOutcome(
-  tickets: readonly PushTicket[],
-): "SENT" | "FAILED" | "RETRY" {
-  if (tickets.some((ticket) => ticket.ok)) return "SENT";
-  return tickets.some((ticket) => !ticket.ok && ticket.retry)
-    ? "RETRY"
-    : "FAILED";
+  states: readonly MessageState[],
+  attempts: number,
+): "SENT" | "FAILED" | "SKIPPED" | "RETRY" {
+  if (states.includes("PENDING"))
+    return attempts + 1 >= PUSH_MAX_ATTEMPTS ? "FAILED" : "RETRY";
+  if (states.includes("SENT")) return "SENT";
+  return states.every((state) => state === "SKIPPED") ? "SKIPPED" : "FAILED";
 }

@@ -476,9 +476,13 @@ export function createCommerceModel(options: {
     /** Order notification opt-in of this session (ADR 0027), outside `run`: no busy state. */
     push: {
       status: () => client.request("me/push-device"),
-      register: (token: string) =>
-        client.request("me/push-device", "PUT", { token }),
-      unregister: () => client.request("me/push-device", "DELETE"),
+      register: (token: string, installationId: string) =>
+        client.request("me/push-device", "PUT", { token, installationId }),
+      unregister: (installationId: string) =>
+        client.request(
+          `me/push-device?installationId=${encodeURIComponent(installationId)}`,
+          "DELETE",
+        ),
     },
     invalidateQuote: dropQuote,
     quote: (details: CheckoutDetails, expectedTotalCents: number) =>
