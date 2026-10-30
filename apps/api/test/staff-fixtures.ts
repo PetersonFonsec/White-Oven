@@ -15,6 +15,18 @@ export async function insertTenant(
       "insert into tenants (slug, display_name, status) values (?, ?, ?) returning id",
       [slug, `Pizzaria ${slug}`, status],
     );
+  // A live store always has a current plan (ADR 0024), as the platform functions guarantee.
+  if (status === "ACTIVE" || status === "SUSPENDED")
+    await owner.em.fork().transactional(async (em) => {
+      await em.execute("select set_config('app.tenant_id', ?, true)", [
+        row!.id,
+      ]);
+      await em.execute(
+        `insert into plan_subscriptions (tenant_id, plan, fee_basis_points, monthly_fee_cents, valid_from)
+         select ?, code, fee_basis_points, monthly_fee_cents, now() - interval '1 day' from plans where code = 'FLEX'`,
+        [row!.id],
+      );
+    });
   return row!.id;
 }
 

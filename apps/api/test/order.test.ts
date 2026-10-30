@@ -1002,6 +1002,9 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
         "delete from order_status_changes where order_id = ?",
         "update billing_entries set total_cents = 1 where order_id = ?",
         "delete from billing_entries where order_id = ?",
+        `insert into billing_entries (tenant_id, order_id, type, items_subtotal_cents, delivery_fee_cents,
+           total_cents, payment_method, paid_online, period)
+         values (current_setting('app.tenant_id')::uuid, ?, 'ORDER_COMPLETED', 1, 0, 1, 'CASH', false, '2026-10')`,
       ])
         await assert.rejects(
           asApp(query, [order.id]),
@@ -1532,16 +1535,71 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
       count: number;
       type: string;
       totalCents: number;
+      plan: string;
+      feeBasisPoints: number;
+      currentPlan: boolean;
     }>(
       stores.a.id,
-      `select count(*)::int as count, min(type) as type, min(total_cents) as "totalCents"
-       from billing_entries where order_id = ?`,
+      `select count(*)::int as count, min(b.type) as type, min(b.total_cents) as "totalCents",
+              min(b.plan) as plan, min(b.fee_basis_points) as "feeBasisPoints",
+              bool_and(s.valid_to is null) as "currentPlan"
+       from billing_entries b join plan_subscriptions s on s.id = b.subscription_id
+       where b.order_id = ?`,
       [order.id],
     );
     assert.deepEqual(entry, {
       count: 1,
       type: "ORDER_COMPLETED",
       totalCents: order.totalCents,
+      plan: "FLEX",
+      feeBasisPoints: 300,
+      currentPlan: true,
     });
+  });
+
+  it("rolls the completion back when the store has no plan at that instant", async () => {
+    const { token } = await customer(stores.b.slug);
+    const staffToken = await admin(stores.b.id);
+    const order = await json(
+      await place(stores.b.slug, token, pickup(stores.b.catalog)),
+    );
+    for (const [from, to] of [
+      ["PLACED", "PREPARING"],
+      ["PREPARING", "READY"],
+    ])
+      assert.equal(
+        (await staffTransition(staffToken, order.id, { from, to })).status,
+        200,
+      );
+    const setPlanEnd = (end: "now()" | "null") =>
+      sql(
+        stores.b.id,
+        `update plan_subscriptions set valid_to = ${end} where valid_to is null or valid_to > now() - interval '1 minute'`,
+      );
+    await setPlanEnd("now()");
+    try {
+      const refused = await staffTransition(staffToken, order.id, {
+        from: "READY",
+        to: "COMPLETED",
+      });
+      assert.equal(refused.status, 409);
+      assert.equal((await json(refused)).code, "PLAN_REQUIRED");
+    } finally {
+      await setPlanEnd("null");
+    }
+    const [state] = await sql<{
+      status: string;
+      completions: number;
+      entries: number;
+    }>(
+      stores.b.id,
+      `select o.status,
+              (select count(*)::int from order_status_changes c
+                where c.order_id = o.id and c.to_status = 'COMPLETED') as completions,
+              (select count(*)::int from billing_entries b where b.order_id = o.id) as entries
+         from orders o where o.id = ?`,
+      [order.id],
+    );
+    assert.deepEqual(state, { status: "READY", completions: 0, entries: 0 });
   });
 });

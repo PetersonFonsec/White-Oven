@@ -100,11 +100,11 @@ Bloqueios: Q-09 (contas de loja) antes de M5.6; Q-11 (push) para M5.5.
 
 Bloqueios: Q-01, Q-02 e Q-10 precisam de decisão antes de M6.3.
 
-| PR   | Entrega                                                                                              | Critérios de aceite                                                                   |
-| ---- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| M6.1 | **Em desenvolvimento** (ADR 0024) — `PlanSubscription` com histórico e troca de plano pelo operador. | Períodos sem sobreposição; snapshot de valores do plano.                              |
-| M6.2 | `BillingEntry` gravado na conclusão do pedido; estorno pelo operador.                                | Mesma transação da conclusão; tabela append-only no papel da app; sem dados pessoais. |
-| M6.3 | Relatório mensal por tenant (plataforma e OWNER), marcado como estimativa.                           | Soma por componentes; aplica a regra decidida; reprodutível a partir do ledger.       |
+| PR   | Entrega                                                                                                   | Critérios de aceite                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| M6.1 | **Concluído na PR #40** (ADR 0024) — `PlanSubscription` com histórico e troca de plano pelo operador.     | Períodos sem sobreposição; snapshot de valores do plano.                              |
+| M6.2 | **Em desenvolvimento** (ADR 0025) — `BillingEntry` gravado na conclusão do pedido; estorno pelo operador. | Mesma transação da conclusão; tabela append-only no papel da app; sem dados pessoais. |
+| M6.3 | Relatório mensal por tenant (plataforma e OWNER), marcado como estimativa.                                | Soma por componentes; aplica a regra decidida; reprodutível a partir do ledger.       |
 
 ## M7 — Preparação do piloto
 

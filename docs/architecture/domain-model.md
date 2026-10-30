@@ -368,6 +368,7 @@ Regras:
 
 - `ORDER_COMPLETED` é gravado na mesma transação em que o pedido vai para `COMPLETED`, para qualquer plano (no Pro serve como métrica de uso).
 - `COMPLETED` é terminal. Se a conclusão foi registrada por engano ou a venda foi desfeita, o OWNER solicita e um operador da plataforma registra o estorno, que gera `ORDER_REVERSED` com valores negativos e motivo; nunca se altera ou apaga um lançamento.
+- Implementação (M6.2, [ADR 0025](../adr/0025-billing-ledger.md)): o lançamento guarda o período de assinatura de origem (`subscriptionId`); o estorno guarda `reversesEntryId`, o motivo (`COMPLETED_BY_MISTAKE` ou `SALE_UNDONE`) e o operador, cai no mês em que é registrado e é único por pedido. Só funções `SECURITY DEFINER` gravam no ledger e gatilhos recusam alteração e exclusão.
 - O valor devido **não** é calculado nem armazenado no MVP; o relatório mensal soma componentes e aplica a regra provisória documentada, marcando o resultado como estimativa.
 
 Decisões de produto pendentes: Q-01, Q-02 e Q-10 em [mvp-scope](../product/mvp-scope.md), mais emissão de nota fiscal do WhiteOven, mínimo mensal, teto, período de teste e tratamento de inadimplência.

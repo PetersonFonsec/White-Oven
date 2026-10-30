@@ -9,16 +9,19 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   Req,
+  Res,
 } from "@nestjs/common";
 import {
   ApiBody,
   ApiHeader,
   ApiOperation,
   ApiProperty,
+  ApiQuery,
   ApiTags,
 } from "@nestjs/swagger";
-import type { Request } from "express";
+import type { Request, Response } from "express";
 import { ApiError } from "../errors/api-error";
 import { requestIdOf } from "../logging/request-context";
 import { CurrentStaff, PlatformRoute } from "../auth/staff.guard";
@@ -62,6 +65,11 @@ class TenantStatusBody {
 
 class TenantPlanBody {
   @ApiProperty({ enum: ["FLEX", "PRO"] }) plan!: "FLEX" | "PRO";
+}
+
+class BillingReversalBody {
+  @ApiProperty({ enum: ["COMPLETED_BY_MISTAKE", "SALE_UNDONE"] }) reasonCode!:
+    "COMPLETED_BY_MISTAKE" | "SALE_UNDONE";
 }
 
 class RedeemInviteBody {
@@ -180,6 +188,69 @@ export class PlatformController {
       requestIdOf(req),
       req.ip ?? "",
     );
+  }
+}
+
+@ApiTags("platform billing")
+@Controller("platform/tenants/:tenantId/billing-entries")
+export class PlatformBillingController {
+  constructor(private readonly platform: PlatformService) {}
+
+  @Get()
+  @PlatformRoute()
+  @ApiQuery({
+    name: "period",
+    required: false,
+    description:
+      "YYYY-MM in the store's time zone; defaults to the current month.",
+  })
+  @ApiOperation({ summary: "List one month of a tenant's billing ledger" })
+  list(
+    @Param("tenantId") tenantId: string,
+    @Query() query: Record<string, unknown>,
+    @CurrentStaff() staff: StaffPrincipal,
+  ) {
+    const keys = Object.keys(query);
+    if (
+      keys.some((key) => key !== "period") ||
+      (query.period !== undefined && typeof query.period !== "string")
+    )
+      throw bodyError();
+    return this.platform.listBillingEntries(
+      tenantId,
+      query.period as string | undefined,
+      staff.access.staffUserId,
+      staff.access.sessionId,
+    );
+  }
+
+  @Post(":entryId/reversal")
+  @PlatformRoute()
+  @ApiBody({ type: BillingReversalBody })
+  @ApiOperation({
+    summary:
+      "Reverse a completed order's billing entry; repeating it returns the existing reversal",
+  })
+  async reverse(
+    @Param("tenantId") tenantId: string,
+    @Param("entryId") entryId: string,
+    @Body() body: unknown,
+    @CurrentStaff() staff: StaffPrincipal,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const [reasonCode] = fields(body, ["reasonCode"]);
+    const result = await this.platform.reverseBillingEntry(
+      tenantId,
+      entryId,
+      reasonCode!,
+      staff.access.staffUserId,
+      staff.access.sessionId,
+      requestIdOf(req),
+      req.ip ?? "",
+    );
+    res.status(result.changed ? HttpStatus.CREATED : HttpStatus.OK);
+    return result;
   }
 }
 
