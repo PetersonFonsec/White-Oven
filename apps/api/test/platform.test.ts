@@ -325,6 +325,26 @@ describe("M1.5 platform operations", databaseSuite, () => {
         [created.tenantId],
       );
     assert.equal(audit!.action, "tenant.status_changed");
+    // M6.1: an ACTIVE tenant always has a current plan.
+    await assert.rejects(
+      platform.changeTenantStatus(
+        created.tenantId,
+        "ACTIVE",
+        operatorId,
+        operatorSessionId,
+        REQUEST_ID,
+        "127.0.0.1",
+      ),
+      (error: { code?: string }) => error.code === "PLAN_REQUIRED",
+    );
+    await platform.changeTenantPlan(
+      created.tenantId,
+      "FLEX",
+      operatorId,
+      operatorSessionId,
+      REQUEST_ID,
+      "127.0.0.1",
+    );
     await platform.changeTenantStatus(
       created.tenantId,
       "ACTIVE",

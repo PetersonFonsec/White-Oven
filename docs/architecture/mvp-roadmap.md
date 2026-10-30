@@ -92,7 +92,7 @@ Bloqueios: Q-09 (contas de loja) antes de M5.6; Q-11 (push) para M5.5.
 | M5.1 | **Concluído na PR #33** (ADR 0020) — `apps/mobile` Expo: `app.config.ts` lendo manifesto do tenant, tema runtime com cache, tela de loja fechada/indisponível.                       | Dois manifestos de exemplo geram apps com nome/ícone diferentes; marca vem da API; abre offline com a última marca.           |
 | M5.2 | **Concluído (PR #34; ADR 0021)** — cardápio e Pizza Builder com metades visualmente distintas, adicionais e remoções por metade, acessibilidade; rota pública de imagens e logotipo. | Regras PB-xx aplicadas via `pizza-pricing`; descrição textual de cada metade; movimento reduzido respeitado.                  |
 | M5.3 | **Concluído na PR #37** (ADR 0022) — conta do cliente, carrinho persistido com segurança, checkout com `quote`, confirmação e recuperação idempotente.                               | Divergência de preço exige confirmação; retry de rede não duplica pedido; refresh token no armazenamento seguro.              |
-| M5.4 | **Em desenvolvimento** (ADR 0023) — acompanhamento, histórico paginado e “pedir novamente” validado no cardápio atual.                                                               | Polling só com o detalhe aberto e app ativo; linha do tempo igual ao histórico da API; novo pedido é cotado no checkout.      |
+| M5.4 | **Concluído na PR #39** (ADR 0023) — acompanhamento, histórico paginado e “pedir novamente” validado no cardápio atual.                                                              | Polling só com o detalhe aberto e app ativo; linha do tempo igual ao histórico da API; novo pedido é cotado no checkout.      |
 | M5.5 | Push de mudança de estado (se aprovado).                                                                                                                                             | Opt-in; token do dispositivo por cliente e tenant; nenhum dado pessoal no conteúdo da notificação além do necessário.         |
 | M5.6 | Pipeline de build por tenant e checklist de publicação. ADR de build/distribuição (EAS ou próprio).                                                                                  | Build reproduzível a partir do manifesto; documentação do processo nas contas da pizzaria; nenhuma credencial no repositório. |
 
@@ -100,11 +100,11 @@ Bloqueios: Q-09 (contas de loja) antes de M5.6; Q-11 (push) para M5.5.
 
 Bloqueios: Q-01, Q-02 e Q-10 precisam de decisão antes de M6.3.
 
-| PR   | Entrega                                                                    | Critérios de aceite                                                                   |
-| ---- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| M6.1 | `PlanSubscription` com histórico e troca de plano pelo operador.           | Períodos sem sobreposição; snapshot de valores do plano.                              |
-| M6.2 | `BillingEntry` gravado na conclusão do pedido; estorno pelo operador.      | Mesma transação da conclusão; tabela append-only no papel da app; sem dados pessoais. |
-| M6.3 | Relatório mensal por tenant (plataforma e OWNER), marcado como estimativa. | Soma por componentes; aplica a regra decidida; reprodutível a partir do ledger.       |
+| PR   | Entrega                                                                                              | Critérios de aceite                                                                   |
+| ---- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| M6.1 | **Em desenvolvimento** (ADR 0024) — `PlanSubscription` com histórico e troca de plano pelo operador. | Períodos sem sobreposição; snapshot de valores do plano.                              |
+| M6.2 | `BillingEntry` gravado na conclusão do pedido; estorno pelo operador.                                | Mesma transação da conclusão; tabela append-only no papel da app; sem dados pessoais. |
+| M6.3 | Relatório mensal por tenant (plataforma e OWNER), marcado como estimativa.                           | Soma por componentes; aplica a regra decidida; reprodutível a partir do ledger.       |
 
 ## M7 — Preparação do piloto
 

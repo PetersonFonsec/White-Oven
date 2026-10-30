@@ -262,6 +262,21 @@ test("an operator enrolls the second factor before reaching the platform", async
     .getByRole("button", { name: "Suspender pizzaria" })
     .click();
   await expect(createdTenantRow).toContainText("Suspensa");
+  // M6.1: an active store always has a current plan; the first one starts immediately.
+  await expect(createdTenantRow).toContainText("Sem plano");
+  await createdTenantRow
+    .getByRole("button", { name: "Plano de Loja M3.2 E2E" })
+    .click();
+  const planDialog = page.getByRole("dialog", {
+    name: "Plano de Loja M3.2 E2E",
+  });
+  await expect(planDialog).toContainText("começa a valer agora");
+  await planDialog.getByLabel(/Flex/).check();
+  await planDialog.getByRole("button", { name: "Salvar plano" }).click();
+  await expect(page.getByRole("status").first()).toContainText(
+    "Loja M3.2 E2E está no plano Flex.",
+  );
+  await expect(createdTenantRow).toContainText("Flex");
   await createdTenantRow
     .getByRole("button", { name: "Reativar Loja M3.2 E2E" })
     .click();

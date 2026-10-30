@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Req,
 } from "@nestjs/common";
 import {
@@ -57,6 +58,10 @@ class CreateTenantBody {
 class TenantStatusBody {
   @ApiProperty({ enum: ["ACTIVE", "SUSPENDED"] }) status!:
     "ACTIVE" | "SUSPENDED";
+}
+
+class TenantPlanBody {
+  @ApiProperty({ enum: ["FLEX", "PRO"] }) plan!: "FLEX" | "PRO";
 }
 
 class RedeemInviteBody {
@@ -136,6 +141,60 @@ export class PlatformController {
       staff.access.sessionId,
       requestIdOf(req),
       req.ip ?? "",
+    );
+  }
+
+  @Get(":tenantId/plans")
+  @PlatformRoute()
+  @ApiOperation({ summary: "List a tenant's plan periods, newest first" })
+  planHistory(
+    @Param("tenantId") tenantId: string,
+    @CurrentStaff() staff: StaffPrincipal,
+  ) {
+    return this.platform.listPlanSubscriptions(
+      tenantId,
+      staff.access.staffUserId,
+      staff.access.sessionId,
+    );
+  }
+
+  @Put(":tenantId/plan")
+  @PlatformRoute()
+  @ApiBody({ type: TenantPlanBody })
+  @ApiOperation({
+    summary:
+      "Set a tenant's plan: starts now without a current plan, otherwise at the next calendar month",
+  })
+  changePlan(
+    @Param("tenantId") tenantId: string,
+    @Body() body: unknown,
+    @CurrentStaff() staff: StaffPrincipal,
+    @Req() req: Request,
+  ) {
+    const [plan] = fields(body, ["plan"]);
+    return this.platform.changeTenantPlan(
+      tenantId,
+      plan!,
+      staff.access.staffUserId,
+      staff.access.sessionId,
+      requestIdOf(req),
+      req.ip ?? "",
+    );
+  }
+}
+
+@ApiTags("platform plans")
+@Controller("platform/plans")
+export class PlatformPlanController {
+  constructor(private readonly platform: PlatformService) {}
+
+  @Get()
+  @PlatformRoute()
+  @ApiOperation({ summary: "List the plan catalog" })
+  list(@CurrentStaff() staff: StaffPrincipal) {
+    return this.platform.listPlans(
+      staff.access.staffUserId,
+      staff.access.sessionId,
     );
   }
 }

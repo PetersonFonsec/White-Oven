@@ -201,6 +201,14 @@ export async function seedDemo(env: NodeJS.ProcessEnv = process.env) {
         tenantId,
       ]);
       records.brandTheme = tenantId;
+      // An ACTIVE tenant always has a current plan (ADR 0024); FLEX has no monthly fee.
+      const [subscription] = await em.execute<{ id: string }[]>(
+        `insert into plan_subscriptions (tenant_id,plan,fee_basis_points,monthly_fee_cents,valid_from)
+         select ?,code,fee_basis_points,monthly_fee_cents,now() from plans where code='FLEX'
+         returning id`,
+        [tenantId],
+      );
+      records.planSubscription = subscription!.id;
       await em.execute(
         "insert into demo_seed_manifest (seed_key,demo_tenant_id,records) values (?,?,?::jsonb)",
         [SEED_KEY, tenantId, JSON.stringify(records)],

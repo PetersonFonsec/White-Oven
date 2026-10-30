@@ -3,7 +3,13 @@ import { signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
 import { provideRouter, Router } from "@angular/router";
 import { Session } from "../core/session";
-import { PlatformApi, type PlatformTenant } from "./platform-api";
+import {
+  PlatformApi,
+  type Plan,
+  type PlanChange,
+  type PlanSubscription,
+  type PlatformTenant,
+} from "./platform-api";
 import { PlatformHomePage } from "./platform-home.page";
 
 const sample: PlatformTenant = {
@@ -12,13 +18,23 @@ const sample: PlatformTenant = {
   displayName: "White Oven Centro",
   status: "ACTIVE",
   createdAt: "2026-10-24T12:00:00.000Z",
+  plan: { code: "FLEX", validFrom: "2026-10-24T12:00:00.000Z" },
+  scheduledPlan: null,
 };
+
+const plans: Plan[] = [
+  { code: "FLEX", feeBasisPoints: 300, monthlyFeeCents: 0 },
+  { code: "PRO", feeBasisPoints: 0, monthlyFeeCents: 19900 },
+];
 
 describe("PlatformHomePage", () => {
   const api = {
     listTenants: vi.fn<() => Promise<PlatformTenant[]>>(),
     createTenant: vi.fn(),
     changeStatus: vi.fn(),
+    listPlans: vi.fn<() => Promise<Plan[]>>(),
+    listPlanSubscriptions: vi.fn<() => Promise<PlanSubscription[]>>(),
+    changePlan: vi.fn<() => Promise<PlanChange>>(),
   };
   const session = { logout: vi.fn(), logoutUnconfirmed: signal(false) };
 
@@ -26,6 +42,17 @@ describe("PlatformHomePage", () => {
     api.listTenants.mockReset().mockResolvedValue([sample]);
     api.createTenant.mockReset();
     api.changeStatus.mockReset();
+    api.listPlans.mockReset().mockResolvedValue(plans);
+    api.listPlanSubscriptions.mockReset().mockResolvedValue([
+      {
+        id: "period-1",
+        ...plans[0]!,
+        validFrom: "2026-10-24T12:00:00.000Z",
+        validTo: null,
+        createdAt: "2026-10-24T12:00:00.000Z",
+      },
+    ]);
+    api.changePlan.mockReset();
     session.logout.mockReset();
     TestBed.configureTestingModule({
       imports: [PlatformHomePage],
@@ -197,5 +224,93 @@ describe("PlatformHomePage", () => {
     fixture.detectChanges();
     expect(page.tenants()[0]?.displayName).toBe("Lista atual");
     expect(fixture.nativeElement.textContent).not.toContain("Erro obsoleto");
+  });
+
+  it("shows the current and scheduled plan of each tenant", async () => {
+    api.listTenants.mockResolvedValue([
+      {
+        ...sample,
+        scheduledPlan: { code: "PRO", validFrom: "2099-12-01T03:00:00.000Z" },
+      },
+    ]);
+    const { element } = await render();
+    const row = element.querySelector("tbody tr")!;
+    expect(row.textContent).toContain("Flex");
+    expect(row.textContent).toContain("Pro a partir de");
+    expect(api.listPlans).toHaveBeenCalledOnce();
+  });
+
+  it("sets a plan from the dialog, shows its terms and history, then refreshes the list", async () => {
+    api.changePlan.mockResolvedValue({
+      subscriptionId: "period-2",
+      plan: "PRO",
+      validFrom: "2099-12-01T03:00:00.000Z",
+      changed: true,
+    });
+    const { fixture, element } = await render();
+    element
+      .querySelector<HTMLButtonElement>(
+        'button[aria-label="Plano de White Oven Centro"]',
+      )!
+      .click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const dialog = element.querySelector("dialog.plan-dialog")!;
+    expect(dialog.textContent).toContain("3% por venda, sem mensalidade");
+    expect(dialog.textContent).toMatch(
+      /sem comissão por venda, R\$\s?199,00 por mês/,
+    );
+    expect(dialog.textContent).toContain("primeiro dia do próximo mês");
+    expect(dialog.querySelector(".plan-history")?.textContent).toContain(
+      "Atual, desde",
+    );
+    const pro = dialog.querySelector<HTMLInputElement>("#plan-PRO")!;
+    pro.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    dialog
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(api.changePlan).toHaveBeenCalledWith("tenant-1", "PRO");
+    expect(element.querySelector("dialog.plan-dialog")).toBeNull();
+    expect(element.querySelector('[role="status"]')?.textContent).toContain(
+      "Plano Pro agendado para",
+    );
+    expect(api.listTenants).toHaveBeenCalledTimes(2);
+  });
+
+  it("explains that a tenant needs a plan before reactivation", async () => {
+    api.listTenants.mockResolvedValue([
+      { ...sample, status: "SUSPENDED", plan: null },
+    ]);
+    api.changeStatus.mockRejectedValue(
+      new HttpErrorResponse({
+        status: 409,
+        error: { code: "PLAN_REQUIRED", message: "ignored" },
+      }),
+    );
+    const { fixture, element } = await render();
+    expect(element.querySelector("tbody tr")?.textContent).toContain(
+      "Sem plano",
+    );
+    element
+      .querySelector<HTMLButtonElement>(
+        'button[aria-label="Reativar White Oven Centro"]',
+      )!
+      .click();
+    fixture.detectChanges();
+    element
+      .querySelector<HTMLButtonElement>(
+        '[role="alertdialog"] .dialog-actions .button:not(.button--secondary)',
+      )!
+      .click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(
+      element.querySelector('[role="alertdialog"] [role="alert"]')?.textContent,
+    ).toContain("Defina um plano para a pizzaria antes de ativá-la");
   });
 });

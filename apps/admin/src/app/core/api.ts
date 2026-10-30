@@ -80,6 +80,8 @@ const MESSAGES: Record<string, string> = {
   TENANT_NOT_ACTIVE: "A loja está suspensa e não permite essa transição.",
   RESOURCE_CONFLICT: "Já existe um cadastro com esses dados.",
   TENANT_NOT_FOUND: "Essa pizzaria não está mais disponível.",
+  PLAN_REQUIRED:
+    "Defina um plano para a pizzaria antes de ativá-la. Use o botão Plano na lista.",
   ADMIN_ORIGIN_NOT_CONFIGURED:
     "O envio de convite não está configurado neste ambiente.",
   INVITE_INVALID: "Este convite é inválido ou expirou.",
