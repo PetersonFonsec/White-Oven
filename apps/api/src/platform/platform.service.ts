@@ -48,6 +48,12 @@ function mapPlatformError(error: unknown): unknown {
       "PLAN_SCHEDULE_CONFLICT",
       "The tenant's plan periods need review before changing the plan.",
     );
+  if (code === "P0008")
+    return new ApiError(
+      HttpStatus.NOT_FOUND,
+      "BILLING_ENTRY_NOT_FOUND",
+      "Billing entry not found.",
+    );
   if (code === "22023") return invalid();
   if (code === "P0003")
     return new ApiError(
@@ -107,6 +113,34 @@ export interface PlanChange {
   validFrom: Date;
   /** False when the requested plan was already current or scheduled. */
   changed: boolean;
+}
+
+export const REVERSAL_REASONS = [
+  "COMPLETED_BY_MISTAKE",
+  "SALE_UNDONE",
+] as const;
+export type ReversalReason = (typeof REVERSAL_REASONS)[number];
+
+export interface BillingEntry {
+  id: string;
+  type:
+    "ORDER_COMPLETED" | "ORDER_REVERSED" | "SUBSCRIPTION_PERIOD" | "ADJUSTMENT";
+  orderId: string | null;
+  orderNumber: number | null;
+  plan: PlanCode | null;
+  feeBasisPoints: number | null;
+  itemsSubtotalCents: number;
+  deliveryFeeCents: number;
+  totalCents: number;
+  paymentMethod: string;
+  paidOnline: boolean;
+  occurredAt: Date;
+  /** `YYYY-MM` in the store's time zone. */
+  period: string;
+  reversesEntryId: string | null;
+  reasonCode: ReversalReason | null;
+  /** Set on a completed order's entry once an operator reversed it. */
+  reversedByEntryId: string | null;
 }
 
 @Injectable()
@@ -396,6 +430,75 @@ export class PlatformService {
         "INVITE_INVALID",
         "Invitation is invalid or expired.",
       );
+    return row;
+  }
+
+  async listBillingEntries(
+    tenantId: string,
+    period: string | undefined,
+    actorId: string,
+    sessionId: string,
+  ): Promise<BillingEntry[]> {
+    if (
+      !uuidFormat.test(tenantId) ||
+      (period !== undefined && !/^\d{4}-(0[1-9]|1[0-2])$/.test(period))
+    )
+      throw invalid();
+    try {
+      return await this.orm.em.fork().transactional((em) =>
+        em.execute<BillingEntry[]>(
+          `select id, type, order_id as "orderId", order_number as "orderNumber", plan,
+                  fee_basis_points as "feeBasisPoints", items_subtotal_cents as "itemsSubtotalCents",
+                  delivery_fee_cents as "deliveryFeeCents", total_cents as "totalCents",
+                  payment_method as "paymentMethod", paid_online as "paidOnline", occurred_at as "occurredAt",
+                  period, reverses_entry_id as "reversesEntryId", reason_code as "reasonCode",
+                  reversed_by_entry_id as "reversedByEntryId"
+             from whiteoven_platform_billing_entries(?, ?, ?, ?)`,
+          [tenantId, period ?? null, actorId, sessionId],
+        ),
+      );
+    } catch (error) {
+      throw mapPlatformError(error);
+    }
+  }
+
+  async reverseBillingEntry(
+    tenantId: string,
+    entryId: string,
+    reasonCode: string,
+    actorId: string,
+    sessionId: string,
+    requestId: string,
+    ip: string,
+  ): Promise<{ entryId: string; changed: boolean }> {
+    if (
+      !uuidFormat.test(tenantId) ||
+      !uuidFormat.test(entryId) ||
+      !(REVERSAL_REASONS as readonly string[]).includes(reasonCode)
+    )
+      throw invalid();
+    let row: { entryId: string; changed: boolean } | undefined;
+    try {
+      [row] = await this.orm.em
+        .fork()
+        .transactional((em) =>
+          em.execute<{ entryId: string; changed: boolean }[]>(
+            'select id as "entryId", changed from whiteoven_reverse_billing_entry(?, ?, ?, ?, ?, ?, ?)',
+            [
+              tenantId,
+              entryId,
+              reasonCode,
+              actorId,
+              sessionId,
+              this.ipHash(ip),
+              this.requestUuid(requestId),
+            ],
+          ),
+        );
+    } catch (error) {
+      throw mapPlatformError(error);
+    }
+    if (!row) throw new Error("billing reversal returned no row");
     return row;
   }
 

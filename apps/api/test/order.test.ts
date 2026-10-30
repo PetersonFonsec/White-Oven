@@ -1002,6 +1002,9 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
         "delete from order_status_changes where order_id = ?",
         "update billing_entries set total_cents = 1 where order_id = ?",
         "delete from billing_entries where order_id = ?",
+        `insert into billing_entries (tenant_id, order_id, type, items_subtotal_cents, delivery_fee_cents,
+           total_cents, payment_method, paid_online, period)
+         values (current_setting('app.tenant_id')::uuid, ?, 'ORDER_COMPLETED', 1, 0, 1, 'CASH', false, '2026-10')`,
       ])
         await assert.rejects(
           asApp(query, [order.id]),
@@ -1532,16 +1535,25 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
       count: number;
       type: string;
       totalCents: number;
+      plan: string;
+      feeBasisPoints: number;
+      currentPlan: boolean;
     }>(
       stores.a.id,
-      `select count(*)::int as count, min(type) as type, min(total_cents) as "totalCents"
-       from billing_entries where order_id = ?`,
+      `select count(*)::int as count, min(b.type) as type, min(b.total_cents) as "totalCents",
+              min(b.plan) as plan, min(b.fee_basis_points) as "feeBasisPoints",
+              bool_and(s.valid_to is null) as "currentPlan"
+       from billing_entries b join plan_subscriptions s on s.id = b.subscription_id
+       where b.order_id = ?`,
       [order.id],
     );
     assert.deepEqual(entry, {
       count: 1,
       type: "ORDER_COMPLETED",
       totalCents: order.totalCents,
+      plan: "FLEX",
+      feeBasisPoints: 300,
+      currentPlan: true,
     });
   });
 });

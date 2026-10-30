@@ -612,28 +612,27 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
       ]);
   }
 
+  /**
+   * The ledger entry is written by the database from the completed order, the current plan period
+   * and the store's month (ADR 0025), in this same transaction.
+   */
   private async recordBilling(
     em: EntityManager,
-    order: Pick<
-      LockedOrder,
-      | "id"
-      | "itemsSubtotalCents"
-      | "deliveryFeeCents"
-      | "totalCents"
-      | "paymentMethod"
-    >,
+    order: Pick<LockedOrder, "id">,
   ): Promise<void> {
-    await em.execute(
-      `insert into billing_entries (tenant_id, order_id, type, items_subtotal_cents, delivery_fee_cents, total_cents, payment_method, paid_online)
-      values (current_setting('app.tenant_id')::uuid, ?, 'ORDER_COMPLETED', ?, ?, ?, ?, false) on conflict (tenant_id, order_id, type) do nothing`,
-      [
+    try {
+      await em.execute("select whiteoven_record_order_completion(?)", [
         order.id,
-        order.itemsSubtotalCents,
-        order.deliveryFeeCents,
-        order.totalCents,
-        order.paymentMethod,
-      ],
-    );
+      ]);
+    } catch (error) {
+      if ((error as { code?: unknown } | null)?.code === "P0005")
+        throw new ApiError(
+          HttpStatus.CONFLICT,
+          "PLAN_REQUIRED",
+          "The store has no current plan.",
+        );
+      throw error;
+    }
   }
 
   private async rejectExpiredOrders(): Promise<void> {
