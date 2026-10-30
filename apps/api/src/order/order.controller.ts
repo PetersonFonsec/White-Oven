@@ -20,6 +20,7 @@ import {
   OmitType,
 } from "@nestjs/swagger";
 import type { Response } from "express";
+import { BILLING_PERIOD } from "../billing/billing-report";
 import { ApiError } from "../errors/api-error";
 import { CustomerRoute } from "../customer/customer.guard";
 import {
@@ -480,5 +481,28 @@ export class AdminReportController {
     if (!result.ok) throw invalid(result.paths);
     res.setHeader("Cache-Control", "no-store");
     return this.history.dailyReport(result.value);
+  }
+
+  @Get("billing")
+  @AdminRoute("OWNER")
+  @ApiOperation({
+    summary: "Monthly billing estimate of the active store",
+    description:
+      "Built from the billing ledger of one store-local month (`period`, YYYY-MM, the current month when omitted): every completed order counts whatever the payment method, the plan fee applies to the items subtotal, reversals of the month subtract, and each plan period in force during the month adds its full monthly fee. Always an estimate (`estimate: true`); nothing is charged. OWNER only.",
+  })
+  billing(
+    @Query() query: Record<string, unknown>,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const keys = Object.keys(query);
+    if (
+      keys.some((key) => key !== "period") ||
+      (query.period !== undefined &&
+        (typeof query.period !== "string" ||
+          !BILLING_PERIOD.test(query.period)))
+    )
+      throw invalid(["period"]);
+    res.setHeader("Cache-Control", "no-store");
+    return this.history.billingReport(query.period as string | undefined);
   }
 }

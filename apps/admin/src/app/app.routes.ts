@@ -126,6 +126,13 @@ export const routes: Routes = [
           import("./reports/daily-report.page").then((m) => m.DailyReportPage),
       },
       {
+        path: "cobranca",
+        title: "Cobrança · WhiteOven",
+        data: { roles: rolesOf("cobranca"), title: "Cobrança" },
+        loadComponent: () =>
+          import("./billing/billing.page").then((m) => m.BillingPage),
+      },
+      {
         path: "configuracoes",
         title: "Configurações · WhiteOven",
         data: { roles: rolesOf("configuracoes"), title: "Configurações" },

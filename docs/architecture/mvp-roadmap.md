@@ -85,7 +85,7 @@ Bloqueios de produto: Q-04 (taxa, decidida em 2026-10-26: fixa, zero permitido) 
 
 ## M5 — Aplicativo Expo white label
 
-Bloqueios: Q-09 (contas de loja) antes de M5.6; Q-11 (push) para M5.5.
+Bloqueios: Q-09 (decidida em 2026-10-30: conta da pizzaria, operada pelo WhiteOven) antes de M5.6; Q-11 (decidida em 2026-10-30: Expo Push, após aprovação do fornecedor) para M5.5.
 
 | PR   | Entrega                                                                                                                                                                              | Critérios de aceite                                                                                                           |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -98,13 +98,13 @@ Bloqueios: Q-09 (contas de loja) antes de M5.6; Q-11 (push) para M5.5.
 
 ## M6 — Dados de cobrança
 
-Bloqueios: Q-01, Q-02 e Q-10 precisam de decisão antes de M6.3.
+Bloqueios: Q-01, Q-02 e Q-10 decididas em 2026-10-30 (todos os pedidos concluídos, subtotal dos itens, troca no ciclo seguinte).
 
-| PR   | Entrega                                                                                                   | Critérios de aceite                                                                   |
-| ---- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| M6.1 | **Concluído na PR #40** (ADR 0024) — `PlanSubscription` com histórico e troca de plano pelo operador.     | Períodos sem sobreposição; snapshot de valores do plano.                              |
-| M6.2 | **Em desenvolvimento** (ADR 0025) — `BillingEntry` gravado na conclusão do pedido; estorno pelo operador. | Mesma transação da conclusão; tabela append-only no papel da app; sem dados pessoais. |
-| M6.3 | Relatório mensal por tenant (plataforma e OWNER), marcado como estimativa.                                | Soma por componentes; aplica a regra decidida; reprodutível a partir do ledger.       |
+| PR   | Entrega                                                                                                        | Critérios de aceite                                                                   |
+| ---- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| M6.1 | **Concluído na PR #40** (ADR 0024) — `PlanSubscription` com histórico e troca de plano pelo operador.          | Períodos sem sobreposição; snapshot de valores do plano.                              |
+| M6.2 | **Concluído na PR #41** (ADR 0025) — `BillingEntry` gravado na conclusão do pedido; estorno pelo operador.     | Mesma transação da conclusão; tabela append-only no papel da app; sem dados pessoais. |
+| M6.3 | **Em desenvolvimento** (ADR 0026) — relatório mensal por tenant (plataforma e OWNER), marcado como estimativa. | Soma por componentes; aplica a regra decidida; reprodutível a partir do ledger.       |
 
 ## M7 — Preparação do piloto
 

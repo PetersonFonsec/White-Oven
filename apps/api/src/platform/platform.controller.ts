@@ -192,11 +192,11 @@ export class PlatformController {
 }
 
 @ApiTags("platform billing")
-@Controller("platform/tenants/:tenantId/billing-entries")
+@Controller("platform/tenants/:tenantId")
 export class PlatformBillingController {
   constructor(private readonly platform: PlatformService) {}
 
-  @Get()
+  @Get("billing-entries")
   @PlatformRoute()
   @ApiQuery({
     name: "period",
@@ -224,7 +224,38 @@ export class PlatformBillingController {
     );
   }
 
-  @Post(":entryId/reversal")
+  @Get("billing-report")
+  @PlatformRoute()
+  @ApiQuery({
+    name: "period",
+    required: false,
+    description:
+      "YYYY-MM in the store's time zone; defaults to the current month.",
+  })
+  @ApiOperation({
+    summary:
+      "Monthly billing estimate of a tenant, built from its ledger (ADR 0026)",
+  })
+  report(
+    @Param("tenantId") tenantId: string,
+    @Query() query: Record<string, unknown>,
+    @CurrentStaff() staff: StaffPrincipal,
+  ) {
+    const keys = Object.keys(query);
+    if (
+      keys.some((key) => key !== "period") ||
+      (query.period !== undefined && typeof query.period !== "string")
+    )
+      throw bodyError();
+    return this.platform.billingReport(
+      tenantId,
+      query.period as string | undefined,
+      staff.access.staffUserId,
+      staff.access.sessionId,
+    );
+  }
+
+  @Post("billing-entries/:entryId/reversal")
   @PlatformRoute()
   @ApiBody({ type: BillingReversalBody })
   @ApiOperation({

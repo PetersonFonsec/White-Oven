@@ -19,6 +19,7 @@ export const STORE_SECTIONS: readonly StoreSection[] = [
     roles: ["OWNER", "MANAGER", "STAFF"],
   },
   { path: "relatorio", label: "Relatório", roles: ["OWNER"] },
+  { path: "cobranca", label: "Cobrança", roles: ["OWNER"] },
   { path: "cardapio", label: "Cardápio", roles: ["OWNER", "MANAGER"] },
   { path: "configuracoes", label: "Configurações", roles: ["OWNER"] },
   { path: "marca", label: "Marca", roles: ["OWNER"] },

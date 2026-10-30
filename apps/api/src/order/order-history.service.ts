@@ -5,6 +5,13 @@ import { ApiError } from "../errors/api-error";
 import { currentTenantContext } from "../tenancy/tenant-context";
 import { TenantStatusPolicy } from "../tenancy/tenant-status-policy";
 import { TenantTransactions } from "../tenancy/tenant-transaction";
+import {
+  type BillingReport,
+  buildBillingReport,
+  planPeriodOf,
+  type ReportEntry,
+  reportMonth,
+} from "../billing/billing-report";
 import type { TenantStatus } from "../tenancy/tenant.entity";
 import {
   FULFILLMENTS,
@@ -186,6 +193,37 @@ export class OrderHistoryService {
    * Count and sum of COMPLETED orders per local day of their completion, split by fulfillment
    * and payment method. Rejected and canceled orders never count.
    */
+  /** The active store's billing estimate for one month (ADR 0026); the current one by default. */
+  billingReport(period: string | undefined): Promise<BillingReport> {
+    return this.transactions.run(async (em) => {
+      const execute = <T>(query: string, params: unknown[]) =>
+        em.execute<T[]>(query, params);
+      const [tenant] = await em.execute<{ timezone: string }[]>(
+        "select timezone from tenants where id = ?",
+        [currentTenantContext().tenantId],
+      );
+      const month = await reportMonth(execute, tenant!.timezone, period);
+      const entries = await em.execute<ReportEntry[]>(
+        `select type, plan, fee_basis_points as "feeBasisPoints", items_subtotal_cents as "itemsSubtotalCents",
+                delivery_fee_cents as "deliveryFeeCents", total_cents as "totalCents"
+           from billing_entries where period = ?`,
+        [month.period],
+      );
+      const periods = await em.execute<Parameters<typeof planPeriodOf>[0][]>(
+        `select plan, fee_basis_points as "feeBasisPoints", monthly_fee_cents as "monthlyFeeCents",
+                valid_from as "validFrom", valid_to as "validTo"
+           from plan_subscriptions`,
+        [],
+      );
+      return buildBillingReport({
+        ...month,
+        timeZone: tenant!.timezone,
+        entries,
+        planPeriods: periods.map(planPeriodOf),
+      });
+    });
+  }
+
   dailyReport(range: DailyReportRange): Promise<DailyReport> {
     return this.transactions.run(async (em) => {
       const [tenant] = await em.execute<{ timezone: string }[]>(
