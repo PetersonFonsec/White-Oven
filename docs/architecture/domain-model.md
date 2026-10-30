@@ -384,10 +384,10 @@ Eventos internos, publicados em memória após o commit (sem broker no MVP). Per
 | Evento               | Consumidores no MVP                                                                                           |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `OrderPlaced`        | Quadro do painel (via polling); push futuro.                                                                  |
-| `OrderStatusChanged` | Push futuro ao cliente; auditoria.                                                                            |
+| `OrderStatusChanged` | Push ao cliente pela fila `push_deliveries` (M5.5, ADR 0027); auditoria.                                      |
 | `OrderCompleted`     | `BillingEntry` (mesma transação).                                                                             |
 | `OrderCanceled`      | Auditoria; `BillingEntry` de estorno se já concluído.                                                         |
 | `CatalogChanged`     | Invalidação de cache do cardápio público.                                                                     |
 | `TenantSuspended`    | Recusa de pedidos `PLACED` (mesma transação); revogação de sessões de MANAGER e STAFF; cardápio indisponível. |
 
-Se o MVP precisar de efeitos externos confiáveis (e-mail, push), usar tabela outbox na mesma transação, processada por worker no próprio processo da API.
+Se o MVP precisar de efeitos externos confiáveis (e-mail, push), usar tabela outbox na mesma transação, processada por worker no próprio processo da API. O push (M5.5, [ADR 0027](../adr/0027-order-push-notifications.md)) segue esse modelo: o gatilho em `order_status_changes` grava `push_deliveries` na transação da transição, e um job da API envia ao Expo Push. Os dispositivos (`customer_push_devices`) pertencem à sessão do cliente que os registrou.

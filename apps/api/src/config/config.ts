@@ -16,6 +16,17 @@ export interface ApiConfig {
   imageStorageDirectory: string;
   database: DatabaseConfig;
   auth: AuthConfig;
+  push: PushConfig;
+}
+
+export const PUSH_DELIVERIES = ["disabled", "expo"] as const;
+
+/** Order status notifications to the app (M5.5, ADR 0027). */
+export interface PushConfig {
+  /** `expo` sends through Expo Push; `disabled` (the default) keeps the outbox untouched. */
+  delivery: (typeof PUSH_DELIVERIES)[number];
+  /** Expo "enhanced push security" access token, when the Expo account requires one. Secret. */
+  expoAccessToken: string | null;
 }
 
 export interface AuthConfig {
@@ -139,6 +150,21 @@ export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
 
   const auth = loadAuthConfig(env, nodeEnv, problems);
 
+  const pushDelivery = oneOf(
+    PUSH_DELIVERIES,
+    env.PUSH_DELIVERY,
+    "disabled",
+    "PUSH_DELIVERY",
+    problems,
+  );
+  const expoAccessToken = env.EXPO_ACCESS_TOKEN || null;
+  if (expoAccessToken !== null) {
+    if (pushDelivery !== "expo")
+      problems.push("EXPO_ACCESS_TOKEN requires PUSH_DELIVERY=expo");
+    else if (!/^[A-Za-z0-9_-]{20,200}$/.test(expoAccessToken))
+      problems.push("EXPO_ACCESS_TOKEN must be an Expo access token");
+  }
+
   if (problems.length > 0) throw new ConfigError(problems);
   return Object.freeze({
     nodeEnv,
@@ -149,6 +175,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
     imageStorageDirectory,
     database: Object.freeze({ url: databaseUrl, poolMax }),
     auth: Object.freeze(auth),
+    push: Object.freeze({ delivery: pushDelivery, expoAccessToken }),
   });
 }
 

@@ -149,6 +149,7 @@ describe("M6.3 monthly billing report", databaseSuite, () => {
         ownerInviteSecret: Buffer.alloc(32, 9),
         adminOrigins: ["https://admin.example.test"],
       },
+      push: { delivery: "disabled", expoAccessToken: null },
     };
     platform = new PlatformService(app, config);
     server = await startTestServer({

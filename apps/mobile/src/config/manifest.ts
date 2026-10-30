@@ -42,6 +42,11 @@ export interface TenantManifest {
   iconBackgroundColor: string;
   /** Brand colors until the first answer of the API; the API wins once it answers. */
   fallbackColors: BrandColors;
+  /**
+   * The store's EAS project id (ADR 0027). Without it the build has no push notifications and
+   * the account screen says so.
+   */
+  easProjectId?: string;
 }
 
 /** What the running app reads from `expo-constants` (`extra.whiteoven`). */
@@ -51,6 +56,8 @@ export interface AppRuntimeConfig {
   storeName: string;
   apiUrl: string;
   fallbackColors: BrandColors;
+  /** Present only in builds with push notifications. */
+  pushProjectId?: string;
 }
 
 export const STORE_SLUG = /^[a-z0-9-]{3,40}$/;
@@ -58,6 +65,8 @@ const BUNDLE_ID = /^[a-zA-Z][a-zA-Z0-9-]*(\.[a-zA-Z][a-zA-Z0-9-]*)+$/;
 const ANDROID_PACKAGE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const VERSION = /^\d+\.\d+\.\d+$/;
 const HEX = /^#[0-9A-F]{6}$/;
+const EAS_PROJECT_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "10.0.2.2"]);
 
 export class ManifestError extends Error {
@@ -105,6 +114,12 @@ export function parseManifest(value: unknown): TenantManifest {
   const androidPackage = nested("android", "package", ANDROID_PACKAGE);
   const fallbackColors = parseBrandColors(record["fallbackColors"], true);
   if (!fallbackColors) problems.push("fallbackColors");
+  const easProjectId = record["easProjectId"];
+  if (
+    easProjectId !== undefined &&
+    (typeof easProjectId !== "string" || !EAS_PROJECT_ID.test(easProjectId))
+  )
+    problems.push("easProjectId");
   const known = [
     "slug",
     "name",
@@ -115,6 +130,7 @@ export function parseManifest(value: unknown): TenantManifest {
     "iconBackgroundColor",
     "fallbackColors",
     "privacyPolicy",
+    "easProjectId",
   ];
   for (const key of Object.keys(record))
     if (!known.includes(key)) problems.push(`${key} (unknown)`);
@@ -131,6 +147,7 @@ export function parseManifest(value: unknown): TenantManifest {
     icon,
     iconBackgroundColor,
     fallbackColors: fallbackColors!,
+    ...(typeof easProjectId === "string" ? { easProjectId } : {}),
   };
 }
 
@@ -171,9 +188,13 @@ export function buildAppConfig(manifest: TenantManifest, apiUrl: string) {
     storeName: manifest.name,
     apiUrl: parseApiUrl(apiUrl),
     fallbackColors: manifest.fallbackColors,
+    ...(manifest.easProjectId ? { pushProjectId: manifest.easProjectId } : {}),
   };
   return {
-    plugins: ["expo-secure-store"],
+    // Only a build with an EAS project asks the stores for the push entitlement.
+    plugins: manifest.easProjectId
+      ? ["expo-secure-store", "expo-notifications"]
+      : ["expo-secure-store"],
     name: manifest.name,
     slug: `whiteoven-${manifest.slug}`,
     version: manifest.version,
@@ -191,7 +212,12 @@ export function buildAppConfig(manifest: TenantManifest, apiUrl: string) {
         backgroundColor: manifest.iconBackgroundColor,
       },
     },
-    extra: { whiteoven: runtime },
+    extra: {
+      whiteoven: runtime,
+      ...(manifest.easProjectId
+        ? { eas: { projectId: manifest.easProjectId } }
+        : {}),
+    },
   };
 }
 
@@ -210,7 +236,10 @@ export function parseRuntimeConfig(extra: unknown): AppRuntimeConfig | null {
       !value.storeName.trim() ||
       typeof value.apiUrl !== "string" ||
       parseApiUrl(value.apiUrl) !== value.apiUrl ||
-      !fallbackColors
+      !fallbackColors ||
+      (value.pushProjectId !== undefined &&
+        (typeof value.pushProjectId !== "string" ||
+          !EAS_PROJECT_ID.test(value.pushProjectId)))
     )
       return null;
   } catch {
@@ -224,5 +253,6 @@ export function parseRuntimeConfig(extra: unknown): AppRuntimeConfig | null {
     storeName: value.storeName,
     apiUrl: value.apiUrl,
     fallbackColors,
+    ...(value.pushProjectId ? { pushProjectId: value.pushProjectId } : {}),
   };
 }

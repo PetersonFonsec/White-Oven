@@ -164,6 +164,47 @@ describe("tenant manifests and the Expo config", () => {
       assert.throws(() => parseApiUrl(refused), ManifestError, refused);
   });
 
+  it("enables push only in builds whose manifest names an EAS project", () => {
+    const plain = buildAppConfig(
+      parseManifest(manifestFile("pizzaria-centro")),
+      "https://api.example.com",
+    );
+    assert.deepEqual(plain.plugins, ["expo-secure-store"]);
+    assert.equal("eas" in plain.extra, false);
+    assert.equal(plain.extra.whiteoven.pushProjectId, undefined);
+
+    const projectId = "0f3c1a52-6d2e-4b8f-9a77-3f1e2d4c5b6a";
+    const withPush = buildAppConfig(
+      parseManifest({
+        ...manifestFile("pizzaria-centro"),
+        easProjectId: projectId,
+      }),
+      "https://api.example.com",
+    );
+    assert.deepEqual(withPush.plugins, [
+      "expo-secure-store",
+      "expo-notifications",
+    ]);
+    assert.deepEqual(withPush.extra.eas, { projectId });
+    assert.equal(withPush.extra.whiteoven.pushProjectId, projectId);
+    assert.deepEqual(
+      parseRuntimeConfig(withPush.extra),
+      withPush.extra.whiteoven,
+    );
+
+    for (const invalid of ["", "abc", projectId.toUpperCase(), 42])
+      assert.deepEqual(
+        problems({ ...manifestFile("pizzaria-centro"), easProjectId: invalid }),
+        ["easProjectId"],
+      );
+    assert.equal(
+      parseRuntimeConfig({
+        whiteoven: { ...withPush.extra.whiteoven, pushProjectId: "x" },
+      }),
+      null,
+    );
+  });
+
   it("reads back only a complete, valid runtime config", () => {
     const built = buildAppConfig(
       parseManifest(manifestFile("pizzaria-centro")),

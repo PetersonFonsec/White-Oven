@@ -240,7 +240,8 @@ export class CustomerAuth {
    * Deletes the account (domain model: exclusion anonymizes). Asks for the password again, so a
    * stolen access token alone cannot delete an account. In one transaction: name, e-mail, phone
    * and password become null, the addresses are deleted, the orders lose the name, phone, address
-   * and notes they copied (M4.3) and every session is revoked. The id stays, for those orders.
+   * and notes they copied (M4.3), push devices are deleted and every session is revoked. The id
+   * stays, for those orders.
    */
   async deleteAccount(password: string): Promise<void> {
     const customerId = customerOf();
@@ -271,6 +272,10 @@ export class CustomerAuth {
         if (!changed) throw invalidCustomerSession();
         await em.execute(
           "delete from customer_addresses where customer_id = ?",
+          [customerId],
+        );
+        await em.execute(
+          "delete from customer_push_devices where customer_id = ?",
           [customerId],
         );
         // Orders keep items and totals for the store, without the customer's personal data.
@@ -340,9 +345,16 @@ async function revoke(
   params: unknown[],
   reason: CustomerRevokedReason,
 ): Promise<void> {
-  await em.execute(
+  const revoked = await em.execute<{ id: string }[]>(
     `update customer_sessions s set revoked_at = now(), revoked_reason = ?
-      where ${where} and s.revoked_at is null`,
+      where ${where} and s.revoked_at is null
+      returning s.id`,
     [reason, ...params],
   );
+  // A device stops receiving order notifications with the session that registered it (ADR 0027).
+  if (revoked.length)
+    await em.execute(
+      "delete from customer_push_devices where session_id = any(?::uuid[])",
+      [`{${revoked.map((row) => row.id).join(",")}}`],
+    );
 }

@@ -473,6 +473,13 @@ export function createCommerceModel(options: {
         { from: "PLACED", to: "CANCELED", reasonCode: "CUSTOMER_REQUEST" },
         key,
       ),
+    /** Order notification opt-in of this session (ADR 0027), outside `run`: no busy state. */
+    push: {
+      status: () => client.request("me/push-device"),
+      register: (token: string) =>
+        client.request("me/push-device", "PUT", { token }),
+      unregister: () => client.request("me/push-device", "DELETE"),
+    },
     invalidateQuote: dropQuote,
     quote: (details: CheckoutDetails, expectedTotalCents: number) =>
       run(async () => {

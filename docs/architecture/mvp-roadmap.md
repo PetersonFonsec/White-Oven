@@ -93,18 +93,18 @@ Bloqueios: Q-09 (decidida em 2026-10-30: conta da pizzaria, operada pelo WhiteOv
 | M5.2 | **Concluído (PR #34; ADR 0021)** — cardápio e Pizza Builder com metades visualmente distintas, adicionais e remoções por metade, acessibilidade; rota pública de imagens e logotipo. | Regras PB-xx aplicadas via `pizza-pricing`; descrição textual de cada metade; movimento reduzido respeitado.                  |
 | M5.3 | **Concluído na PR #37** (ADR 0022) — conta do cliente, carrinho persistido com segurança, checkout com `quote`, confirmação e recuperação idempotente.                               | Divergência de preço exige confirmação; retry de rede não duplica pedido; refresh token no armazenamento seguro.              |
 | M5.4 | **Concluído na PR #39** (ADR 0023) — acompanhamento, histórico paginado e “pedir novamente” validado no cardápio atual.                                                              | Polling só com o detalhe aberto e app ativo; linha do tempo igual ao histórico da API; novo pedido é cotado no checkout.      |
-| M5.5 | Push de mudança de estado (se aprovado).                                                                                                                                             | Opt-in; token do dispositivo por cliente e tenant; nenhum dado pessoal no conteúdo da notificação além do necessário.         |
+| M5.5 | **Em desenvolvimento** (ADR 0027, Q-11 decidida: Expo Push) — avisos opt-in de mudança de estado do pedido.                                                                          | Opt-in; token do dispositivo por cliente e tenant; nenhum dado pessoal no conteúdo da notificação além do necessário.         |
 | M5.6 | Pipeline de build por tenant e checklist de publicação. ADR de build/distribuição (EAS ou próprio).                                                                                  | Build reproduzível a partir do manifesto; documentação do processo nas contas da pizzaria; nenhuma credencial no repositório. |
 
 ## M6 — Dados de cobrança
 
 Bloqueios: Q-01, Q-02 e Q-10 decididas em 2026-10-30 (todos os pedidos concluídos, subtotal dos itens, troca no ciclo seguinte).
 
-| PR   | Entrega                                                                                                        | Critérios de aceite                                                                   |
-| ---- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| M6.1 | **Concluído na PR #40** (ADR 0024) — `PlanSubscription` com histórico e troca de plano pelo operador.          | Períodos sem sobreposição; snapshot de valores do plano.                              |
-| M6.2 | **Concluído na PR #41** (ADR 0025) — `BillingEntry` gravado na conclusão do pedido; estorno pelo operador.     | Mesma transação da conclusão; tabela append-only no papel da app; sem dados pessoais. |
-| M6.3 | **Em desenvolvimento** (ADR 0026) — relatório mensal por tenant (plataforma e OWNER), marcado como estimativa. | Soma por componentes; aplica a regra decidida; reprodutível a partir do ledger.       |
+| PR   | Entrega                                                                                                         | Critérios de aceite                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| M6.1 | **Concluído na PR #40** (ADR 0024) — `PlanSubscription` com histórico e troca de plano pelo operador.           | Períodos sem sobreposição; snapshot de valores do plano.                              |
+| M6.2 | **Concluído na PR #41** (ADR 0025) — `BillingEntry` gravado na conclusão do pedido; estorno pelo operador.      | Mesma transação da conclusão; tabela append-only no papel da app; sem dados pessoais. |
+| M6.3 | **Concluído na PR #42** (ADR 0026) — relatório mensal por tenant (plataforma e OWNER), marcado como estimativa. | Soma por componentes; aplica a regra decidida; reprodutível a partir do ledger.       |
 
 ## M7 — Preparação do piloto
 

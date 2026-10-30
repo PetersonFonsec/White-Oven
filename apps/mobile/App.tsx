@@ -39,6 +39,11 @@ import { menuNotices, storeMessage } from "./src/screens/store-messages.ts";
 import { addPizza, addProduct } from "./src/cart/cart.ts";
 
 import { nativeCommerce, randomUUID } from "./src/customer/native.ts";
+import { type PushModel, createPushModel } from "./src/customer/push.ts";
+import {
+  nativePush,
+  onOrderNotificationOpened,
+} from "./src/customer/push-native.ts";
 import type { CommerceModel, CommerceState } from "./src/cart/model.ts";
 import {
   type CheckoutSettings,
@@ -79,6 +84,31 @@ export default function App() {
     commerceRef.current?.invalidateQuote();
     setDestination(next);
   };
+  const push = useMemo<PushModel | null>(
+    () =>
+      model && runtime
+        ? createPushModel({
+            api: model.push,
+            native: nativePush(runtime.pushProjectId),
+          })
+        : null,
+    [model],
+  );
+  const profileId = commerce?.profile?.id ?? null;
+  // The device's opt-in belongs to the signed-in session; another account starts from its own.
+  useEffect(() => {
+    if (!push) return;
+    push.reset();
+    if (profileId) void push.refresh();
+  }, [push, profileId]);
+  // A tapped order notification opens that order (ADR 0027).
+  useEffect(() => {
+    if (!runtime?.pushProjectId) return;
+    return onOrderNotificationOpened((orderId) => {
+      setOrderReturn("history");
+      navigate({ kind: "order", orderId });
+    });
+  }, []);
   const [checkoutSettings, setCheckoutSettings] =
     useState<CheckoutSettings | null>(null);
   const settingsRequest = useRef<AbortController | null>(null);
@@ -294,11 +324,12 @@ export default function App() {
           }}
           onOpenCart={() => navigate({ kind: "cart" })}
         />
-      ) : screen.kind === "account" && model && commerce ? (
+      ) : screen.kind === "account" && model && commerce && push ? (
         <AccountScreen
           key={commerce.profile?.id ?? "signed-out"}
           model={model}
           state={commerce}
+          push={push}
           policy={runtime.privacyPolicy}
           onBack={() => navigate(null)}
           onOrders={() => navigate({ kind: "history" })}

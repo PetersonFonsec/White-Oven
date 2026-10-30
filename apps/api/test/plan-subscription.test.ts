@@ -82,6 +82,7 @@ describe("M6.1 plan subscriptions", databaseSuite, () => {
         ownerInviteSecret: Buffer.alloc(32, 9),
         adminOrigins: ["https://admin.example.test"],
       },
+      push: { delivery: "disabled", expoAccessToken: null },
     };
     platform = new PlatformService(app, config);
   });
