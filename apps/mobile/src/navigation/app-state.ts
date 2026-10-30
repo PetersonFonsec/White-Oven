@@ -77,8 +77,23 @@ export type Screen =
   | { kind: "account" }
   /** `recoveryOnly`: the store is unavailable; only a pending confirmation and its result show. */
   | { kind: "cart"; recoveryOnly: boolean }
+  | { kind: "history" }
+  | { kind: "order"; orderId: string }
   | { kind: "menu" }
   | { kind: "builder"; flavorId: string };
+
+export type Destination =
+  | { kind: "account" }
+  | { kind: "cart" }
+  | { kind: "history" }
+  | { kind: "order"; orderId: string }
+  /** String forms remain accepted by the existing navigation contract. */
+  | "account"
+  | "cart"
+  | null;
+
+const destinationKind = (destination: Destination) =>
+  typeof destination === "string" ? destination : (destination?.kind ?? null);
 
 /**
  * What the saved commerce state needs from the cart screen while the store is unavailable:
@@ -88,8 +103,8 @@ export type Recovery = "pending" | "receipt" | null;
 
 /**
  * The one place that decides what the app shows. A store confirmed unavailable wins over
- * the builder and checkout. Account remains reachable for deletion (ADR 0017), and the cart
- * only to recover a pending confirmation (ADR 0022): never to quote or to change the cart.
+ * the builder and checkout. Account and customer order history remain readable; the cart only
+ * opens to recover a pending confirmation (ADR 0022): never to quote or change that cart.
  * Closed and offline stores keep the menu and the builder,
  * with their notices. The builder needs a menu to price with.
  */
@@ -97,16 +112,20 @@ export function screenFor(
   view: StoreView | null,
   menu: MenuState,
   building: string | null,
-  destination: "account" | "cart" | null = null,
+  destination: Destination = null,
   recovery: Recovery = null,
 ): Screen {
-  if (destination === "account") return { kind: "account" };
+  if (destinationKind(destination) === "account") return { kind: "account" };
+  if (destinationKind(destination) === "history") return { kind: "history" };
+  if (typeof destination === "object" && destination?.kind === "order")
+    return { kind: "order", orderId: destination.orderId };
   if (!view) return { kind: "starting" };
   if (view.availability.kind === "unavailable")
-    return destination === "cart" && recovery
+    return destinationKind(destination) === "cart" && recovery
       ? { kind: "cart", recoveryOnly: true }
       : { kind: "unavailable" };
-  if (destination === "cart") return { kind: "cart", recoveryOnly: false };
+  if (destinationKind(destination) === "cart")
+    return { kind: "cart", recoveryOnly: false };
   if (building && menu.kind === "ok")
     return { kind: "builder", flavorId: building };
   return { kind: "menu" };
@@ -128,11 +147,11 @@ export function buildingAfterRefresh(
  * is recovering a pending confirmation, which a status change must not interrupt.
  */
 export function destinationAfterRefresh(
-  destination: "account" | "cart" | null,
+  destination: Destination,
   view: StoreView,
   recovery: Recovery,
-): "account" | "cart" | null {
-  return destination === "cart" &&
+): Destination {
+  return destinationKind(destination) === "cart" &&
     view.availability.kind === "unavailable" &&
     !recovery
     ? null

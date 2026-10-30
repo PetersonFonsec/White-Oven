@@ -33,11 +33,13 @@ export function AccountScreen({
   state,
   policy,
   onBack,
+  onOrders,
 }: {
   model: CommerceModel;
   state: CommerceState;
   policy?: CustomerPrivacyPolicy;
   onBack: () => void;
+  onOrders: () => void;
 }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
@@ -88,6 +90,7 @@ export function AccountScreen({
       ) : null}
       {state.profile ? (
         <>
+          <Button label="Meus pedidos" onPress={onOrders} disabled={disabled} />
           <Body>
             {state.profile.name} · {state.profile.email}
           </Body>

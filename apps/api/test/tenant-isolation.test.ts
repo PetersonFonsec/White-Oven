@@ -782,6 +782,8 @@ describe("tenant isolation", databaseSuite, () => {
         // order.test.ts, where they are unavailable and a token of A at B is a 404.
         "POST /customer/stores/:storeSlug/me/orders/quote",
         "POST /customer/stores/:storeSlug/me/orders",
+        "GET /customer/stores/:storeSlug/me/orders",
+        "GET /customer/stores/:storeSlug/me/orders/:orderId",
       ];
       assert.deepEqual(
         routes.filter((route) => !listings.includes(route)).sort(),

@@ -1,4 +1,3 @@
-import { validatePizzaConfiguration } from "@whiteoven/contracts";
 import {
   type Address,
   type CustomerClient,
@@ -7,7 +6,16 @@ import {
   type SecretStore,
   customerMessage,
 } from "../customer/client.ts";
-import { type CartLine, type CheckoutDetails, orderBody } from "./cart.ts";
+import {
+  type CartLine,
+  type CheckoutDetails,
+  orderBody,
+  validateCartLines,
+} from "./cart.ts";
+import {
+  parseCustomerOrderDetail,
+  parseCustomerOrderPage,
+} from "../customer/orders.ts";
 
 export interface Quote {
   itemsSubtotalCents: number;
@@ -72,44 +80,15 @@ export function parseSaved(raw: string | null): Saved {
     value.cart.length > 30
   )
     throw new Error("Não foi possível restaurar o carrinho.");
-  const cart: CartLine[] = value.cart.map((entry: unknown) => {
+  for (const entry of value.cart) {
     const line = record(entry);
     if (
-      typeof line.id !== "string" ||
-      !uuidPattern.test(line.id) ||
-      typeof line.name !== "string" ||
-      line.name.length > 500
-    )
-      throw new Error("Item local inválido.");
-    if (line.kind === "PIZZA") {
-      const pizza = validatePizzaConfiguration(line.pizza);
-      if (!pizza.ok) throw new Error("Pizza local inválida.");
-      return {
-        id: line.id,
-        name: line.name,
-        kind: "PIZZA",
-        pizza: pizza.value,
-      };
-    }
-    if (
-      line.kind !== "PRODUCT" ||
-      typeof line.productId !== "string" ||
-      !uuidPattern.test(line.productId) ||
-      !Number.isInteger(line.quantity) ||
-      (line.quantity as number) < 1 ||
-      (line.quantity as number) > 20
+      line.kind === "PRODUCT" &&
+      (typeof line.productId !== "string" || !uuidPattern.test(line.productId))
     )
       throw new Error("Produto local inválido.");
-    return {
-      id: line.id,
-      name: line.name,
-      kind: "PRODUCT",
-      productId: line.productId,
-      quantity: line.quantity as number,
-    };
-  });
-  if (new Set(cart.map((line) => line.id)).size !== cart.length)
-    throw new Error("Carrinho local inválido.");
+  }
+  const cart = validateCartLines(value.cart);
   let pending: Pending | null = null;
   if (value.pending !== null) {
     const p = record(value.pending);
@@ -449,9 +428,51 @@ export function createCommerceModel(options: {
             "Recupere o pedido pendente antes de alterar o carrinho.",
           );
         dropQuote();
-        const cart = change(state.cart);
+        const cart = validateCartLines(change(state.cart));
         await save({ cart, receipt: null });
       }),
+    replaceCart: (lines: CartLine[]) =>
+      run(async () => {
+        if (state.pending)
+          throw new Error(
+            "Recupere o pedido pendente antes de trocar o carrinho.",
+          );
+        const cart = validateCartLines(lines);
+        dropQuote();
+        await save({ cart, receipt: null });
+      }),
+    listCustomerOrders: async (
+      cursor: number | null = null,
+      signal?: AbortSignal,
+    ) => {
+      const suffix = cursor === null ? "" : `?cursor=${cursor}`;
+      return parseCustomerOrderPage(
+        await client.request(
+          `me/orders${suffix}`,
+          "GET",
+          undefined,
+          undefined,
+          signal,
+        ),
+      );
+    },
+    getCustomerOrder: async (orderId: string, signal?: AbortSignal) =>
+      parseCustomerOrderDetail(
+        await client.request(
+          `me/orders/${encodeURIComponent(orderId)}`,
+          "GET",
+          undefined,
+          undefined,
+          signal,
+        ),
+      ),
+    cancelCustomerOrder: async (orderId: string, key: string) =>
+      client.request(
+        `me/orders/${encodeURIComponent(orderId)}/transitions`,
+        "POST",
+        { from: "PLACED", to: "CANCELED", reasonCode: "CUSTOMER_REQUEST" },
+        key,
+      ),
     invalidateQuote: dropQuote,
     quote: (details: CheckoutDetails, expectedTotalCents: number) =>
       run(async () => {

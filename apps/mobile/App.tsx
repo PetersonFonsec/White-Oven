@@ -25,6 +25,7 @@ import {
   type MenuLoader,
   type MenuState,
   type Recovery,
+  type Destination,
   buildingAfterRefresh,
   createMenuLoader,
   destinationAfterRefresh,
@@ -45,6 +46,7 @@ import {
 } from "./src/cart/summary.ts";
 import { AccountScreen } from "./src/screens/AccountScreen.tsx";
 import { CheckoutScreen } from "./src/screens/CheckoutScreen.tsx";
+import { OrdersScreen } from "./src/screens/OrdersScreen.tsx";
 import { Body, Button } from "./src/components/Form.tsx";
 
 const runtime = parseRuntimeConfig(Constants.expoConfig?.extra);
@@ -71,10 +73,9 @@ export default function App() {
   const [commerce, setCommerce] = useState<CommerceState | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootNonce, setBootNonce] = useState(0);
-  const [destination, setDestination] = useState<"account" | "cart" | null>(
-    null,
-  );
-  const navigate = (next: "account" | "cart" | null) => {
+  const [destination, setDestination] = useState<Destination>(null);
+  const [orderReturn, setOrderReturn] = useState<"history" | "cart">("history");
+  const navigate = (next: Destination) => {
     commerceRef.current?.invalidateQuote();
     setDestination(next);
   };
@@ -264,13 +265,43 @@ export default function App() {
   return (
     <ThemeProvider value={theme}>
       <StatusBar style="dark" />
-      {screen.kind === "account" && model && commerce ? (
+      {(screen.kind === "history" || screen.kind === "order") &&
+      model &&
+      commerce ? (
+        <OrdersScreen
+          model={model}
+          state={commerce}
+          menu={menuData}
+          menuStale={menuStale}
+          storeUnavailable={view?.availability.kind === "unavailable"}
+          orderId={screen.kind === "order" ? screen.orderId : null}
+          onBack={() =>
+            screen.kind === "order"
+              ? navigate({ kind: orderReturn })
+              : navigate(null)
+          }
+          backLabel={
+            screen.kind === "order" && orderReturn === "cart"
+              ? "Voltar ao checkout"
+              : screen.kind === "order"
+                ? "Voltar aos pedidos"
+                : "Voltar"
+          }
+          onAccount={() => navigate({ kind: "account" })}
+          onOpenOrder={(orderId) => {
+            setOrderReturn("history");
+            navigate({ kind: "order", orderId });
+          }}
+          onOpenCart={() => navigate({ kind: "cart" })}
+        />
+      ) : screen.kind === "account" && model && commerce ? (
         <AccountScreen
           key={commerce.profile?.id ?? "signed-out"}
           model={model}
           state={commerce}
           policy={runtime.privacyPolicy}
           onBack={() => navigate(null)}
+          onOrders={() => navigate({ kind: "history" })}
         />
       ) : screen.kind === "cart" && model && commerce ? (
         <CheckoutScreen
@@ -283,7 +314,12 @@ export default function App() {
           recoveryOnly={screen.recoveryOnly}
           stale={menuStale}
           onBack={() => navigate(null)}
-          onAccount={() => navigate("account")}
+          onAccount={() => navigate({ kind: "account" })}
+          onOrders={() => navigate({ kind: "history" })}
+          onTrackOrder={(orderId) => {
+            setOrderReturn("cart");
+            navigate({ kind: "order", orderId });
+          }}
           onRefresh={() => void refresh()}
         />
       ) : view && screen.kind === "builder" && builder ? (
@@ -317,7 +353,7 @@ export default function App() {
               .then((saved) => {
                 if (saved) {
                   setBuilding(null);
-                  setDestination("cart");
+                  setDestination({ kind: "cart" });
                 }
               });
           }}
@@ -353,12 +389,17 @@ export default function App() {
               <Button
                 label={`Carrinho (${commerce?.cart.length ?? 0})${commerce?.pending ? " · confirmação pendente" : ""}`}
                 disabled={!commerce || commerce.busy}
-                onPress={() => navigate("cart")}
+                onPress={() => navigate({ kind: "cart" })}
               />
               <Button
                 label="Minha conta"
                 disabled={!commerce || commerce.busy}
-                onPress={() => navigate("account")}
+                onPress={() => navigate({ kind: "account" })}
+              />
+              <Button
+                label="Meus pedidos"
+                disabled={!commerce || commerce.busy}
+                onPress={() => navigate({ kind: "history" })}
               />
             </View>
           }
@@ -388,13 +429,18 @@ export default function App() {
           <Button
             label="Minha conta"
             disabled={!commerce || commerce.busy}
-            onPress={() => navigate("account")}
+            onPress={() => navigate({ kind: "account" })}
+          />
+          <Button
+            label="Meus pedidos"
+            disabled={!commerce || commerce.busy}
+            onPress={() => navigate({ kind: "history" })}
           />
           {commerce?.pending ? (
             <Button
               label="Recuperar pedido pendente"
               disabled={commerce.busy}
-              onPress={() => navigate("cart")}
+              onPress={() => navigate({ kind: "cart" })}
             />
           ) : null}
           <StoreScreen

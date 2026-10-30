@@ -292,6 +292,72 @@ test("corrupt saved data fails closed, quantities stay bounded and money is deci
   assert.throws(() => moneyInput("1e3"));
 });
 
+test("replaceCart accepts 30 valid lines without loss and rejects excess lines", async () => {
+  const h = setup();
+  const model = await prepare(h);
+  const thirty: CartLine[] = Array.from({ length: 30 }, () => ({
+    ...line,
+    id: randomUUID(),
+    productId: randomUUID(),
+  }));
+  assert.equal(await model.replaceCart(thirty), true);
+  assert.equal(model.getSnapshot().cart.length, 30);
+  assert.deepEqual(model.getSnapshot().cart, thirty);
+  const previousCart = model.getSnapshot().cart;
+  const previousStorage = h.storage.value;
+  assert.equal(
+    await model.replaceCart([
+      ...thirty,
+      { ...line, id: randomUUID(), productId: randomUUID() },
+    ]),
+    false,
+  );
+  assert.deepEqual(model.getSnapshot().cart, previousCart);
+  assert.equal(h.storage.value, previousStorage);
+});
+
+test("replaceCart consolidates repeated products and rejects totals above 20", async () => {
+  const h = setup();
+  const model = await prepare(h);
+  const repeated: CartLine[] = [
+    { ...line, id: randomUUID(), quantity: 7 },
+    { ...line, id: randomUUID(), quantity: 13 },
+  ];
+  assert.equal(await model.replaceCart(repeated), true);
+  const consolidated = model.getSnapshot().cart[0];
+  assert.ok(consolidated?.kind === "PRODUCT");
+  assert.equal(consolidated.quantity, 20);
+  const previous = h.storage.value;
+  assert.equal(
+    await model.replaceCart([
+      { ...line, id: randomUUID(), quantity: 20 },
+      { ...line, id: randomUUID(), quantity: 1 },
+    ]),
+    false,
+  );
+  assert.equal(h.storage.value, previous);
+  const unchanged = model.getSnapshot().cart[0];
+  assert.ok(unchanged?.kind === "PRODUCT");
+  assert.equal(unchanged.quantity, 20);
+});
+
+test("replaceCart rejects invalid quantities without changing cart, quote or persistence", async () => {
+  for (const quantity of [0, -1, 21, 1.5]) {
+    const h = setup();
+    const model = await prepare(h);
+    const previousCart = model.getSnapshot().cart;
+    const previousQuote = model.getSnapshot().quote;
+    const previousStorage = h.storage.value;
+    assert.equal(
+      await model.replaceCart([{ ...line, quantity } as CartLine]),
+      false,
+    );
+    assert.deepEqual(model.getSnapshot().cart, previousCart);
+    assert.deepEqual(model.getSnapshot().quote, previousQuote);
+    assert.equal(h.storage.value, previousStorage);
+  }
+});
+
 test("failed account switch never restores the previous identity; the original account recovers the pending order", async () => {
   for (const kind of ["invalid", "network"] as const) {
     const h = setup(),
@@ -342,7 +408,11 @@ test("init loads the cart once, retries a failed session restore and never runs 
   assert.equal(snapshot.profile, null);
   assert.ok(snapshot.error);
   assert.equal(snapshot.cart.length, 1, "cart stays available");
-  const extra: CartLine = { ...line, id: randomUUID() };
+  const extra: CartLine = {
+    ...line,
+    id: randomUUID(),
+    productId: randomUUID(),
+  };
   assert.equal(await model.changeCart((lines) => [...lines, extra]), true);
   assert.equal(await model.init(), true);
   snapshot = model.getSnapshot();
@@ -436,7 +506,11 @@ test("every cart, address and form change invalidates the quote", async () => {
     assert.equal(await model.quote(details, 500), true);
     assert.ok(model.getSnapshot().quote);
   };
-  const second: CartLine = { ...line, id: randomUUID() };
+  const second: CartLine = {
+    ...line,
+    id: randomUUID(),
+    productId: randomUUID(),
+  };
   // Quantity change.
   assert.equal(
     await model.changeCart((lines) => changeQuantity(lines, line.id, 2)),
