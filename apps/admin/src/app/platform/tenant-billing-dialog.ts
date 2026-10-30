@@ -50,7 +50,7 @@ const REASONS: { code: ReversalReason; label: string }[] = [
       <form
         class="range"
         aria-label="Mês da cobrança"
-        (submit)="$event.preventDefault(); load()"
+        (submit)="$event.preventDefault(); changeMonth()"
       >
         <div class="field">
           <label for="tenant-billing-period">Mês</label>
@@ -66,13 +66,26 @@ const REASONS: { code: ReversalReason; label: string }[] = [
         </button>
       </form>
 
-      @if (error()) {
-        <p class="status--error" role="alert">{{ error() }}</p>
-      }
       @if (notice()) {
         <p class="status--success" role="status">{{ notice() }}</p>
       }
-      @if (loading() && !report()) {
+      @if (error()) {
+        <p class="status--error" role="alert">{{ error() }}</p>
+      }
+      @if (loadError()) {
+        <div class="status--error" role="alert">
+          <p>{{ loadError() }}</p>
+          <button
+            class="button button--secondary"
+            type="button"
+            [disabled]="loading()"
+            (click)="load()"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      }
+      @if (loading()) {
         <p role="status">Carregando cobrança…</p>
       }
 
@@ -263,6 +276,8 @@ export class TenantBillingDialog implements OnInit {
   protected readonly reversing = signal<string | null>(null);
   protected readonly error = signal("");
   protected readonly notice = signal("");
+  /** Why the month's data are not on screen; cleared by a successful load. */
+  protected readonly loadError = signal("");
   private request = 0;
 
   @ViewChild("dialog")
@@ -278,22 +293,55 @@ export class TenantBillingDialog implements OnInit {
     void this.load();
   }
 
-  /** Loads the month's estimate, then the same month's entries. */
-  protected async load(): Promise<void> {
+  /** A new month from the form: earlier notices belong to the month being left. */
+  protected changeMonth(): void {
+    this.notice.set("");
+    this.error.set("");
+    void this.load();
+  }
+
+  /**
+   * Loads the month's estimate, then the same month's entries, and shows them only together:
+   * as a load starts the previous month leaves the dialog, so a failure (of either call) never
+   * leaves old figures or reversal buttons on screen. Resolves false when it failed.
+   */
+  protected async load(): Promise<boolean> {
     const request = ++this.request;
     const tenantId = this.tenant().id;
-    this.loading.set(true);
-    this.error.set("");
+    const requested = this.period || null;
+    const month = requested ? periodLabel(requested) : "este mês";
+    this.report.set(null);
+    this.entries.set([]);
     this.reversing.set(null);
+    this.loading.set(true);
+    this.loadError.set("");
     try {
-      const report = await this.api.tenantReport(tenantId, this.period || null);
-      const entries = await this.api.tenantEntries(tenantId, report.period);
-      if (request !== this.request) return;
+      let report: BillingReport;
+      try {
+        report = await this.api.tenantReport(tenantId, requested);
+      } catch (error) {
+        if (request === this.request)
+          this.loadError.set(
+            `Não foi possível carregar o relatório de ${month}. ${errorMessage(error)}`,
+          );
+        return false;
+      }
+      if (request !== this.request) return false;
+      let entries: BillingEntry[];
+      try {
+        entries = await this.api.tenantEntries(tenantId, report.period);
+      } catch (error) {
+        if (request === this.request)
+          this.loadError.set(
+            `Não foi possível carregar os lançamentos de ${periodLabel(report.period)}. ${errorMessage(error)}`,
+          );
+        return false;
+      }
+      if (request !== this.request) return false;
       this.report.set(report);
       this.entries.set(entries);
       this.period = report.period;
-    } catch (error) {
-      if (request === this.request) this.error.set(errorMessage(error));
+      return true;
     } finally {
       if (request === this.request) this.loading.set(false);
     }
@@ -314,25 +362,40 @@ export class TenantBillingDialog implements OnInit {
     this.reversing.set(entry.id);
   }
 
+  /**
+   * Reverses once, then reloads the month. A failed reload after a confirmed reversal says the
+   * reversal was recorded and offers a reload, never a new reversal: the month's data leave the
+   * dialog until it is reloaded. `saving` stays on until then, so a double click sends one request.
+   */
   protected async reverse(entry: BillingEntry): Promise<void> {
-    if (this.saving()) return;
+    if (this.saving() || !this.reversible(entry)) return;
     this.saving.set(true);
     this.error.set("");
+    this.notice.set("");
     try {
-      const result = await this.api.reverse(
-        this.tenant().id,
-        entry.id,
-        this.reason,
-      );
+      let result: { changed: boolean };
+      try {
+        result = await this.api.reverse(
+          this.tenant().id,
+          entry.id,
+          this.reason,
+        );
+      } catch (error) {
+        this.error.set(
+          `O estorno do pedido #${entry.orderNumber} não foi registrado. ${errorMessage(error)}`,
+        );
+        return;
+      }
       this.reversing.set(null);
-      await this.load();
       this.notice.set(
         result.changed
           ? `Pedido #${entry.orderNumber} estornado. O estorno entra na cobrança do mês atual.`
           : `O pedido #${entry.orderNumber} já estava estornado.`,
       );
-    } catch (error) {
-      this.error.set(errorMessage(error));
+      if (!(await this.load()))
+        this.notice.set(
+          `${this.notice()} Os dados do mês não foram atualizados; use "Tentar novamente" para vê-los.`,
+        );
     } finally {
       this.saving.set(false);
     }

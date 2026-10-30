@@ -135,6 +135,94 @@ describe("M6.3 billing report rules", () => {
     });
   });
 
+  it("rounds each sale's fee, not the month's sum, so every cent traces to an entry", () => {
+    // Two R$ 0,17 sales at 3%: 0,51 centavo each, 1 cent each. On the R$ 0,34 sum it would be 1.
+    const report = buildBillingReport({
+      ...month,
+      entries: [entry("ORDER_COMPLETED", 17), entry("ORDER_COMPLETED", 17)],
+      planPeriods: [],
+    });
+    assert.equal(report.lines[0]!.commissionCents, 2);
+    assert.equal(feeOf(34, 300), 1, "the rule this replaces");
+    // Exactly half a cent rounds away from zero, both ways.
+    assert.equal(feeOf(50, 100), 1);
+    assert.equal(feeOf(-50, 100), -1);
+  });
+
+  it("charges nothing on Pro's zero fee and never on the delivery fee", () => {
+    const report = buildBillingReport({
+      ...month,
+      entries: [
+        entry("ORDER_COMPLETED", 5000, "PRO", 0, 700),
+        entry("ORDER_COMPLETED", 1000, "FLEX", 300, 99999),
+      ],
+      planPeriods: [],
+    });
+    assert.deepEqual(
+      report.lines.map((line) => [line.plan, line.commissionCents]),
+      [
+        ["FLEX", 30],
+        ["PRO", 0],
+      ],
+    );
+  });
+
+  it("cancels a sale's own fee with its reversal, in the same month or a later one", () => {
+    const sale = entry("ORDER_COMPLETED", 1650);
+    const reversal = entry("ORDER_REVERSED", -1650);
+    const same = buildBillingReport({
+      ...month,
+      entries: [sale, entry("ORDER_COMPLETED", 17), reversal],
+      planPeriods: [],
+    });
+    assert.equal(
+      same.totals.commissionCents,
+      1,
+      "only the R$ 0,17 sale is left",
+    );
+    // Sale in October, reversal in November: October keeps 50, November gets exactly -50.
+    const october = buildBillingReport({
+      ...month,
+      entries: [sale],
+      planPeriods: [],
+    });
+    const november = buildBillingReport({
+      ...month,
+      period: "2026-11",
+      entries: [reversal],
+      planPeriods: [],
+    });
+    assert.equal(october.totals.commissionCents, 50);
+    assert.equal(november.totals.commissionCents, -50);
+    assert.equal(november.lines[0]!.reversedCount, 1);
+  });
+
+  it("keeps the lines' commissions adding up to the report's total", () => {
+    const amounts = [17, 33, 1650, 4999, 12345, 1];
+    const report = buildBillingReport({
+      ...month,
+      entries: [
+        ...amounts.map((cents) => entry("ORDER_COMPLETED", cents)),
+        ...amounts.map((cents) => entry("ORDER_COMPLETED", cents, "FLEX", 250)),
+        entry("ORDER_REVERSED", -33),
+        entry("ORDER_COMPLETED", 777, "PRO", 0),
+      ],
+      planPeriods: [],
+    });
+    assert.equal(report.lines.length, 3);
+    assert.equal(
+      report.lines.reduce((sum, line) => sum + line.commissionCents, 0),
+      report.totals.commissionCents,
+    );
+    assert.equal(
+      report.totals.commissionCents,
+      amounts.reduce(
+        (sum, cents) => sum + feeOf(cents, 300) + feeOf(cents, 250),
+        0,
+      ) - feeOf(33, 300),
+    );
+  });
+
   it("reports an empty month with no lines and zero totals", () => {
     const report = buildBillingReport({
       ...month,

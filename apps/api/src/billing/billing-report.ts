@@ -34,7 +34,11 @@ export interface BillingReportLine {
   itemsSubtotalCents: number;
   deliveryFeeCents: number;
   totalCents: number;
-  /** Fee over the net items subtotal, rounded half away from zero; 0 without a snapshot. */
+  /**
+   * Sum of each entry's own fee: items subtotal × basis points, rounded to the cent half away
+   * from zero per entry (ADR 0026), so a reversal cancels exactly its sale's fee. 0 without a
+   * snapshot.
+   */
   commissionCents: number;
 }
 
@@ -53,7 +57,10 @@ export interface BillingReport {
   };
 }
 
-/** `cents × basisPoints / 10000`, rounded half away from zero. */
+/**
+ * `cents × basisPoints / 10000` in integers, rounded half away from zero, so a negative reversal
+ * gives exactly the negated fee of its sale.
+ */
 export function feeOf(cents: number, basisPoints: number): number {
   const scaled = Math.abs(cents) * basisPoints;
   const rounded = Math.floor((scaled + 5000) / 10000);
@@ -135,12 +142,13 @@ export function buildBillingReport(input: {
     line.itemsSubtotalCents += entry.itemsSubtotalCents;
     line.deliveryFeeCents += entry.deliveryFeeCents;
     line.totalCents += entry.totalCents;
+    // Rounded per entry, never on the month's sum: each cent traces back to one ledger row.
+    if (entry.feeBasisPoints !== null)
+      line.commissionCents += feeOf(
+        entry.itemsSubtotalCents,
+        entry.feeBasisPoints,
+      );
   }
-  for (const line of lines.values())
-    line.commissionCents =
-      line.feeBasisPoints === null
-        ? 0
-        : feeOf(line.itemsSubtotalCents, line.feeBasisPoints);
 
   const subscriptions = input.planPeriods
     .filter(

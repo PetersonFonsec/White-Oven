@@ -2,7 +2,7 @@ import { Component, DestroyRef, inject, signal } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { errorMessage } from "../core/api";
 import { BillingApi, type BillingReport } from "./billing-api";
-import { BillingReportView } from "./billing-report-view";
+import { BillingReportView, periodLabel } from "./billing-report-view";
 
 /**
  * The OWNER's monthly billing estimate (M6.3, ADR 0026). The month is the store's; leaving it
@@ -39,9 +39,19 @@ import { BillingReportView } from "./billing-report-view";
       </form>
 
       @if (error()) {
-        <p class="status--error" role="alert">{{ error() }}</p>
+        <div class="status--error" role="alert">
+          <p>{{ error() }}</p>
+          <button
+            class="button button--secondary"
+            type="button"
+            [disabled]="loading()"
+            (click)="load()"
+          >
+            Tentar novamente
+          </button>
+        </div>
       }
-      @if (loading() && !report()) {
+      @if (loading()) {
         <p role="status">Carregando cobrança…</p>
       }
       @if (report(); as data) {
@@ -73,20 +83,28 @@ export class BillingPage {
     void this.load();
   }
 
+  /**
+   * Asks for the month in the field (the current one when empty). The previous month's report
+   * leaves the page as the request starts, so a failure never shows it under the new month.
+   */
   protected async load(): Promise<void> {
+    const requested = this.period || null;
     const request = ++this.request;
+    this.report.set(null);
     this.loading.set(true);
     this.error.set(null);
     try {
-      const report = await this.api.storeReport(this.period || null);
+      const report = await this.api.storeReport(requested);
       if (this.destroyed || request !== this.request) return;
       this.report.set(report);
       this.period = report.period;
     } catch (error) {
-      if (!this.destroyed && request === this.request)
-        this.error.set(errorMessage(error));
+      if (this.destroyed || request !== this.request) return;
+      this.error.set(
+        `Não foi possível carregar a cobrança de ${requested ? periodLabel(requested) : "este mês"}. ${errorMessage(error)}`,
+      );
     } finally {
-      if (request === this.request) this.loading.set(false);
+      if (!this.destroyed && request === this.request) this.loading.set(false);
     }
   }
 }
