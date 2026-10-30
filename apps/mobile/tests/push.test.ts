@@ -5,6 +5,7 @@ import { orderDetailMessage } from "../src/customer/orders.ts";
 import {
   type PermissionStatus,
   type PushApi,
+  type PushCall,
   type PushNative,
   createNotificationRouter,
   createPushModel,
@@ -16,11 +17,40 @@ const ORDER = "0f3c1a52-6d2e-4b8f-9a77-3f1e2d4c5b6a";
 const INSTALLATION = "6b0c3e1d-2f4a-4c5b-8d9e-0a1b2c3d4e5f";
 const installation = async () => INSTALLATION;
 
+/** A call the test lets through later: `reached` resolves once the model made it. */
+function gate<T>() {
+  let reach!: () => void;
+  let release!: (value: T) => void;
+  let fail!: (error: unknown) => void;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  const value = new Promise<T>((resolve, reject) => {
+    release = resolve;
+    fail = reject;
+  });
+  return { reached, value, reach, release, fail };
+}
+type Gate = ReturnType<typeof gate<unknown>>;
+
 function fakes(
   permission: PermissionStatus = "undetermined",
   answer: PermissionStatus = "granted",
 ) {
   const calls: string[] = [];
+  const bound: PushCall[] = [];
+  const gates = new Map<string, Gate>();
+  /** Holds the next call of `name` until the test releases it. */
+  const hold = <T>(name: string) => {
+    const held = gate<T>();
+    gates.set(name, held as Gate);
+    return held;
+  };
+  async function passed<T>(name: string, value: T): Promise<T> {
+    const held = gates.get(name);
+    if (!held) return value;
+    gates.delete(name);
+    held.reach();
+    return (await held.value) as T;
+  }
   let enabled = false;
   const native: PushNative & {
     permissionNow: PermissionStatus;
@@ -30,42 +60,76 @@ function fakes(
     tokenNow: TOKEN,
     async permission() {
       calls.push("permission");
-      return this.permissionNow;
+      return passed("permission", native.permissionNow);
     },
     async request() {
       calls.push("request");
-      this.permissionNow = answer;
-      return answer;
+      native.permissionNow = answer;
+      return passed("request", answer);
     },
     async token() {
       calls.push("token");
-      return this.tokenNow;
+      return passed("token", native.tokenNow);
     },
   };
-  const api: PushApi & { enabled: boolean } = {
+  const api: PushApi & { enabled: boolean; identity: number } = {
+    identity: 1,
     get enabled() {
       return enabled;
     },
     set enabled(value) {
       enabled = value;
     },
-    async status() {
+    session() {
+      return api.identity;
+    },
+    async status(call) {
       calls.push("GET");
-      return { enabled };
+      bound.push(call);
+      return passed("status", { enabled });
     },
-    async register(token, installationId) {
+    async register(token, installationId, call) {
       calls.push(`PUT ${token} ${installationId}`);
+      bound.push(call);
+      const answer = await passed("register", { enabled: true });
       enabled = true;
-      return { enabled };
+      return answer;
     },
-    async unregister(installationId) {
+    async unregister(installationId, call) {
       calls.push(`DELETE ${installationId}`);
+      bound.push(call);
+      const answer = await passed("unregister", null);
       enabled = false;
-      return null;
+      return answer;
     },
   };
-  return { native, api, calls };
+  const installationGate = { current: null as Gate | null };
+  const installationOf = async () => {
+    calls.push("installation");
+    const held = installationGate.current;
+    if (!held) return INSTALLATION;
+    installationGate.current = null;
+    held.reach();
+    return (await held.value) as string;
+  };
+  const holdInstallation = () => {
+    const held = gate<string>();
+    installationGate.current = held as Gate;
+    return held;
+  };
+  return {
+    native,
+    api,
+    calls,
+    bound,
+    hold,
+    holdInstallation,
+    installation: installationOf,
+  };
 }
+const writes = (calls: string[]) =>
+  calls.filter((call) => call.startsWith("PUT") || call.startsWith("DELETE"));
+const clean = { status: "unknown", busy: false, error: null };
 
 describe("order notification opt-in", () => {
   it("is unavailable in a build without a push project and never calls the API", async () => {
@@ -213,6 +277,156 @@ describe("order notification opt-in", () => {
       busy: false,
       error: null,
     });
+  });
+});
+
+describe("opt-in operations interrupted by a sign-out or another account", () => {
+  // `reset()` is what the app calls when the profile changes; the client changes its identity
+  // at the same time, which `api.identity` stands for here.
+  function signOut(
+    model: ReturnType<typeof createPushModel>,
+    api: { identity: number },
+  ) {
+    api.identity++;
+    model.reset();
+  }
+
+  it("makes no call after a sign-out while the OS permission is read", async () => {
+    const fake = fakes("granted");
+    const model = createPushModel(fake);
+    const held = fake.hold<PermissionStatus>("permission");
+    const enabling = model.enable();
+    await held.reached;
+    signOut(model, fake.api);
+    assert.deepEqual(model.getSnapshot(), clean);
+    held.release("granted");
+    await enabling;
+    assert.deepEqual(fake.calls, ["permission"]);
+    assert.deepEqual(model.getSnapshot(), clean, "the screen stays reset");
+  });
+
+  it("makes no call after a sign-out while the OS asks for permission", async () => {
+    const fake = fakes("undetermined");
+    const model = createPushModel(fake);
+    const held = fake.hold<PermissionStatus>("request");
+    const enabling = model.enable();
+    await held.reached;
+    signOut(model, fake.api);
+    held.release("granted");
+    await enabling;
+    assert.deepEqual(fake.calls, ["permission", "request"]);
+    assert.deepEqual(model.getSnapshot(), clean);
+  });
+
+  it("registers nothing after a sign-out while the Expo token is read", async () => {
+    const fake = fakes("granted");
+    const model = createPushModel(fake);
+    const held = fake.hold<string>("token");
+    const enabling = model.enable();
+    await held.reached;
+    signOut(model, fake.api);
+    held.release(TOKEN);
+    await enabling;
+    assert.deepEqual(writes(fake.calls), []);
+    assert.deepEqual(model.getSnapshot(), clean);
+  });
+
+  it("registers nothing when another account signs in just before the registration", async () => {
+    const fake = fakes("granted");
+    const model = createPushModel(fake);
+    const held = fake.holdInstallation();
+    const enabling = model.enable();
+    await held.reached;
+    signOut(model, fake.api);
+    held.release(INSTALLATION);
+    await enabling;
+    assert.deepEqual(writes(fake.calls), []);
+    assert.deepEqual(model.getSnapshot(), clean);
+  });
+
+  it("aborts a registration already sent and keeps its answer out of the new account", async () => {
+    const fake = fakes("granted");
+    const model = createPushModel(fake);
+    const held = fake.hold<unknown>("register");
+    const enabling = model.enable();
+    await held.reached;
+    const [call] = fake.bound;
+    assert.equal(call!.session, 1, "bound to the account that started it");
+    assert.equal(call!.signal.aborted, false);
+    signOut(model, fake.api);
+    assert.equal(
+      call!.signal.aborted,
+      true,
+      "the request in flight is aborted",
+    );
+    // The server may still answer: the old session's row is the server's to end (ADR 0027).
+    held.release({ enabled: true });
+    await enabling;
+    assert.deepEqual(model.getSnapshot(), clean);
+  });
+
+  it("releases nothing when a pending refresh of the old account answers after the sign-out", async () => {
+    const fake = fakes("granted");
+    const model = createPushModel(fake);
+    const held = fake.hold<unknown>("status");
+    const refreshing = model.refresh();
+    await held.reached;
+    signOut(model, fake.api);
+    held.release({ enabled: false });
+    await refreshing;
+    assert.deepEqual(fake.calls, ["GET"], "no DELETE for the old account");
+    assert.deepEqual(model.getSnapshot(), clean);
+  });
+
+  it("aborts a pending opt-out and leaves the new account's status alone", async () => {
+    const fake = fakes("granted");
+    const model = createPushModel(fake);
+    const held = fake.hold<unknown>("unregister");
+    const disabling = model.disable();
+    await held.reached;
+    signOut(model, fake.api);
+    assert.equal(fake.bound[0]!.signal.aborted, true);
+    const fresh = model.refresh();
+    held.release(null);
+    await Promise.all([disabling, fresh]);
+    assert.equal(model.getSnapshot().status, "off");
+    assert.ok(
+      fake.bound.slice(1).every((call) => call.session === 2),
+      "the new account's calls carry its own session",
+    );
+  });
+
+  it("runs one opt-in at a time", async () => {
+    const fake = fakes("granted");
+    const model = createPushModel(fake);
+    await Promise.all([model.enable(), model.enable()]);
+    assert.deepEqual(writes(fake.calls), [`PUT ${TOKEN} ${INSTALLATION}`]);
+    assert.equal(model.getSnapshot().status, "on");
+  });
+
+  it("keeps the new account's result when the old operation ends last", async () => {
+    const fake = fakes("granted");
+    const model = createPushModel(fake);
+    const held = fake.hold<unknown>("register");
+    const old = model.enable();
+    await held.reached;
+    signOut(model, fake.api);
+    fake.api.enabled = false;
+    await model.refresh();
+    const after = model.getSnapshot();
+    assert.equal(after.status, "off");
+    held.fail(new CustomerError(0, "ABORTED"));
+    await old;
+    assert.deepEqual(
+      model.getSnapshot(),
+      after,
+      "no error, status or busy flag",
+    );
+    assert.equal(
+      writes(fake.calls).filter((call) => call.startsWith("PUT")).length,
+      1,
+      "only the old registration, already in flight",
+    );
   });
 });
 

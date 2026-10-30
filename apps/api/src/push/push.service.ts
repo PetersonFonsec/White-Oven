@@ -45,6 +45,8 @@ export interface PushDeviceStatus {
 export interface PushPassHooks {
   /** After a claim committed, before any request of it. */
   afterClaim?: () => Promise<void>;
+  /** After a request's check committed, right before the request. */
+  beforeRequest?: () => Promise<void>;
 }
 
 interface DueDelivery {
@@ -213,7 +215,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
             if (!claim) break;
             await hooks.afterClaim?.();
             if (claim.targets.length)
-              await this.send(tenant.id, tenant.name, claim, sender);
+              await this.send(tenant.id, tenant.name, claim, sender, hooks);
             if (claim.deliveries.length < PUSH_BATCH_SIZE) break;
           } catch {
             this.logger.write("error", "push delivery batch failed", {
@@ -343,6 +345,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
     storeName: string,
     claim: Claim,
     sender: PushSender,
+    hooks: PushPassHooks,
   ): Promise<void> {
     const byId = new Map(
       claim.deliveries.map((delivery) => [delivery.id, delivery]),
@@ -376,6 +379,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
           data: { type: "order-status", orderId: delivery.orderId },
         };
       });
+      await hooks.beforeRequest?.();
       try {
         const tickets = await sender.send(messages);
         if (tickets.length !== sending.length)

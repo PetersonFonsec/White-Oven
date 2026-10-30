@@ -489,6 +489,30 @@ describe("M5.5 order push notifications", databaseSuite, () => {
       assert.deepEqual(await devices(stale.id), []);
     });
 
+    it("refuses a registration or release that arrives after its session was revoked", async () => {
+      // The app's request may still be in flight at sign-out; its access token is not enough.
+      const leaving = await customer();
+      const installation = randomUUID();
+      await logout(leaving.refresh);
+      const late = await optIn(store.slug, leaving.access, {
+        token: token("late"),
+        installationId: installation,
+      });
+      assert.equal(late.status, 401);
+      assert.deepEqual(await devices(leaving.id), []);
+
+      const next = await customer();
+      await subscribe(next.access, "kept", installation);
+      const lateRelease = await customerRequest(
+        store.slug,
+        `me/push-device?installationId=${installation}`,
+        leaving.access,
+        "DELETE",
+      );
+      assert.equal(lateRelease.status, 401);
+      assert.deepEqual(await devices(next.id), [token("kept")]);
+    });
+
     it("deletes every device of a deleted account", async () => {
       const deleting = await customer();
       const tablet = await signInAgain(deleting.email);
@@ -849,6 +873,80 @@ describe("M5.5 order push notifications", databaseSuite, () => {
       );
     });
 
+    it("waits for a revocation in progress at the check and then sends nothing", async () => {
+      const buyer = await customer();
+      await subscribe(buyer.access, "racing-check");
+      const placed = await queued(buyer.id);
+      const [device] = await sql<{ sessionId: string }>(
+        store.id,
+        `select session_id as "sessionId" from customer_push_devices where customer_id = ?`,
+        [buyer.id],
+      );
+      const locked = barrier();
+      const commit = barrier();
+      let xid = "";
+      let revoking: Promise<unknown> = Promise.resolve();
+      const sender = new FakeSender();
+      const pass = push.deliverPending(sender, {
+        afterClaim: async () => {
+          // A logout's statements, held open after taking the session's row lock.
+          revoking = runInTenant(owner, store.id, async (em) => {
+            await em.execute(
+              `update customer_sessions set revoked_at = now(), revoked_reason = 'LOGOUT'
+                where id = ?`,
+              [device!.sessionId],
+            );
+            await em.execute(
+              "delete from customer_push_devices where session_id = ?",
+              [device!.sessionId],
+            );
+            const [row] = await em.execute<{ xid: string }[]>(
+              "select pg_current_xact_id()::xid::text as xid",
+            );
+            xid = row!.xid;
+            locked.open();
+            await commit.opened;
+          });
+          await locked.opened;
+        },
+      });
+      await locked.opened;
+      // The check now waits on that lock (a database fact, not a delay).
+      const waiting = async () =>
+        (
+          await owner.em
+            .fork()
+            .getConnection()
+            .execute(
+              `select 1 from pg_locks
+                where not granted and locktype = 'transactionid' and transactionid::text = ?`,
+              [xid],
+            )
+        ).length > 0;
+      while (!(await waiting()))
+        await new Promise((resolve) => setImmediate(resolve));
+      commit.open();
+      await revoking;
+      await pass;
+      assert.deepEqual(sender.sent, []);
+      assert.deepEqual(countBy(await messages(placed.id)), { SKIPPED: 1 });
+      assert.equal((await deliveries(placed.id))[0]!.state, "SKIPPED");
+    });
+
+    it("sends a request already checked when the logout commits right before it", async () => {
+      const buyer = await customer();
+      await subscribe(buyer.access, "after-check");
+      const placed = await queued(buyer.id);
+      const sender = new FakeSender();
+      await push.deliverPending(sender, {
+        beforeRequest: () => logout(buyer.refresh),
+      });
+      // The documented window (ADR 0027): checked, then revoked, still sent once.
+      assert.deepEqual(sender.tokens, [token("after-check")]);
+      assert.equal((await deliveries(placed.id))[0]!.state, "SENT");
+      assert.deepEqual(await devices(buyer.id), []);
+    });
+
     it("stops at a refresh token reuse, which revokes the session", async () => {
       const buyer = await customer();
       await subscribe(buyer.access, "reuse");
@@ -923,6 +1021,106 @@ describe("M5.5 order push notifications", databaseSuite, () => {
       await running;
       assert.deepEqual(first.tokens, [token("two-workers")]);
       assert.equal((await deliveries(placed.id))[0]!.state, "SENT");
+    });
+
+    it("leaves a stopped worker's claim alone until its lease ends, then sends once", async () => {
+      const buyer = await customer();
+      await subscribe(buyer.access, "stopped");
+      const placed = await queued(buyer.id);
+      const stopped = new FakeSender();
+      await push.deliverPending(stopped, {
+        afterClaim: async () => {
+          throw new Error("worker stopped after the claim");
+        },
+      });
+      assert.deepEqual(stopped.sent, []);
+      const [claimed] = await sql<{ state: string; claimed: boolean }>(
+        store.id,
+        `select state, claim_id is not null as claimed from push_deliveries where order_id = ?`,
+        [placed.id],
+      );
+      assert.deepEqual({ ...claimed }, { state: "PENDING", claimed: true });
+
+      const early = new FakeSender();
+      await push.deliverPending(early);
+      assert.deepEqual(early.sent, [], "the lease still holds");
+
+      await sql(
+        store.id,
+        "update push_deliveries set claimed_until = now() - interval '1 second' where order_id = ?",
+        [placed.id],
+      );
+      const recovered = new FakeSender();
+      await push.deliverPending(recovered);
+      assert.deepEqual(recovered.tokens, [token("stopped")]);
+      assert.equal((await deliveries(placed.id))[0]!.state, "SENT");
+      assert.deepEqual(countBy(await messages(placed.id)), { SENT: 1 });
+    });
+
+    it("lets another worker take an expired claim; the late worker then sends and settles nothing", async () => {
+      const buyer = await customer();
+      await subscribe(buyer.access, "expired-claim");
+      const placed = await queued(buyer.id);
+      const second = new PushService(
+        server.app.get(TenantTransactions),
+        server.app.get(MikroORM),
+        server.app.get(JsonLogger),
+        server.app.get(API_CONFIG),
+      );
+      const late = new FakeSender();
+      const other = new FakeSender();
+      await push.deliverPending(late, {
+        afterClaim: async () => {
+          await sql(
+            store.id,
+            "update push_deliveries set claimed_until = now() - interval '1 second' where order_id = ?",
+            [placed.id],
+          );
+          await second.deliverPending(other);
+        },
+      });
+      assert.deepEqual(other.tokens, [token("expired-claim")]);
+      assert.deepEqual(
+        late.sent,
+        [],
+        "its claim is no longer valid at the check",
+      );
+      assert.equal((await deliveries(placed.id))[0]!.state, "SENT");
+      assert.deepEqual(countBy(await messages(placed.id)), { SENT: 1 });
+    });
+
+    it("keeps a revocation in one store away from the same installation in another", async () => {
+      const installation = randomUUID();
+      const here = await customer();
+      const there = await customer(other.slug);
+      await subscribe(here.access, "tenant-here", installation);
+      await subscribe(there.access, "tenant-there", installation, other.slug);
+      const placedHere = await queued(here.id);
+      const placedThere = await order(there.id, "PICKUP", other.id);
+      await sql(
+        other.id,
+        `update orders set status = 'REJECTED', rejection_reason = 'STORE_SUSPENDED', updated_at = now()
+          where id = ?`,
+        [placedThere.id],
+      );
+      let revoked = false;
+      const sender = new FakeSender();
+      await push.deliverPending(sender, {
+        afterClaim: async () => {
+          if (revoked) return;
+          revoked = true;
+          await logout(here.refresh);
+        },
+      });
+      assert.deepEqual(sender.tokens, [token("tenant-there")]);
+      assert.equal((await deliveries(placedHere.id))[0]!.state, "SKIPPED");
+      assert.equal(
+        (await deliveries(placedThere.id, other.id))[0]!.state,
+        "SENT",
+      );
+      assert.deepEqual(await devices(there.id, other.id), [
+        token("tenant-there"),
+      ]);
     });
 
     it("runs logouts and passes concurrently without deadlocks or duplicates", async () => {

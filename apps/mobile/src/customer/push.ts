@@ -13,11 +13,26 @@ export interface PushNative {
   /** The Expo push token of this installation. */
   token(): Promise<string>;
 }
+/**
+ * Binds a call to the operation that started it: `session` is the client's identity at that
+ * moment, and the client refuses the call before reading a token once the identity changed (sign
+ * out, another account). `signal` aborts a request still in flight when the model is reset.
+ */
+export interface PushCall {
+  session: number;
+  signal: AbortSignal;
+}
 export interface PushApi {
-  status(): Promise<unknown>;
-  register(token: string, installationId: string): Promise<unknown>;
+  /** The signed-in identity now; any sign-in or sign-out changes it. */
+  session(): number;
+  status(call: PushCall): Promise<unknown>;
+  register(
+    token: string,
+    installationId: string,
+    call: PushCall,
+  ): Promise<unknown>;
   /** Ends this session's subscription and any older one of this installation. */
-  unregister(installationId: string): Promise<unknown>;
+  unregister(installationId: string, call: PushCall): Promise<unknown>;
 }
 
 /**
@@ -66,23 +81,41 @@ export function createPushModel(options: {
     busy: false,
     error: null,
   };
-  // A reset (sign out, another account) makes any answer still in flight stale.
+  // A reset (sign out, another account) makes the running operation stale: it aborts its request
+  // in flight, starts no further call and leaves the state alone.
   let generation = 0;
+  let current: AbortController | null = null;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<PushState>) => {
     state = { ...state, ...patch };
     listeners.forEach((listener) => listener());
   };
-  async function run(action: (native: PushNative) => Promise<PushStatus>) {
+  class Stale extends Error {}
+  /** One opt-in operation, bound to the generation and the session it started in. */
+  interface Operation {
+    native: PushNative;
+    call: PushCall;
+    /** Awaits a step and throws `Stale` when a reset happened meanwhile. */
+    step<T>(work: Promise<T>): Promise<T>;
+  }
+  async function run(action: (op: Operation) => Promise<PushStatus>) {
     const native = options.native;
     if (!native || state.busy) return;
     const started = generation;
+    const controller = new AbortController();
+    current = controller;
+    const call = { session: options.api.session(), signal: controller.signal };
+    const step = async <T>(work: Promise<T>): Promise<T> => {
+      const value = await work;
+      if (started !== generation) throw new Stale();
+      return value;
+    };
     update({ busy: true, error: null });
     try {
-      const status = await action(native);
+      const status = await action({ native, call, step });
       if (started === generation) update({ status });
     } catch (error) {
-      if (started === generation)
+      if (started === generation && !(error instanceof Stale))
         update({
           error:
             error instanceof CustomerError
@@ -90,19 +123,23 @@ export function createPushModel(options: {
               : "Não foi possível alterar os avisos do pedido. Tente novamente.",
         });
     } finally {
-      if (started === generation) update({ busy: false });
+      if (started === generation) {
+        current = null;
+        update({ busy: false });
+      }
     }
   }
-  async function installationId(): Promise<string> {
-    const id = await options.installation();
+  async function installationId(op: Operation): Promise<string> {
+    const id = await op.step(options.installation());
     if (!UUID.test(id)) throw new Error("installation id unavailable");
     return id;
   }
-  async function register(native: PushNative): Promise<PushStatus> {
-    const token = await native.token();
+  async function register(op: Operation): Promise<PushStatus> {
+    const token = await op.step(op.native.token());
     if (!EXPO_PUSH_TOKEN.test(token))
       throw new Error("Este aparelho não forneceu um endereço de avisos.");
-    return enabledOf(await options.api.register(token, await installationId()))
+    const id = await installationId(op);
+    return enabledOf(await op.step(options.api.register(token, id, op.call)))
       ? "on"
       : "off";
   }
@@ -111,13 +148,13 @@ export function createPushModel(options: {
    * again, so a token Expo rotated replaces the old one. When off, any subscription an earlier
    * account left on this installation is ended: the device now belongs to this account.
    */
-  async function current(native: PushNative): Promise<PushStatus> {
-    if (!enabledOf(await options.api.status())) {
-      await options.api.unregister(await installationId());
+  async function read(op: Operation): Promise<PushStatus> {
+    if (!enabledOf(await op.step(options.api.status(op.call)))) {
+      await op.step(options.api.unregister(await installationId(op), op.call));
       return "off";
     }
-    if ((await native.permission()) !== "granted") return "denied";
-    return register(native);
+    if ((await op.step(op.native.permission())) !== "granted") return "denied";
+    return register(op);
   }
   return {
     getSnapshot: () => state,
@@ -128,26 +165,35 @@ export function createPushModel(options: {
       };
     },
     /** Reads the opt-in of the signed-in session. Never asks for permission. */
-    refresh: () => run(current),
+    refresh: () => run(read),
     /**
      * The customer's explicit opt-in: asks the OS only now, then registers the token. A refusal
      * leaves the API untouched.
      */
     enable: () =>
-      run(async (native) => {
-        let permission = await native.permission();
-        if (permission !== "granted") permission = await native.request();
+      run(async (op) => {
+        let permission = await op.step(op.native.permission());
+        if (permission !== "granted")
+          permission = await op.step(op.native.request());
         if (permission !== "granted") return "denied";
-        return register(native);
+        return register(op);
       }),
     disable: () =>
-      run(async () => {
-        await options.api.unregister(await installationId());
+      run(async (op) => {
+        await op.step(
+          options.api.unregister(await installationId(op), op.call),
+        );
         return "off";
       }),
-    /** Signed out or another account: the server already ended the old session's device. */
+    /**
+     * Signed out or another account: the server already ended the old session's device. The
+     * running operation is aborted and makes no further call; a request the server already
+     * received still runs there under the old session, which the server checks (ADR 0027).
+     */
     reset() {
       generation++;
+      current?.abort();
+      current = null;
       update({
         status: options.native ? "unknown" : "unavailable",
         busy: false,
