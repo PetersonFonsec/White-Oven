@@ -54,6 +54,12 @@ function mapPlatformError(error: unknown): unknown {
       "BILLING_ENTRY_NOT_FOUND",
       "Billing entry not found.",
     );
+  if (code === "P0009")
+    return new ApiError(
+      HttpStatus.CONFLICT,
+      "BILLING_ENTRY_SNAPSHOT_INCOMPLETE",
+      "This billing entry has no plan snapshot and cannot be reversed.",
+    );
   if (code === "22023") return invalid();
   if (code === "P0003")
     return new ApiError(

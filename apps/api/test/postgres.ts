@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { MikroORM } from "@mikro-orm/postgresql";
-import { runMigrations } from "../src/database/migrate";
+import { createMigrationOrm, runMigrations } from "../src/database/migrate";
 import { createOrm } from "../src/database/orm";
 
 /**
@@ -121,4 +121,39 @@ export async function createTestDatabase(
       }
     },
   };
+}
+
+/**
+ * Applies the migrations of a database made with `migrate: false`, up to and including `to` (all
+ * of them, with the runtime passwords, when omitted): for tests of data written before a migration.
+ */
+export async function migrateTestDatabase(
+  database: TestDatabase,
+  to?: string,
+): Promise<void> {
+  if (!OWNER_URL) throw new Error("TEST_DATABASE_OWNER_URL not set");
+  const maintenance = await createOrm({ url: OWNER_URL, poolMax: 1 });
+  const connection = maintenance.em.getConnection();
+  try {
+    await connection.execute("select pg_advisory_lock(20261024)");
+    if (to === undefined)
+      await runMigrations({
+        ownerUrl: database.ownerUrl,
+        passwords: {
+          whiteoven_app: APP_PASSWORD,
+          whiteoven_platform: PLATFORM_PASSWORD,
+        },
+      });
+    else {
+      const orm = await createMigrationOrm(database.ownerUrl);
+      try {
+        await orm.migrator.up({ to });
+      } finally {
+        await orm.close();
+      }
+    }
+  } finally {
+    await connection.execute("select pg_advisory_unlock_all()").catch(() => {});
+    await maintenance.close();
+  }
 }

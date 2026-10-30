@@ -66,6 +66,12 @@ export class Migration20261103000000_billing_ledger extends Migration {
       revoke insert, update, delete, truncate on billing_entries from whiteoven_app;
       grant select on billing_entries to whiteoven_app;
 
+      -- The COMPLETED history row dates the ledger entry, so its time always comes from the
+      -- database: the app role may insert every column except \`at\` (default now()).
+      revoke insert on order_status_changes from whiteoven_app;
+      grant insert (tenant_id, order_id, from_status, to_status, actor_type, actor_id, reason_code,
+        reason_text, command_key_hash, command_hash) on order_status_changes to whiteoven_app;
+
       create function whiteoven_billing_entries_append_only() returns trigger
       language plpgsql set search_path = pg_catalog, public as $$
       begin
@@ -75,21 +81,55 @@ export class Migration20261103000000_billing_ledger extends Migration {
         for each row execute function whiteoven_billing_entries_append_only();
       create trigger billing_entries_no_truncate before truncate on billing_entries
         for each statement execute function whiteoven_billing_entries_append_only();
+
+      -- A CHECK cannot read the reversed row: every ORDER_REVERSED must mirror an ORDER_COMPLETED of
+      -- the same tenant and order, with exactly negated components and the same plan snapshot.
+      -- Entries never change once written, so reading the original needs no lock. Together with the
+      -- unique (tenant_id, order_id, type) key this also means one reversal per entry.
+      create function whiteoven_billing_entries_reversal_check() returns trigger
+      language plpgsql set search_path = pg_catalog, public as $$
+      declare v_original public.billing_entries%rowtype;
+      begin
+        if new.type <> 'ORDER_REVERSED' then return new; end if;
+        select * into v_original from public.billing_entries b
+         where b.tenant_id = new.tenant_id and b.id = new.reverses_entry_id;
+        if not found or v_original.type <> 'ORDER_COMPLETED'
+           or v_original.order_id is distinct from new.order_id
+           or new.items_subtotal_cents <> -v_original.items_subtotal_cents
+           or new.delivery_fee_cents <> -v_original.delivery_fee_cents
+           or new.total_cents <> -v_original.total_cents
+           or new.payment_method <> v_original.payment_method
+           or new.paid_online <> v_original.paid_online
+           or v_original.plan is null or v_original.fee_basis_points is null or v_original.subscription_id is null
+           or new.plan is distinct from v_original.plan
+           or new.fee_basis_points is distinct from v_original.fee_basis_points
+           or new.subscription_id is distinct from v_original.subscription_id then
+          raise exception 'reversal does not mirror its entry' using errcode = '23514';
+        end if;
+        return new;
+      end $$;
+      create trigger billing_entries_reversal_check before insert on billing_entries
+        for each row execute function whiteoven_billing_entries_reversal_check();
     `);
 
     this.addSql(`
       -- Called by the order service in the transaction that moves the order to COMPLETED. Every
-      -- value comes from the database: the order's own totals, the plan period current now and
-      -- the tenant-local month. A retry of the same completion records nothing new.
+      -- value comes from the database and is dated by the completion itself: the order's totals,
+      -- the instant of its immutable COMPLETED history row, the plan period current at that
+      -- instant and the tenant-local month of it. A retry, a concurrent call or a late call for an
+      -- old order therefore computes the same entry, and an existing entry is never touched.
       create function whiteoven_record_order_completion(p_order_id uuid) returns void
       language plpgsql security definer set search_path = pg_catalog, public as $$
       declare v_tenant uuid := public.whiteoven_current_tenant(); v_order public.orders%rowtype;
-        v_zone text; v_period public.plan_subscriptions%rowtype; v_at timestamptz := clock_timestamp();
+        v_zone text; v_period public.plan_subscriptions%rowtype; v_at timestamptz;
       begin
         if v_tenant is null then raise exception using errcode = '42501'; end if;
         select * into v_order from public.orders o
          where o.id = p_order_id and o.tenant_id = v_tenant and o.status = 'COMPLETED';
         if not found then raise exception 'order is not completed' using errcode = '22023'; end if;
+        select min(c.at) into v_at from public.order_status_changes c
+         where c.tenant_id = v_tenant and c.order_id = v_order.id and c.to_status = 'COMPLETED';
+        if v_at is null then raise exception 'order has no completion' using errcode = '22023'; end if;
         select t.timezone into v_zone from public.tenants t where t.id = v_tenant;
         select * into v_period from public.plan_subscriptions s
          where s.tenant_id = v_tenant and s.valid_from <= v_at and (s.valid_to is null or s.valid_to > v_at);
@@ -134,7 +174,7 @@ export class Migration20261103000000_billing_ledger extends Migration {
       grant execute on function whiteoven_platform_billing_entries(uuid,text,uuid,uuid) to whiteoven_app;
 
       -- Reverses a completed order's entry with negated components and the original plan snapshot,
-      -- in the month the reversal happens. The original row never changes; a second request for
+      -- in the month the reversal happens (the insert trigger checks the mirror again). The original row never changes; a second request for
       -- the same entry returns the existing reversal (changed = false) and writes no audit event.
       create function whiteoven_reverse_billing_entry(
         p_tenant_id uuid, p_entry_id uuid, p_reason_code text,
@@ -157,6 +197,12 @@ export class Migration20261103000000_billing_ledger extends Migration {
         if not found then
           perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
           raise exception using errcode = 'P0008';
+        end if;
+        -- A development entry older than its plan period has no snapshot to mirror (ADR 0025):
+        -- refuse it instead of inventing one.
+        if v_entry.plan is null or v_entry.fee_basis_points is null or v_entry.subscription_id is null then
+          perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
+          raise exception using errcode = 'P0009';
         end if;
         select b.id into v_existing from public.billing_entries b
          where b.tenant_id = p_tenant_id and b.order_id = v_entry.order_id and b.type = 'ORDER_REVERSED';
