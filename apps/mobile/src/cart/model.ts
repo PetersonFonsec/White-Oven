@@ -469,9 +469,15 @@ export function createCommerceModel(options: {
       const suffix = cursor === null ? "" : `?cursor=${cursor}`;
       return parseCustomerOrderPage(await client.request(`me/orders${suffix}`));
     },
-    getCustomerOrder: async (orderId: string) =>
+    getCustomerOrder: async (orderId: string, signal?: AbortSignal) =>
       parseCustomerOrderDetail(
-        await client.request(`me/orders/${encodeURIComponent(orderId)}`),
+        await client.request(
+          `me/orders/${encodeURIComponent(orderId)}`,
+          "GET",
+          undefined,
+          undefined,
+          signal,
+        ),
       ),
     cancelCustomerOrder: async (orderId: string, key: string) =>
       client.request(

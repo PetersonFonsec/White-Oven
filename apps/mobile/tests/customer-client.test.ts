@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createCustomerClient,
+  CustomerError,
   type SecretStore,
 } from "../src/customer/client.ts";
 import { secureRecord, type SecureKV } from "../src/customer/secure-record.ts";
@@ -63,6 +64,56 @@ test("parallel requests share a refresh and persist only the rotating refresh to
       call.url.startsWith("https://api.test/v1/customer/stores/loja-a/"),
     ),
   );
+});
+
+test("an aborted authenticated read reaches fetch and reports cancellation", async () => {
+  const saved = secret();
+  let started!: () => void;
+  const requestStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let requestSignal: AbortSignal | null = null;
+  const client = createCustomerClient({
+    apiUrl: "https://api.test",
+    storeSlug: "loja-a",
+    secret: saved,
+    fetch: async (url, init) => {
+      if (String(url).endsWith("auth/refresh"))
+        return Response.json({
+          accessToken: "access",
+          refreshToken: "next-refresh",
+          expiresIn: 900,
+        });
+      requestSignal = init?.signal ?? null;
+      started();
+      return new Promise((_resolve, reject) => {
+        requestSignal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    },
+  });
+  await client.restore();
+  const controller = new AbortController();
+  const request = client.request(
+    "me/orders/order-id",
+    "GET",
+    undefined,
+    undefined,
+    controller.signal,
+  );
+  await requestStarted;
+  assert.ok(requestSignal);
+  assert.equal(requestSignal.aborted, false);
+  controller.abort();
+  assert.equal(requestSignal.aborted, true);
+  await assert.rejects(request, (error: unknown) => {
+    assert.ok(error instanceof CustomerError);
+    assert.equal(error.code, "ABORTED");
+    return true;
+  });
 });
 
 test("lost refresh response is never replayed; logout failure retains a token for revocation retry", async () => {

@@ -73,9 +73,13 @@ export function createCustomerClient(options: {
     body?: string,
     token?: string,
     key?: string,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), options.timeoutMs ?? 15000);
+    const abortFromCaller = () => abort.abort();
+    if (signal?.aborted) abortFromCaller();
+    else signal?.addEventListener("abort", abortFromCaller, { once: true });
     try {
       const response = await options.fetch(`${base}/${path}`, {
         method,
@@ -104,8 +108,10 @@ export function createCustomerClient(options: {
       return data;
     } catch (error) {
       if (error instanceof CustomerError) throw error;
+      if (signal?.aborted) throw new CustomerError(0, "ABORTED");
       throw new CustomerError(0, "NETWORK");
     } finally {
+      signal?.removeEventListener("abort", abortFromCaller);
       clearTimeout(timeout);
     }
   }
@@ -181,8 +187,11 @@ export function createCustomerClient(options: {
       method = "GET",
       body?: unknown,
       key?: string,
+      signal?: AbortSignal,
     ): Promise<unknown> {
+      if (signal?.aborted) throw new CustomerError(0, "ABORTED");
       if (!access || now() >= expires) await refresh();
+      if (signal?.aborted) throw new CustomerError(0, "ABORTED");
       const sentToken = access!;
       const encoded =
         body === undefined
@@ -191,13 +200,15 @@ export function createCustomerClient(options: {
             ? body
             : JSON.stringify(body);
       try {
-        return await raw(path, method, encoded, sentToken, key);
+        return await raw(path, method, encoded, sentToken, key, signal);
       } catch (error) {
         if (!(error instanceof CustomerError) || error.status !== 401)
           throw error;
+        if (signal?.aborted) throw new CustomerError(0, "ABORTED");
         // Concurrent 401s share one rotation, even when one response arrives late.
         if (access === sentToken || !access) await refresh();
-        return raw(path, method, encoded, access!, key);
+        if (signal?.aborted) throw new CustomerError(0, "ABORTED");
+        return raw(path, method, encoded, access!, key, signal);
       }
     },
     async logout() {

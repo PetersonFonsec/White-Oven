@@ -4,6 +4,7 @@ import { useTheme } from "../brand/theme.tsx";
 import type { CommerceModel, CommerceState } from "../cart/model.ts";
 import { Button, Body, FormPage, Heading } from "../components/Form.tsx";
 import { customerMessage } from "../customer/client.ts";
+import { createOrderDetailLoader } from "../customer/order-detail-loader.ts";
 import {
   type CustomerOrderDetail,
   type CustomerOrderSummary,
@@ -57,9 +58,43 @@ export function OrdersScreen({
     AppState.currentState === "active",
   );
   const [canceling, setCanceling] = useState(false);
-  const detailRequest = useRef(0);
-  const detailInFlight = useRef(false);
-  const refreshOnForeground = useRef(false);
+  const selectedOrderId = useRef(orderId);
+  selectedOrderId.current = orderId;
+  const modelRef = useRef(model);
+  modelRef.current = model;
+  const refreshOnForeground = useRef<string | null>(null);
+  const detailLoader = useRef<ReturnType<
+    typeof createOrderDetailLoader<CustomerOrderDetail>
+  > | null>(null);
+  if (!detailLoader.current) {
+    detailLoader.current = createOrderDetailLoader({
+      load: (id, signal) => modelRef.current.getCustomerOrder(id, signal),
+      onStart: (id) => {
+        if (selectedOrderId.current !== id) return;
+        setDetailLoading(true);
+        setDetailError(null);
+      },
+      onSuccess: (id, value) => {
+        if (selectedOrderId.current === id) setDetail(value);
+      },
+      onError: (id, cause) => {
+        if (
+          selectedOrderId.current === id &&
+          !(cause instanceof Error && cause.name === "AbortError")
+        )
+          setDetailError(customerMessage(cause));
+      },
+      onSettled: (id) => {
+        if (selectedOrderId.current !== id) return;
+        setDetailLoading(false);
+        if (refreshOnForeground.current === id) {
+          refreshOnForeground.current = null;
+          void loadDetailRef.current?.();
+        }
+      },
+    });
+  }
+  const loadDetailRef = useRef<(() => Promise<void> | undefined) | null>(null);
 
   const loadPage = useCallback(
     async (next: number | null, replace: boolean) => {
@@ -86,27 +121,11 @@ export function OrdersScreen({
     [model, state.profile],
   );
 
-  const loadDetail = useCallback(async () => {
-    if (!orderId || !state.profile || detailInFlight.current) return;
-    const request = ++detailRequest.current;
-    detailInFlight.current = true;
-    setDetailLoading(true);
-    setDetailError(null);
-    try {
-      const next = await model.getCustomerOrder(orderId);
-      if (request === detailRequest.current) setDetail(next);
-    } catch (cause) {
-      if (request === detailRequest.current)
-        setDetailError(customerMessage(cause));
-    } finally {
-      detailInFlight.current = false;
-      if (request === detailRequest.current) setDetailLoading(false);
-      if (refreshOnForeground.current && orderId) {
-        refreshOnForeground.current = false;
-        void loadDetail();
-      }
-    }
-  }, [model, orderId, state.profile]);
+  const loadDetail = useCallback(() => {
+    if (!orderId || !state.profile) return;
+    return detailLoader.current?.load(orderId);
+  }, [orderId, state.profile]);
+  loadDetailRef.current = loadDetail;
 
   useEffect(() => {
     if (orderId) {
@@ -121,7 +140,8 @@ export function OrdersScreen({
 
   useEffect(
     () => () => {
-      detailRequest.current++;
+      if (orderId) detailLoader.current?.cancel(orderId);
+      refreshOnForeground.current = null;
     },
     [orderId],
   );
@@ -131,7 +151,8 @@ export function OrdersScreen({
       const active = next === "active";
       setAppActive(active);
       if (active && orderId) {
-        if (detailInFlight.current) refreshOnForeground.current = true;
+        if (detailLoader.current?.isLoading(orderId))
+          refreshOnForeground.current = orderId;
         else void loadDetail();
       }
     });
