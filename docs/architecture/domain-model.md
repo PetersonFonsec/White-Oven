@@ -371,7 +371,7 @@ Regras:
 - Implementação (M6.2, [ADR 0025](../adr/0025-billing-ledger.md)): o lançamento guarda o período de assinatura de origem (`subscriptionId`); o estorno guarda `reversesEntryId`, o motivo (`COMPLETED_BY_MISTAKE` ou `SALE_UNDONE`) e o operador, cai no mês em que é registrado e é único por pedido. Só funções `SECURITY DEFINER` gravam no ledger e gatilhos recusam alteração e exclusão.
 - O valor devido **não** é calculado nem armazenado no MVP; o relatório mensal soma componentes e aplica a regra provisória documentada, marcando o resultado como estimativa.
 
-Decisões de produto pendentes: Q-01, Q-02 e Q-10 em [mvp-scope](../product/mvp-scope.md), mais emissão de nota fiscal do WhiteOven, mínimo mensal, teto, período de teste e tratamento de inadimplência.
+Q-01, Q-02 e Q-10 foram decididas em 2026-10-30 e o relatório mensal estimado as aplica sobre o ledger ([ADR 0026](../adr/0026-billing-report.md)). Continuam pendentes emissão de nota fiscal do WhiteOven, mínimo mensal, teto, período de teste e tratamento de inadimplência.
 
 ## Auditoria
 

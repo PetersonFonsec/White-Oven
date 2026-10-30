@@ -17,6 +17,7 @@ import {
   type OwnerInvite,
 } from "./platform-api";
 import { planDate, planName } from "./plan-format";
+import { TenantBillingDialog } from "./tenant-billing-dialog";
 import { TenantPlanDialog } from "./tenant-plan-dialog";
 
 type TenantInput = { slug: string; displayName: string; ownerEmail: string };
@@ -24,7 +25,7 @@ type TenantInput = { slug: string; displayName: string; ownerEmail: string };
 /** Tenant lifecycle controls for authenticated, MFA-verified platform operators. */
 @Component({
   selector: "wo-platform-home-page",
-  imports: [FormsModule, RouterLink, TenantPlanDialog],
+  imports: [FormsModule, RouterLink, TenantBillingDialog, TenantPlanDialog],
   template: `
     <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
     <header class="topbar">
@@ -169,6 +170,14 @@ type TenantInput = { slug: string; displayName: string; ownerEmail: string };
                       >
                         Plano
                       </button>
+                      <button
+                        class="button button--secondary"
+                        type="button"
+                        [attr.aria-label]="'Cobrança de ' + tenant.displayName"
+                        (click)="openBilling(tenant)"
+                      >
+                        Cobrança
+                      </button>
                       @if (tenant.status === "SUSPENDED") {
                         <button
                           class="button button--secondary"
@@ -290,6 +299,13 @@ type TenantInput = { slug: string; displayName: string; ownerEmail: string };
         [tenant]="tenant"
         [plans]="plans()"
         (closed)="closePlan($event)"
+      />
+    }
+
+    @if (billingTenant(); as tenant) {
+      <wo-tenant-billing-dialog
+        [tenant]="tenant"
+        (closed)="billingTenant.set(null)"
       />
     }
 
@@ -584,6 +600,7 @@ export class PlatformHomePage {
   protected readonly plansError = signal("");
   private plansRequest: Promise<void> | null = null;
   protected readonly planTenant = signal<PlatformTenant | null>(null);
+  protected readonly billingTenant = signal<PlatformTenant | null>(null);
   protected readonly loading = signal(true);
   protected readonly creating = signal(false);
   protected readonly savingStatus = signal(false);
@@ -651,6 +668,12 @@ export class PlatformHomePage {
     this.error.set("");
     this.notice.set("");
     this.planTenant.set(tenant);
+  }
+
+  protected openBilling(tenant: PlatformTenant): void {
+    this.error.set("");
+    this.notice.set("");
+    this.billingTenant.set(tenant);
   }
 
   protected async closePlan(notice: string | null): Promise<void> {

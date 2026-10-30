@@ -26,6 +26,7 @@ test("an owner signs in, picks a store and keeps the session after a reload", as
     "Pedidos",
     "Histórico",
     "Relatório",
+    "Cobrança",
     "Cardápio",
     "Configurações",
     "Marca",

@@ -4,6 +4,14 @@ import { MikroORM } from "@mikro-orm/postgresql";
 import { API_CONFIG, type ApiConfig } from "../config/config";
 import { ApiError } from "../errors/api-error";
 import { passwordProblem, hashPassword } from "../auth/password";
+import {
+  BILLING_PERIOD,
+  type BillingReport,
+  buildBillingReport,
+  planPeriodOf,
+  type ReportEntry,
+  reportMonth,
+} from "../billing/billing-report";
 
 const slugFormat = /^[a-z0-9-]{3,40}$/;
 const emailFormat = /^[^\s@]{1,64}@[a-z0-9.-]{1,189}\.[a-z]{2,}$/i;
@@ -447,7 +455,7 @@ export class PlatformService {
   ): Promise<BillingEntry[]> {
     if (
       !uuidFormat.test(tenantId) ||
-      (period !== undefined && !/^\d{4}-(0[1-9]|1[0-2])$/.test(period))
+      (period !== undefined && !BILLING_PERIOD.test(period))
     )
       throw invalid();
     try {
@@ -464,6 +472,59 @@ export class PlatformService {
         ),
       );
     } catch (error) {
+      throw mapPlatformError(error);
+    }
+  }
+
+  /** The tenant's billing estimate for one month (ADR 0026), from its ledger and plan periods. */
+  async billingReport(
+    tenantId: string,
+    period: string | undefined,
+    actorId: string,
+    sessionId: string,
+  ): Promise<BillingReport> {
+    if (
+      !uuidFormat.test(tenantId) ||
+      (period !== undefined && !BILLING_PERIOD.test(period))
+    )
+      throw invalid();
+    try {
+      return await this.orm.em.fork().transactional(async (em) => {
+        const execute = <T>(query: string, params: unknown[]) =>
+          em.execute<T[]>(query, params);
+        // Checks the operator's MFA session and the tenant before reading anything else.
+        const periods = await em.execute<Parameters<typeof planPeriodOf>[0][]>(
+          `select plan, fee_basis_points as "feeBasisPoints", monthly_fee_cents as "monthlyFeeCents",
+                  valid_from as "validFrom", valid_to as "validTo"
+             from whiteoven_platform_plan_subscriptions(?, ?, ?)`,
+          [tenantId, actorId, sessionId],
+        );
+        const [tenant] = await em.execute<{ timezone: string }[]>(
+          "select timezone from whiteoven_platform_tenants(?, ?) where id = ?",
+          [actorId, sessionId, tenantId],
+        );
+        if (!tenant)
+          throw new ApiError(
+            HttpStatus.NOT_FOUND,
+            "TENANT_NOT_FOUND",
+            "Tenant not found.",
+          );
+        const month = await reportMonth(execute, tenant.timezone, period);
+        const entries = await em.execute<ReportEntry[]>(
+          `select type, plan, fee_basis_points as "feeBasisPoints", items_subtotal_cents as "itemsSubtotalCents",
+                  delivery_fee_cents as "deliveryFeeCents", total_cents as "totalCents"
+             from whiteoven_platform_billing_entries(?, ?, ?, ?)`,
+          [tenantId, month.period, actorId, sessionId],
+        );
+        return buildBillingReport({
+          ...month,
+          timeZone: tenant.timezone,
+          entries,
+          planPeriods: periods.map(planPeriodOf),
+        });
+      });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
       throw mapPlatformError(error);
     }
   }

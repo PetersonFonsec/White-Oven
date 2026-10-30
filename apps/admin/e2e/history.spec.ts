@@ -70,3 +70,17 @@ test("an owner sees the daily report with only completed orders", async ({
   await expect(totals.locator("td").nth(1)).toContainText("45.00");
   await expect(page.locator("caption")).toContainText("America/Sao_Paulo");
 });
+
+test("an owner sees the month's billing estimate", async ({ page }) => {
+  await signIn(page, "dona@e2e.test", /Pizzaria pizzaria-centro/);
+  await page
+    .getByRole("navigation", { name: "Seções da loja" })
+    .getByRole("link", { name: "Cobrança" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Cobrança", level: 1 }),
+  ).toBeVisible();
+  await expect(page.getByRole("note")).toContainText("Nada é cobrado ainda");
+  await expect(page.locator("caption")).toContainText("America/Sao_Paulo");
+  await expect(page.getByText("Total estimado")).toBeVisible();
+});

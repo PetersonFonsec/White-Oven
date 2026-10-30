@@ -747,6 +747,8 @@ describe("tenant isolation", databaseSuite, () => {
         // The store's own history and report, no id in the path; covered in order-history.test.ts.
         "GET /admin/orders/history",
         "GET /admin/reports/daily",
+        // The store's own billing estimate, no id in the path; covered in billing-report.test.ts.
+        "GET /admin/reports/billing",
         "GET /admin/catalog/audit-events",
         "POST /admin/catalog/categories",
         "POST /admin/catalog/sizes",
