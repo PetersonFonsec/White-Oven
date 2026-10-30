@@ -73,6 +73,10 @@ test("an aborted authenticated read reaches fetch and reports cancellation", asy
     started = resolve;
   });
   let requestSignal: AbortSignal | null = null;
+  const observedSignal = (): AbortSignal => {
+    if (!requestSignal) throw new Error("request was not started");
+    return requestSignal;
+  };
   const client = createCustomerClient({
     apiUrl: "https://api.test",
     storeSlug: "loja-a",
@@ -105,10 +109,9 @@ test("an aborted authenticated read reaches fetch and reports cancellation", asy
     controller.signal,
   );
   await requestStarted;
-  assert.ok(requestSignal);
-  assert.equal(requestSignal.aborted, false);
+  assert.equal(observedSignal().aborted, false);
   controller.abort();
-  assert.equal(requestSignal.aborted, true);
+  assert.equal(observedSignal().aborted, true);
   await assert.rejects(request, (error: unknown) => {
     assert.ok(error instanceof CustomerError);
     assert.equal(error.code, "ABORTED");

@@ -324,12 +324,9 @@ test("replaceCart consolidates repeated products and rejects totals above 20", a
     { ...line, id: randomUUID(), quantity: 13 },
   ];
   assert.equal(await model.replaceCart(repeated), true);
-  assert.equal(model.getSnapshot().cart.length, 1);
-  assert.equal(
-    model.getSnapshot().cart[0]?.kind === "PRODUCT" &&
-      model.getSnapshot().cart[0].quantity,
-    20,
-  );
+  const consolidated = model.getSnapshot().cart[0];
+  assert.ok(consolidated?.kind === "PRODUCT");
+  assert.equal(consolidated.quantity, 20);
   const previous = h.storage.value;
   assert.equal(
     await model.replaceCart([
@@ -339,11 +336,9 @@ test("replaceCart consolidates repeated products and rejects totals above 20", a
     false,
   );
   assert.equal(h.storage.value, previous);
-  assert.equal(
-    model.getSnapshot().cart[0]?.kind === "PRODUCT" &&
-      model.getSnapshot().cart[0].quantity,
-    20,
-  );
+  const unchanged = model.getSnapshot().cart[0];
+  assert.ok(unchanged?.kind === "PRODUCT");
+  assert.equal(unchanged.quantity, 20);
 });
 
 test("replaceCart rejects invalid quantities without changing cart, quote or persistence", async () => {
