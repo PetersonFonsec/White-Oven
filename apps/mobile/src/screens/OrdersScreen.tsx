@@ -1,11 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Alert, AppState, View } from "react-native";
 import { useTheme } from "../brand/theme.tsx";
 import type { CommerceModel, CommerceState } from "../cart/model.ts";
 import { Button, Body, FormPage, Heading } from "../components/Form.tsx";
 import { customerMessage } from "../customer/client.ts";
-import { createOrderDetailLoader } from "../customer/order-detail-loader.ts";
 import {
+  createCustomerOrderListLoader,
+  createOrderDetailLoader,
+  createOrderSessionFence,
+} from "../customer/order-detail-loader.ts";
+import {
+  type CustomerOrderPage,
   type CustomerOrderDetail,
   type CustomerOrderSummary,
   reorderLines,
@@ -54,6 +65,7 @@ export function OrdersScreen({
   const [detail, setDetail] = useState<CustomerOrderDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [sessionGeneration, setSessionGeneration] = useState(0);
   const [appActive, setAppActive] = useState(
     AppState.currentState === "active",
   );
@@ -63,30 +75,111 @@ export function OrdersScreen({
   const modelRef = useRef(model);
   modelRef.current = model;
   const refreshOnForeground = useRef<string | null>(null);
+  // CommerceModel is scoped to the API URL and store slug, per ADR 0022.
+  const profileId = state.profile?.id ?? null;
+  const sessionFence = useRef<ReturnType<
+    typeof createOrderSessionFence<CommerceModel>
+  > | null>(null);
+  if (!sessionFence.current)
+    sessionFence.current = createOrderSessionFence<CommerceModel>();
+  const listLoader = useRef<ReturnType<
+    typeof createCustomerOrderListLoader<CustomerOrderPage>
+  > | null>(null);
+  if (!listLoader.current) {
+    listLoader.current = createCustomerOrderListLoader({
+      load: (cursor, signal) =>
+        modelRef.current.listCustomerOrders(cursor, signal),
+      onStart: (generation) => {
+        if (!sessionFence.current!.isCurrent(generation)) return;
+        setLoading((current) =>
+          sessionFence.current!.isCurrent(generation) ? true : current,
+        );
+        setError((current) =>
+          sessionFence.current!.isCurrent(generation) ? null : current,
+        );
+      },
+      onSuccess: (generation, page, replace) => {
+        if (!sessionFence.current!.isCurrent(generation)) return;
+        setOrders((current) => {
+          if (!sessionFence.current!.isCurrent(generation)) return current;
+          if (replace) return page.orders;
+          const seen = new Set(current.map((order) => order.id));
+          return [
+            ...current,
+            ...page.orders.filter((order) => !seen.has(order.id)),
+          ];
+        });
+        setCursor((current) =>
+          sessionFence.current!.isCurrent(generation)
+            ? page.nextCursor
+            : current,
+        );
+      },
+      onError: (generation, cause) => {
+        if (sessionFence.current!.isCurrent(generation))
+          setError((current) =>
+            sessionFence.current!.isCurrent(generation)
+              ? customerMessage(cause)
+              : current,
+          );
+      },
+      onSettled: (generation) => {
+        if (sessionFence.current!.isCurrent(generation))
+          setLoading((current) =>
+            sessionFence.current!.isCurrent(generation) ? false : current,
+          );
+      },
+    });
+  }
   const detailLoader = useRef<ReturnType<
     typeof createOrderDetailLoader<CustomerOrderDetail>
   > | null>(null);
   if (!detailLoader.current) {
     detailLoader.current = createOrderDetailLoader({
       load: (id, signal) => modelRef.current.getCustomerOrder(id, signal),
-      onStart: (id) => {
-        if (selectedOrderId.current !== id) return;
-        setDetailLoading(true);
-        setDetailError(null);
+      onStart: (id, generation) => {
+        if (
+          selectedOrderId.current !== id ||
+          !sessionFence.current!.isCurrent(generation)
+        )
+          return;
+        setDetailLoading((current) =>
+          sessionFence.current!.isCurrent(generation) ? true : current,
+        );
+        setDetailError((current) =>
+          sessionFence.current!.isCurrent(generation) ? null : current,
+        );
       },
-      onSuccess: (id, value) => {
-        if (selectedOrderId.current === id) setDetail(value);
-      },
-      onError: (id, cause) => {
+      onSuccess: (id, generation, value) => {
         if (
           selectedOrderId.current === id &&
+          sessionFence.current!.isCurrent(generation)
+        )
+          setDetail((current) =>
+            sessionFence.current!.isCurrent(generation) ? value : current,
+          );
+      },
+      onError: (id, generation, cause) => {
+        if (
+          selectedOrderId.current === id &&
+          sessionFence.current!.isCurrent(generation) &&
           !(cause instanceof Error && cause.name === "AbortError")
         )
-          setDetailError(customerMessage(cause));
+          setDetailError((current) =>
+            sessionFence.current!.isCurrent(generation)
+              ? customerMessage(cause)
+              : current,
+          );
       },
-      onSettled: (id) => {
-        if (selectedOrderId.current !== id) return;
-        setDetailLoading(false);
+      onSettled: (id, generation) => {
+        if (
+          selectedOrderId.current !== id ||
+          !sessionFence.current!.isCurrent(generation)
+        )
+          return;
+        setDetailLoading((current) =>
+          sessionFence.current!.isCurrent(generation) ? false : current,
+        );
         if (refreshOnForeground.current === id) {
           refreshOnForeground.current = null;
           void loadDetailRef.current?.();
@@ -96,44 +189,64 @@ export function OrdersScreen({
   }
   const loadDetailRef = useRef<(() => Promise<void> | undefined) | null>(null);
 
+  useLayoutEffect(() => {
+    sessionFence.current!.activate();
+    return () => {
+      sessionFence.current!.dispose();
+      listLoader.current?.cancel();
+      detailLoader.current?.cancel();
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const { generation, changed } = sessionFence.current!.update(
+      model,
+      profileId,
+    );
+    if (!changed) return;
+    listLoader.current?.cancel();
+    detailLoader.current?.cancel();
+    refreshOnForeground.current = null;
+    setOrders([]);
+    setCursor(null);
+    setDetail(null);
+    setLoading(false);
+    setError(null);
+    setDetailLoading(false);
+    setDetailError(null);
+    setCanceling(false);
+    setSessionGeneration(generation);
+  }, [model, profileId]);
+
   const loadPage = useCallback(
-    async (next: number | null, replace: boolean) => {
-      if (!state.profile) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const page = await model.listCustomerOrders(next);
-        setOrders((current) => {
-          if (replace) return page.orders;
-          const seen = new Set(current.map((order) => order.id));
-          return [
-            ...current,
-            ...page.orders.filter((order) => !seen.has(order.id)),
-          ];
-        });
-        setCursor(page.nextCursor);
-      } catch (cause) {
-        setError(customerMessage(cause));
-      } finally {
-        setLoading(false);
-      }
+    (next: number | null, replace: boolean) => {
+      if (
+        !sessionFence.current!.isCurrent(sessionGeneration) ||
+        !sessionFence.current!.isIdentity(model, profileId)
+      )
+        return;
+      return listLoader.current!.load(next, replace, sessionGeneration);
     },
-    [model, state.profile],
+    [model, profileId, sessionGeneration],
   );
 
   const loadDetail = useCallback(() => {
-    if (!orderId || !state.profile) return;
-    return detailLoader.current?.load(orderId);
-  }, [orderId, state.profile]);
+    if (
+      !orderId ||
+      !sessionFence.current!.isCurrent(sessionGeneration) ||
+      !sessionFence.current!.isIdentity(model, profileId)
+    )
+      return;
+    return detailLoader.current?.load(orderId, sessionGeneration);
+  }, [model, orderId, profileId, sessionGeneration]);
   loadDetailRef.current = loadDetail;
 
   useEffect(() => {
     if (orderId) {
       setDetail(null);
+      setDetailError(null);
       void loadDetail();
     } else {
-      setOrders([]);
-      setCursor(null);
       void loadPage(null, true);
     }
   }, [orderId, loadDetail, loadPage]);
@@ -151,7 +264,8 @@ export function OrdersScreen({
       const active = next === "active";
       setAppActive(active);
       if (active && orderId) {
-        if (detailLoader.current?.isLoading(orderId))
+        const generation = sessionFence.current!.currentGeneration();
+        if (detailLoader.current?.isLoading(orderId, generation))
           refreshOnForeground.current = orderId;
         else void loadDetail();
       }
@@ -173,7 +287,13 @@ export function OrdersScreen({
   }, [appActive, detail?.status, loadDetail, orderId, state.profile]);
 
   const cancelOrder = () => {
-    if (!detail || detail.status !== "PLACED") return;
+    if (
+      !detail ||
+      detail.status !== "PLACED" ||
+      !sessionFence.current!.isIdentity(model, profileId)
+    )
+      return;
+    const generation = sessionFence.current!.currentGeneration();
     Alert.alert(
       "Cancelar pedido?",
       `Pedido #${detail.number}. A pizzaria ainda não confirmou o preparo.`,
@@ -183,16 +303,30 @@ export function OrdersScreen({
           text: "Cancelar pedido",
           style: "destructive",
           onPress: async () => {
-            setCanceling(true);
-            setDetailError(null);
+            if (!sessionFence.current!.isCurrent(generation)) return;
+            setCanceling((current) =>
+              sessionFence.current!.isCurrent(generation) ? true : current,
+            );
+            setDetailError((current) =>
+              sessionFence.current!.isCurrent(generation) ? null : current,
+            );
             try {
               await model.cancelCustomerOrder(detail.id, randomUUID());
+              if (!sessionFence.current!.isCurrent(generation)) return;
               await loadDetail();
             } catch (cause) {
+              if (!sessionFence.current!.isCurrent(generation)) return;
               await loadDetail();
-              setDetailError(customerMessage(cause));
+              if (!sessionFence.current!.isCurrent(generation)) return;
+              setDetailError((current) =>
+                sessionFence.current!.isCurrent(generation)
+                  ? customerMessage(cause)
+                  : current,
+              );
             } finally {
-              setCanceling(false);
+              setCanceling((current) =>
+                sessionFence.current!.isCurrent(generation) ? false : current,
+              );
             }
           },
         },
@@ -201,8 +335,15 @@ export function OrdersScreen({
   };
 
   const reorder = () => {
-    if (!detail || !menu || menuStale || storeUnavailable || !state.profile)
+    if (
+      !detail ||
+      !menu ||
+      menuStale ||
+      storeUnavailable ||
+      !sessionFence.current!.isIdentity(model, profileId)
+    )
       return;
+    const generation = sessionFence.current!.currentGeneration();
     try {
       const result = reorderLines(detail, menu, randomUUID);
       if (!result.lines.length) {
@@ -213,8 +354,9 @@ export function OrdersScreen({
         return;
       }
       const replace = async () => {
+        if (!sessionFence.current!.isCurrent(generation)) return;
         const saved = await model.replaceCart(result.lines);
-        if (saved) onOpenCart();
+        if (saved && sessionFence.current!.isCurrent(generation)) onOpenCart();
       };
       const title = result.skipped
         ? "Alguns itens mudaram"
@@ -231,7 +373,11 @@ export function OrdersScreen({
         { text: "Montar carrinho", onPress: () => void replace() },
       ]);
     } catch (cause) {
-      setDetailError(customerMessage(cause));
+      setDetailError((current) =>
+        sessionFence.current!.isCurrent(generation)
+          ? customerMessage(cause)
+          : current,
+      );
     }
   };
 

@@ -1,7 +1,12 @@
 import { validatePizzaConfiguration } from "@whiteoven/contracts";
 import { evaluatePizza } from "@whiteoven/pizza-pricing";
 import { builderMenu } from "../builder/builder.ts";
-import type { CartLine } from "../cart/cart.ts";
+import {
+  CART_LINE_LIMIT,
+  CART_QUANTITY_LIMIT,
+  type CartLine,
+  validateCartLines,
+} from "../cart/cart.ts";
 import type { PublicMenu } from "../menu/menu.ts";
 
 export const ORDER_STATUSES = [
@@ -219,7 +224,12 @@ export function reorderLines(
       const current =
         product &&
         menu.simpleProducts.find((entry) => entry.id === product["id"]);
-      if (!current || item.quantity > 20) {
+      if (
+        !current ||
+        !Number.isInteger(item.quantity) ||
+        item.quantity < 1 ||
+        item.quantity > CART_QUANTITY_LIMIT
+      ) {
         skipped++;
         continue;
       }
@@ -227,12 +237,16 @@ export function reorderLines(
         (line) => line.kind === "PRODUCT" && line.productId === current.id,
       );
       if (existing?.kind === "PRODUCT") {
-        if (existing.quantity + item.quantity > 20) {
+        if (existing.quantity + item.quantity > CART_QUANTITY_LIMIT) {
           skipped++;
           continue;
         }
         existing.quantity += item.quantity;
       } else {
+        if (lines.length >= CART_LINE_LIMIT) {
+          skipped++;
+          continue;
+        }
         lines.push({
           id: uuidFactory(),
           kind: "PRODUCT",
@@ -241,6 +255,15 @@ export function reorderLines(
           quantity: item.quantity,
         });
       }
+      continue;
+    }
+    if (
+      !Number.isInteger(item.quantity) ||
+      item.quantity < 1 ||
+      item.quantity > CART_QUANTITY_LIMIT ||
+      lines.length >= CART_LINE_LIMIT
+    ) {
+      skipped++;
       continue;
     }
     const size = row(snapshot["size"]);
@@ -289,7 +312,7 @@ export function reorderLines(
       pizza: pizza.value,
     });
   }
-  return { lines, skipped };
+  return { lines: validateCartLines(lines), skipped };
 }
 
 export function statusLabel(
