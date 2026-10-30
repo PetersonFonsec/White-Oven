@@ -12,16 +12,19 @@ import { errorMessage } from "../core/api";
 import { Session } from "../core/session";
 import {
   PlatformApi,
+  type Plan,
   type PlatformTenant,
   type OwnerInvite,
 } from "./platform-api";
+import { planDate, planName } from "./plan-format";
+import { TenantPlanDialog } from "./tenant-plan-dialog";
 
 type TenantInput = { slug: string; displayName: string; ownerEmail: string };
 
 /** Tenant lifecycle controls for authenticated, MFA-verified platform operators. */
 @Component({
   selector: "wo-platform-home-page",
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, TenantPlanDialog],
   template: `
     <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
     <header class="topbar">
@@ -74,6 +77,32 @@ type TenantInput = { slug: string; displayName: string; ownerEmail: string };
           <p class="status--error" role="alert">{{ listError() }}</p>
         }
 
+        @switch (plansState()) {
+          @case ("loading") {
+            <p class="plans-status" role="status">Carregando planos…</p>
+          }
+          @case ("error") {
+            <div class="plans-status status--error" role="alert">
+              <span>
+                Os planos não puderam ser carregados. {{ plansError() }}
+              </span>
+              <button
+                class="button button--secondary"
+                type="button"
+                (click)="loadPlans()"
+              >
+                Tentar novamente
+              </button>
+            </div>
+          }
+          @case ("empty") {
+            <p class="plans-status muted" role="status">
+              Nenhum plano disponível no catálogo. A troca de plano fica
+              indisponível.
+            </p>
+          }
+        }
+
         @if (loading()) {
           <p role="status">Carregando pizzarias…</p>
         } @else if (tenants().length === 0) {
@@ -92,6 +121,7 @@ type TenantInput = { slug: string; displayName: string; ownerEmail: string };
                   <th scope="col">Pizzaria</th>
                   <th scope="col">Identificador</th>
                   <th scope="col">Situação</th>
+                  <th scope="col">Plano</th>
                   <th scope="col">Cadastro</th>
                   <th scope="col">
                     <span class="visually-hidden">Ações</span>
@@ -115,8 +145,30 @@ type TenantInput = { slug: string; displayName: string; ownerEmail: string };
                         {{ statusLabel(tenant.status) }}
                       </span>
                     </td>
+                    <td>
+                      @if (tenant.plan; as plan) {
+                        {{ planLabel(plan.code) }}
+                      } @else {
+                        <span class="muted">Sem plano</span>
+                      }
+                      @if (tenant.scheduledPlan; as next) {
+                        <small class="plan-next">
+                          {{ planLabel(next.code) }} a partir de
+                          {{ planDateLabel(next.validFrom, tenant.timeZone) }}
+                        </small>
+                      }
+                    </td>
                     <td>{{ dateLabel(tenant.createdAt) }}</td>
                     <td class="row-action">
+                      <button
+                        class="button button--secondary"
+                        type="button"
+                        [attr.aria-label]="'Plano de ' + tenant.displayName"
+                        [disabled]="plansState() !== 'ready'"
+                        (click)="openPlan(tenant)"
+                      >
+                        Plano
+                      </button>
                       @if (tenant.status === "SUSPENDED") {
                         <button
                           class="button button--secondary"
@@ -232,6 +284,14 @@ type TenantInput = { slug: string; displayName: string; ownerEmail: string };
         }
       </section>
     </main>
+
+    @if (planTenant(); as tenant) {
+      <wo-tenant-plan-dialog
+        [tenant]="tenant"
+        [plans]="plans()"
+        (closed)="closePlan($event)"
+      />
+    }
 
     @if (pendingChange(); as change) {
       <dialog
@@ -373,6 +433,20 @@ type TenantInput = { slug: string; displayName: string; ownerEmail: string };
       text-align: right;
       white-space: nowrap;
     }
+    .row-action .button + .button {
+      margin-left: var(--wo-spacing-2);
+    }
+    .plans-status {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--wo-spacing-3);
+      margin: 0 0 var(--wo-spacing-4);
+    }
+    .plan-next {
+      display: block;
+      color: var(--wo-color-muted);
+    }
     .status {
       display: inline-flex;
       align-items: center;
@@ -502,6 +576,14 @@ export class PlatformHomePage {
   private readonly api = inject(PlatformApi);
 
   protected readonly tenants = signal<PlatformTenant[]>([]);
+  protected readonly plans = signal<Plan[]>([]);
+  /** The plan catalog, independent of the tenant list: a failure here keeps the list usable. */
+  protected readonly plansState = signal<
+    "loading" | "ready" | "empty" | "error"
+  >("loading");
+  protected readonly plansError = signal("");
+  private plansRequest: Promise<void> | null = null;
+  protected readonly planTenant = signal<PlatformTenant | null>(null);
   protected readonly loading = signal(true);
   protected readonly creating = signal(false);
   protected readonly savingStatus = signal(false);
@@ -541,6 +623,49 @@ export class PlatformHomePage {
 
   constructor() {
     void this.loadTenants();
+    void this.loadPlans();
+  }
+
+  /** Loads the plan catalog; a call while one is in flight joins it instead of repeating it. */
+  protected loadPlans(): Promise<void> {
+    this.plansRequest ??= (async () => {
+      this.plansState.set("loading");
+      this.plansError.set("");
+      try {
+        const plans = await this.api.listPlans();
+        this.plans.set(plans);
+        this.plansState.set(plans.length > 0 ? "ready" : "empty");
+      } catch (error) {
+        this.plans.set([]);
+        this.plansError.set(errorMessage(error));
+        this.plansState.set("error");
+      } finally {
+        this.plansRequest = null;
+      }
+    })();
+    return this.plansRequest;
+  }
+
+  protected openPlan(tenant: PlatformTenant): void {
+    if (this.plansState() !== "ready") return;
+    this.error.set("");
+    this.notice.set("");
+    this.planTenant.set(tenant);
+  }
+
+  protected async closePlan(notice: string | null): Promise<void> {
+    this.planTenant.set(null);
+    if (!notice) return;
+    this.notice.set(notice);
+    await this.loadTenants();
+  }
+
+  protected planLabel(code: Plan["code"]): string {
+    return planName(code);
+  }
+
+  protected planDateLabel(value: string, timeZone: string): string {
+    return planDate(value, timeZone);
   }
 
   protected async loadTenants(afterCreate = false): Promise<void> {

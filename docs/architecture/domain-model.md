@@ -351,7 +351,7 @@ Implementação (M4.6, [ADR 0019](../adr/0019-order-history-report-incidents.md)
 
 `tenantId`, `plan` (`FLEX`, `PRO`), `feeBasisPoints` (Flex: 300), `monthlyFeeCents` (Pro: 19900), `validFrom`, `validTo` (nulo = vigente). Os valores são copiados do catálogo de planos no momento da assinatura para que mudanças comerciais futuras não alterem históricos.
 
-Invariante: períodos de um tenant não se sobrepõem; sempre existe exatamente uma assinatura vigente para tenant `ACTIVE`.
+Invariante: períodos de um tenant não se sobrepõem; sempre existe exatamente uma assinatura vigente para tenant `ACTIVE`. Implementado em M6.1 ([ADR 0024](../adr/0024-plan-subscriptions.md)): exclusão GiST no banco, ativação recusada sem plano vigente e troca de plano no início do próximo mês civil do tenant (recomendação da Q-10).
 
 ### BillingEntry (append-only)
 

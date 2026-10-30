@@ -3,6 +3,7 @@ import {
   OwnerInviteController,
   PlatformController,
   PlatformOperatorController,
+  PlatformPlanController,
 } from "./platform.controller";
 import { PlatformService } from "./platform.service";
 
@@ -10,6 +11,7 @@ import { PlatformService } from "./platform.service";
   controllers: [
     PlatformController,
     PlatformOperatorController,
+    PlatformPlanController,
     OwnerInviteController,
   ],
   providers: [PlatformService],

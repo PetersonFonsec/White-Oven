@@ -4,6 +4,14 @@ import { firstValueFrom } from "rxjs";
 
 const TENANTS = "/v1/platform/tenants";
 const INVITES = "/v1/platform/invites";
+const PLANS = "/v1/platform/plans";
+
+export type PlanCode = "FLEX" | "PRO";
+
+export interface TenantPlanRef {
+  code: PlanCode;
+  validFrom: string;
+}
 
 export interface PlatformTenant {
   id: string;
@@ -11,6 +19,32 @@ export interface PlatformTenant {
   displayName: string;
   status: "ONBOARDING" | "ACTIVE" | "SUSPENDED";
   createdAt: string;
+  /** IANA time zone of the store; plan dates are shown as its calendar days. */
+  timeZone: string;
+  /** Current plan; null before the first subscription. */
+  plan: TenantPlanRef | null;
+  /** Plan that replaces the current one at `validFrom`. */
+  scheduledPlan: TenantPlanRef | null;
+}
+
+export interface Plan {
+  code: PlanCode;
+  feeBasisPoints: number;
+  monthlyFeeCents: number;
+}
+
+export interface PlanSubscription extends Plan {
+  id: string;
+  validFrom: string;
+  validTo: string | null;
+  createdAt: string;
+}
+
+export interface PlanChange {
+  subscriptionId: string;
+  plan: PlanCode;
+  validFrom: string;
+  changed: boolean;
 }
 
 export interface NewPlatformTenant {
@@ -57,6 +91,27 @@ export class PlatformApi {
       this.http.patch<void>(
         `${TENANTS}/${encodeURIComponent(tenantId)}/status`,
         { status },
+      ),
+    );
+  }
+
+  listPlans(): Promise<Plan[]> {
+    return firstValueFrom(this.http.get<Plan[]>(PLANS));
+  }
+
+  listPlanSubscriptions(tenantId: string): Promise<PlanSubscription[]> {
+    return firstValueFrom(
+      this.http.get<PlanSubscription[]>(
+        `${TENANTS}/${encodeURIComponent(tenantId)}/plans`,
+      ),
+    );
+  }
+
+  changePlan(tenantId: string, plan: PlanCode): Promise<PlanChange> {
+    return firstValueFrom(
+      this.http.put<PlanChange>(
+        `${TENANTS}/${encodeURIComponent(tenantId)}/plan`,
+        { plan },
       ),
     );
   }

@@ -36,6 +36,19 @@ function mapPlatformError(error: unknown): unknown {
       "TENANT_STATUS_CONFLICT",
       "Tenant status cannot be changed.",
     );
+  if (code === "P0005")
+    return new ApiError(
+      HttpStatus.CONFLICT,
+      "PLAN_REQUIRED",
+      "The tenant needs a current plan before it can be active.",
+    );
+  if (code === "P0006" || code === "23P01")
+    return new ApiError(
+      HttpStatus.CONFLICT,
+      "PLAN_SCHEDULE_CONFLICT",
+      "The tenant's plan periods need review before changing the plan.",
+    );
+  if (code === "22023") return invalid();
   if (code === "P0003")
     return new ApiError(
       HttpStatus.CONFLICT,
@@ -57,12 +70,43 @@ export interface NewTenantInput {
   ownerEmail: string;
   idempotencyKey: string;
 }
+export const PLAN_CODES = ["FLEX", "PRO"] as const;
+export type PlanCode = (typeof PLAN_CODES)[number];
+
+export interface TenantPlanRef {
+  code: PlanCode;
+  validFrom: Date;
+}
 export interface TenantSummary {
   id: string;
   slug: string;
   displayName: string;
   status: string;
   createdAt: Date;
+  /** IANA time zone of the store; plan periods start at its local midnight. */
+  timeZone: string;
+  /** Current plan; null only before the first subscription. */
+  plan: TenantPlanRef | null;
+  /** Plan that replaces the current one at `validFrom` (next calendar month). */
+  scheduledPlan: TenantPlanRef | null;
+}
+export interface Plan {
+  code: PlanCode;
+  feeBasisPoints: number;
+  monthlyFeeCents: number;
+}
+export interface PlanSubscription extends Plan {
+  id: string;
+  validFrom: Date;
+  validTo: Date | null;
+  createdAt: Date;
+}
+export interface PlanChange {
+  subscriptionId: string;
+  plan: PlanCode;
+  validFrom: Date;
+  /** False when the requested plan was already current or scheduled. */
+  changed: boolean;
 }
 
 @Injectable()
@@ -82,12 +126,100 @@ export class PlatformService {
     actorId: string,
     sessionId: string,
   ): Promise<TenantSummary[]> {
-    return this.orm.em
-      .fork()
-      .execute<TenantSummary[]>(
-        'select id, slug, display_name as "displayName", status, created_at as "createdAt" from whiteoven_platform_tenants(?, ?)',
+    // One transaction: the open-period function sets the tenant context per tenant locally.
+    return this.orm.em.fork().transactional(async (em) => {
+      const tenants = await em.execute<
+        Omit<TenantSummary, "plan" | "scheduledPlan">[]
+      >(
+        'select id, slug, display_name as "displayName", status, created_at as "createdAt", timezone as "timeZone" from whiteoven_platform_tenants(?, ?)',
         [actorId, sessionId],
       );
+      const periods = await em.execute<
+        { tenantId: string; plan: PlanCode; validFrom: Date }[]
+      >(
+        'select tenant_id as "tenantId", plan, valid_from as "validFrom" from whiteoven_platform_open_plan_subscriptions(?, ?) order by valid_from',
+        [actorId, sessionId],
+      );
+      const now = Date.now();
+      return tenants.map((tenant) => {
+        const own = periods.filter((p) => p.tenantId === tenant.id);
+        const ref = (p: (typeof own)[number] | undefined) =>
+          p ? { code: p.plan, validFrom: p.validFrom } : null;
+        return {
+          ...tenant,
+          plan: ref(own.find((p) => new Date(p.validFrom).getTime() <= now)),
+          scheduledPlan: ref(
+            own.find((p) => new Date(p.validFrom).getTime() > now),
+          ),
+        };
+      });
+    });
+  }
+
+  async listPlans(actorId: string, sessionId: string): Promise<Plan[]> {
+    return this.orm.em
+      .fork()
+      .execute<Plan[]>(
+        'select code, fee_basis_points as "feeBasisPoints", monthly_fee_cents as "monthlyFeeCents" from whiteoven_platform_plans(?, ?)',
+        [actorId, sessionId],
+      );
+  }
+
+  async listPlanSubscriptions(
+    tenantId: string,
+    actorId: string,
+    sessionId: string,
+  ): Promise<PlanSubscription[]> {
+    if (!uuidFormat.test(tenantId)) throw invalid();
+    try {
+      return await this.orm.em.fork().transactional((em) =>
+        em.execute<PlanSubscription[]>(
+          `select id, plan as code, fee_basis_points as "feeBasisPoints", monthly_fee_cents as "monthlyFeeCents",
+                    valid_from as "validFrom", valid_to as "validTo", created_at as "createdAt"
+               from whiteoven_platform_plan_subscriptions(?, ?, ?)`,
+          [tenantId, actorId, sessionId],
+        ),
+      );
+    } catch (error) {
+      throw mapPlatformError(error);
+    }
+  }
+
+  async changeTenantPlan(
+    tenantId: string,
+    plan: string,
+    actorId: string,
+    sessionId: string,
+    requestId: string,
+    ip: string,
+  ): Promise<PlanChange> {
+    if (
+      !uuidFormat.test(tenantId) ||
+      !(PLAN_CODES as readonly string[]).includes(plan)
+    )
+      throw invalid();
+    let row: PlanChange | undefined;
+    try {
+      [row] = await this.orm.em
+        .fork()
+        .transactional((em) =>
+          em.execute<PlanChange[]>(
+            'select id as "subscriptionId", plan, valid_from as "validFrom", changed from whiteoven_change_tenant_plan(?, ?, ?, ?, ?, ?)',
+            [
+              tenantId,
+              plan,
+              actorId,
+              sessionId,
+              this.ipHash(ip),
+              this.requestUuid(requestId),
+            ],
+          ),
+        );
+    } catch (error) {
+      throw mapPlatformError(error);
+    }
+    if (!row) throw new Error("plan change returned no row");
+    return row;
   }
 
   async createTenant(
