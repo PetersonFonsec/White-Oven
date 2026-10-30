@@ -8,6 +8,10 @@ import {
   customerMessage,
 } from "../customer/client.ts";
 import { type CartLine, type CheckoutDetails, orderBody } from "./cart.ts";
+import {
+  parseCustomerOrderDetail,
+  parseCustomerOrderPage,
+} from "../customer/orders.ts";
 
 export interface Quote {
   itemsSubtotalCents: number;
@@ -452,6 +456,30 @@ export function createCommerceModel(options: {
         const cart = change(state.cart);
         await save({ cart, receipt: null });
       }),
+    replaceCart: (lines: CartLine[]) =>
+      run(async () => {
+        if (state.pending)
+          throw new Error(
+            "Recupere o pedido pendente antes de trocar o carrinho.",
+          );
+        dropQuote();
+        await save({ cart: lines, receipt: null });
+      }),
+    listCustomerOrders: async (cursor: number | null = null) => {
+      const suffix = cursor === null ? "" : `?cursor=${cursor}`;
+      return parseCustomerOrderPage(await client.request(`me/orders${suffix}`));
+    },
+    getCustomerOrder: async (orderId: string) =>
+      parseCustomerOrderDetail(
+        await client.request(`me/orders/${encodeURIComponent(orderId)}`),
+      ),
+    cancelCustomerOrder: async (orderId: string, key: string) =>
+      client.request(
+        `me/orders/${encodeURIComponent(orderId)}/transitions`,
+        "POST",
+        { from: "PLACED", to: "CANCELED", reasonCode: "CUSTOMER_REQUEST" },
+        key,
+      ),
     invalidateQuote: dropQuote,
     quote: (details: CheckoutDetails, expectedTotalCents: number) =>
       run(async () => {

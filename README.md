@@ -126,3 +126,13 @@ Sem aviso configurado, cadastro fica desabilitado. O texto aprovado para cliente
 em banco PostgreSQL descartável: inclui resposta perdida, reinício, unicidade do pedido, alteração de preço
 e anonimização. A CI executa esse teste; validação visual e do armazenamento nativo em dispositivo continua
 sendo necessária antes da publicação. Não há acompanhamento/histórico ou push neste marco.
+
+### App: acompanhamento e histórico (M5.4)
+
+`Meus pedidos` lista os pedidos da conta atual, mais recentes primeiro, com paginação. O detalhe mostra
+os itens e valores do snapshot, a linha do tempo e uma estimativa simples da loja; ele atualiza a cada
+20 segundos somente enquanto está aberto e o app está em primeiro plano. Não há rastreamento de rota.
+O cliente pode cancelar enquanto o pedido ainda está `PLACED`; depois do aceite, deve falar com a
+pizzaria. “Pedir novamente” reconstrói somente itens ainda válidos no catálogo atual e passa pelo
+checkout/quote para obter preços atuais. A API limita as leituras à conta autenticada e usa
+`Cache-Control: no-store`. Push segue fora deste marco.

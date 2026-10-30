@@ -1,6 +1,6 @@
 # Ciclo de vida do pedido
 
-Status: especificação de produto M0.3; checkout e criação estão implementados em M4.3, máquina de estados/transições em M4.4, quadro da equipe em M4.5 e histórico, relatório diário e ocorrências em M4.6. Define carrinho, checkout, estados, transições, cancelamento, histórico, ocorrências e regras de funcionamento da loja. Entidades em [domain-model](../architecture/domain-model.md); preços em [pizza-builder-rules](pizza-builder-rules.md).
+Status: especificação de produto M0.3; checkout e criação estão implementados em M4.3, máquina de estados/transições em M4.4, quadro da equipe em M4.5, histórico/relatório/ocorrências da equipe em M4.6 e acompanhamento/histórico do cliente no app em M5.4 (ADR 0023). Define carrinho, checkout, estados, transições, cancelamento, histórico, ocorrências e regras de funcionamento da loja. Entidades em [domain-model](../architecture/domain-model.md); preços em [pizza-builder-rules](pizza-builder-rules.md).
 
 ## Carrinho
 
@@ -180,6 +180,7 @@ O cliente vê um texto amigável derivado do código, nunca o texto interno de `
 
 - App: tela do pedido com estado atual, linha do tempo (horários de cada transição) e previsão simples (`estimatedPrepMinutes` + `estimatedDeliveryMinutes`, sem cálculo de rota). Atualização por polling a cada 20 segundos enquanto a tela estiver aberta.
 - Push ao cliente em cada mudança de estado depende da aprovação do Expo Push (Q-11).
+- Implementação no app (M5.4, [ADR 0023](../adr/0023-mobile-order-tracking-history.md)): `GET /v1/customer/stores/{slug}/me/orders?cursor={number}` lista 50 pedidos próprios, mais recentes primeiro; `GET .../me/orders/{orderId}` retorna o snapshot e transições sem texto interno de motivo. Ambos exigem sessão do cliente, filtram pelo customer id e respondem `Cache-Control: no-store`. O detalhe faz polling a cada 20 s só enquanto aberto e com o app em primeiro plano. Previsão aproximada usa minutos atuais configurados pela loja; não calcula rota. “Pedir novamente” reconstrói as escolhas do snapshot e valida a disponibilidade no catálogo atual antes do checkout.
 - Painel: quadro com colunas por estado ativo (`PLACED`, `PREPARING`, `READY`, `OUT_FOR_DELIVERY`), polling a cada 10 segundos, alerta sonoro e destaque enquanto houver pedido em `PLACED`, contador de tempo desde a criação.
 
 ## Histórico

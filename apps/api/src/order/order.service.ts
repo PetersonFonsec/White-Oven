@@ -67,6 +67,31 @@ export interface OrderView {
   totalCents: number;
 }
 
+export interface CustomerOrderSummary {
+  id: string;
+  number: number;
+  status: OrderStatus;
+  placedAt: string;
+  fulfillment: Fulfillment;
+  totalCents: number;
+}
+
+export interface CustomerOrderPage {
+  orders: CustomerOrderSummary[];
+  nextCursor: number | null;
+}
+
+export interface CustomerOrderDetail extends OrderView {
+  contactPhone: string | null;
+  estimate: { prepMinutes: number; deliveryMinutes: number } | null;
+  history: {
+    from: OrderStatus | null;
+    to: OrderStatus;
+    reasonCode: RejectionReason | null;
+    at: string;
+  }[];
+}
+
 export interface AdminOrderView extends OrderView {
   customerName: string;
   customerPhone: string | null;
@@ -84,6 +109,7 @@ export interface StaffOrderPage {
   nextCursor: number | null;
 }
 export const STAFF_ORDER_PAGE_SIZE = 100;
+export const CUSTOMER_ORDER_PAGE_SIZE = 50;
 
 const ADDRESS_COLUMNS = `label, postal_code as "postalCode", street, number, complement, district,
   city, state, reference`;
@@ -279,6 +305,107 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
         items,
         history,
         incidents: await readIncidents(em, orderId),
+      };
+    });
+  }
+
+  /** The signed-in customer's own orders, newest first, with a stable number cursor. */
+  listForCustomer(cursor: number | null): Promise<CustomerOrderPage> {
+    const customerId = customerOf();
+    return this.transactions.run(async (em) => {
+      const rows = await em.execute<
+        (Omit<CustomerOrderSummary, "placedAt"> & {
+          placedAt: Date | string;
+        })[]
+      >(
+        `select id, number, status, placed_at as "placedAt", fulfillment,
+                total_cents as "totalCents"
+           from orders
+          where customer_id = ? and (?::integer is null or number < ?::integer)
+          order by number desc
+          limit ?`,
+        [customerId, cursor, cursor, CUSTOMER_ORDER_PAGE_SIZE + 1],
+      );
+      const page = rows.slice(0, CUSTOMER_ORDER_PAGE_SIZE);
+      return {
+        orders: page.map((row) => ({
+          ...row,
+          placedAt: new Date(row.placedAt).toISOString(),
+        })),
+        nextCursor:
+          rows.length > CUSTOMER_ORDER_PAGE_SIZE
+            ? (page.at(-1)?.number ?? null)
+            : null,
+      };
+    });
+  }
+
+  /** Customer detail is scoped by both tenant RLS and the verified customer id. */
+  getForCustomer(orderId: string): Promise<CustomerOrderDetail> {
+    const customerId = customerOf();
+    return this.transactions.run(async (em) => {
+      const [order] = await em.execute<
+        (Omit<OrderView, "items" | "placedAt"> & {
+          placedAt: Date | string;
+        })[]
+      >(
+        `select id, number, status, placed_at as "placedAt", fulfillment,
+                delivery_address as "deliveryAddress", payment_method as "paymentMethod",
+                change_for_cents as "changeForCents", notes,
+                items_subtotal_cents as "itemsSubtotalCents", delivery_fee_cents as "deliveryFeeCents",
+                discount_cents as "discountCents", total_cents as "totalCents"
+           from orders where id = ? and customer_id = ?`,
+        [orderId, customerId],
+      );
+      if (!order)
+        throw new ApiError(
+          HttpStatus.NOT_FOUND,
+          "NOT_FOUND",
+          "Order not found.",
+        );
+      const [items, changes, settings] = await Promise.all([
+        em.execute<QuotedLine[]>(
+          `select kind, quantity, unit_price_cents as "unitPriceCents",
+                  total_cents as "totalCents", snapshot
+             from order_items where order_id = ? order by position`,
+          [orderId],
+        ),
+        em.execute<
+          {
+            from: OrderStatus | null;
+            to: OrderStatus;
+            reasonCode: RejectionReason | null;
+            at: Date | string;
+          }[]
+        >(
+          `select from_status as "from", to_status as "to",
+                  reason_code as "reasonCode", at
+             from order_status_changes where order_id = ? order by at asc`,
+          [orderId],
+        ),
+        em.execute<
+          {
+            prepMinutes: number;
+            deliveryMinutes: number;
+            contactPhone: string | null;
+          }[]
+        >(
+          `select estimated_prep_minutes as "prepMinutes",
+                  estimated_delivery_minutes as "deliveryMinutes",
+                  contact_phone as "contactPhone"
+             from store_settings limit 1`,
+        ),
+      ]);
+      return {
+        ...order,
+        placedAt: new Date(order.placedAt).toISOString(),
+        items,
+        estimate: settings[0] ?? null,
+        contactPhone: settings[0]?.contactPhone ?? null,
+        history: changes.map((change) => ({
+          ...change,
+          at: new Date(change.at).toISOString(),
+        })),
       };
     });
   }

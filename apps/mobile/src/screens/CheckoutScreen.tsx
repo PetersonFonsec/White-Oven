@@ -34,6 +34,8 @@ export function CheckoutScreen({
   stale,
   onBack,
   onAccount,
+  onOrders,
+  onTrackOrder,
   onRefresh,
 }: {
   model: CommerceModel;
@@ -46,6 +48,8 @@ export function CheckoutScreen({
   stale: boolean;
   onBack: () => void;
   onAccount: () => void;
+  onOrders: () => void;
+  onTrackOrder: (orderId: string) => void;
   onRefresh: () => void;
 }) {
   const [fulfillment, setFulfillment] =
@@ -148,6 +152,9 @@ export function CheckoutScreen({
         disabled={disabled}
         onPress={onAccount}
       />
+      {state.profile ? (
+        <Button label="Meus pedidos" disabled={disabled} onPress={onOrders} />
+      ) : null}
       {receipt ? (
         <>
           <Heading>Pedido #{receipt.number} recebido</Heading>
@@ -155,6 +162,11 @@ export function CheckoutScreen({
             Total: {formatCents(receipt.totalCents)}. Aguarde a confirmação da
             pizzaria. O pagamento será feito na entrega ou retirada.
           </Body>
+          <Button
+            label="Acompanhar pedido"
+            disabled={disabled}
+            onPress={() => onTrackOrder(receipt.id)}
+          />
         </>
       ) : null}
       {state.pending ? (

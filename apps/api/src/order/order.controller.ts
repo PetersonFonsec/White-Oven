@@ -151,14 +151,66 @@ const invalid = (paths: string[]) =>
     { errors: paths.map((path) => ({ code: "VALIDATION_FAILED", path })) },
   );
 
+function parseCustomerOrderCursor(
+  query: Record<string, unknown>,
+): number | null {
+  if (
+    Object.keys(query).some((key) => key !== "cursor") ||
+    (query["cursor"] !== undefined &&
+      (typeof query["cursor"] !== "string" ||
+        !/^[1-9]\d{0,9}$/.test(query["cursor"])))
+  )
+    throw invalid(
+      Object.keys(query).some((key) => key !== "cursor")
+        ? ["query"]
+        : ["cursor"],
+    );
+  if (query["cursor"] === undefined) return null;
+  const cursor = Number(query["cursor"]);
+  if (!Number.isSafeInteger(cursor) || cursor > 2_147_483_647)
+    throw invalid(["cursor"]);
+  return cursor;
+}
+
 /**
- * Orders of the signed-in customer (M4.3, ADR 0018). The API prices every line from the catalog;
- * the app sends configurations, never prices. Both routes need an ACTIVE store (`createOrder`).
+ * Orders of the signed-in customer (M4.3/M5.4, ADRs 0018/0023). Read-only history remains available
+ * through the customer-account capability; quote and creation require an ACTIVE store.
  */
 @ApiTags("customer")
 @Controller("customer/stores/:storeSlug/me/orders")
 export class OrderController {
   constructor(private readonly orders: OrderService) {}
+
+  @Get()
+  @CustomerRoute()
+  @ApiOperation({
+    summary: "List the signed-in customer's orders",
+    description:
+      "Newest first, 50 per page. Pass nextCursor as cursor. Results include only the authenticated customer's orders in the store from the URL.",
+  })
+  listCustomer(
+    @Query() query: Record<string, unknown>,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    res.setHeader("Cache-Control", "no-store");
+    return this.orders.listForCustomer(parseCustomerOrderCursor(query));
+  }
+
+  @Get(":orderId")
+  @CustomerRoute()
+  @ApiOperation({
+    summary: "Read one of the signed-in customer's orders",
+    description:
+      "Returns the immutable order snapshot and status timeline. A different customer's order is indistinguishable from a missing order.",
+  })
+  getCustomer(
+    @Param("orderId") orderId: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!UUID.test(orderId)) throw invalid(["orderId"]);
+    res.setHeader("Cache-Control", "no-store");
+    return this.orders.getForCustomer(orderId);
+  }
 
   @Post("quote")
   @CustomerRoute("createOrder")
