@@ -42,6 +42,12 @@ function mapPlatformError(error: unknown): unknown {
       "PLAN_REQUIRED",
       "The tenant needs a current plan before it can be active.",
     );
+  if (code === "P0006" || code === "23P01")
+    return new ApiError(
+      HttpStatus.CONFLICT,
+      "PLAN_SCHEDULE_CONFLICT",
+      "The tenant's plan periods need review before changing the plan.",
+    );
   if (code === "22023") return invalid();
   if (code === "P0003")
     return new ApiError(
@@ -77,6 +83,8 @@ export interface TenantSummary {
   displayName: string;
   status: string;
   createdAt: Date;
+  /** IANA time zone of the store; plan periods start at its local midnight. */
+  timeZone: string;
   /** Current plan; null only before the first subscription. */
   plan: TenantPlanRef | null;
   /** Plan that replaces the current one at `validFrom` (next calendar month). */
@@ -123,7 +131,7 @@ export class PlatformService {
       const tenants = await em.execute<
         Omit<TenantSummary, "plan" | "scheduledPlan">[]
       >(
-        'select id, slug, display_name as "displayName", status, created_at as "createdAt" from whiteoven_platform_tenants(?, ?)',
+        'select id, slug, display_name as "displayName", status, created_at as "createdAt", timezone as "timeZone" from whiteoven_platform_tenants(?, ?)',
         [actorId, sessionId],
       );
       const periods = await em.execute<

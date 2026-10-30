@@ -19,6 +19,8 @@ export interface PlatformTenant {
   displayName: string;
   status: "ONBOARDING" | "ACTIVE" | "SUSPENDED";
   createdAt: string;
+  /** IANA time zone of the store; plan dates are shown as its calendar days. */
+  timeZone: string;
   /** Current plan; null before the first subscription. */
   plan: TenantPlanRef | null;
   /** Plan that replaces the current one at `validFrom`. */

@@ -321,4 +321,308 @@ describe("M6.1 plan subscriptions", databaseSuite, () => {
       apiCode("TENANT_STATUS_CONFLICT"),
     );
   });
+
+  const sleep = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+  /** Periods of a tenant, oldest first, read as the owner under the tenant context. */
+  const periodsOf = (tenantId: string) =>
+    runInTenant(owner, tenantId, (em) =>
+      em.execute<
+        { id: string; plan: string; validFrom: Date; validTo: Date | null }[]
+      >(
+        'select id, plan, valid_from as "validFrom", valid_to as "validTo" from plan_subscriptions order by valid_from',
+      ),
+    );
+  const assertContiguous = (
+    periods: { validFrom: Date; validTo: Date | null }[],
+  ) => {
+    for (let index = 1; index < periods.length; index++)
+      assert.ok(
+        periods[index - 1]!.validTo !== null &&
+          new Date(periods[index - 1]!.validTo!).getTime() <=
+            new Date(periods[index]!.validFrom).getTime(),
+        "periods overlap",
+      );
+  };
+  const auditChanges = (tenantId: string, action: string) =>
+    owner.em
+      .getConnection()
+      .execute<{ entityId: string; changes: Record<string, unknown> }[]>(
+        'select entity_id as "entityId", changes from audit_events where tenant_id = ? and action = ? order by at',
+        [tenantId, action],
+      );
+  /** Calls the database function directly, for plans outside the API's fixed list. */
+  const changePlanSql = (tenantId: string, plan: string) =>
+    app.em
+      .fork()
+      .transactional((em) =>
+        em.execute<{ id: string; changed: boolean }[]>(
+          "select id, changed from whiteoven_change_tenant_plan(?, ?, ?, ?, null, ?::uuid)",
+          [tenantId, plan, operatorId, sessionId, REQUEST_ID],
+        ),
+      )
+      .then(([row]) => row!);
+
+  it("fills the gap before a scheduled period when no plan is current, without overlapping it", async () => {
+    const tenantId = await insertTenant(owner, "plan-gap", "ONBOARDING");
+    const [future] = await runInTenant(owner, tenantId, (em) =>
+      em.execute<{ id: string; validFrom: Date }[]>(
+        `insert into plan_subscriptions (tenant_id, plan, fee_basis_points, monthly_fee_cents, valid_from)
+         values (?, 'PRO', 0, 19900, date_trunc('month', now()) + interval '1 month')
+         returning id, valid_from as "validFrom"`,
+        [tenantId],
+      ),
+    );
+    const started = await changePlan(tenantId, "FLEX");
+    assert.equal(started.changed, true);
+    assert.ok(
+      Math.abs(new Date(started.validFrom).getTime() - Date.now()) < 10_000,
+    );
+    const periods = await periodsOf(tenantId);
+    assert.deepEqual(
+      periods.map((p) => p.plan),
+      ["FLEX", "PRO"],
+    );
+    assert.equal(
+      new Date(periods[0]!.validTo!).getTime(),
+      new Date(future!.validFrom).getTime(),
+    );
+    assert.equal(periods[1]!.id, future!.id);
+    const [audit] = await auditChanges(tenantId, "plan_subscription.started");
+    assert.equal(
+      new Date(audit!.changes.validTo as string).getTime(),
+      new Date(future!.validFrom).getTime(),
+    );
+    const listed = (await platform.listTenants(operatorId, sessionId)).find(
+      (t) => t.id === tenantId,
+    )!;
+    assert.equal(listed.plan?.code, "FLEX");
+    assert.equal(listed.scheduledPlan?.code, "PRO");
+    assert.equal(listed.timeZone, "America/Sao_Paulo");
+    // Asking for the scheduled plan again is a no-op.
+    const again = await changePlan(tenantId, "PRO");
+    assert.deepEqual(
+      { id: again.subscriptionId, changed: again.changed },
+      { id: future!.id, changed: false },
+    );
+    await platform.changeTenantStatus(
+      tenantId,
+      "ACTIVE",
+      operatorId,
+      sessionId,
+      REQUEST_ID,
+      "",
+    );
+  });
+
+  it("refuses with a domain error when more than one period is scheduled", async () => {
+    const tenantId = await insertTenant(owner, "plan-two-future", "ONBOARDING");
+    await runInTenant(owner, tenantId, (em) =>
+      em.execute(
+        `insert into plan_subscriptions (tenant_id, plan, fee_basis_points, monthly_fee_cents, valid_from, valid_to) values
+           (?, 'PRO', 0, 19900, now() + interval '10 days', now() + interval '20 days'),
+           (?, 'FLEX', 300, 0, now() + interval '20 days', null)`,
+        [tenantId, tenantId],
+      ),
+    );
+    await assert.rejects(
+      changePlan(tenantId, "FLEX"),
+      apiCode("PLAN_SCHEDULE_CONFLICT"),
+    );
+    assert.equal((await periodsOf(tenantId)).length, 2);
+    assert.deepEqual(await auditActions(tenantId), []);
+  });
+
+  it("treats a scheduled period that has just started as the current plan", async () => {
+    const tenantId = await insertTenant(owner, "plan-started", "ONBOARDING");
+    await changePlan(tenantId, "FLEX");
+    const pro = await changePlan(tenantId, "PRO");
+    // Move the month boundary into the past: shrink the current period, then extend the next.
+    await runInTenant(owner, tenantId, (em) =>
+      em.execute(
+        `update plan_subscriptions set valid_from = now() - interval '1 day', valid_to = now() - interval '1 second' where plan = 'FLEX';
+         update plan_subscriptions set valid_from = now() - interval '1 second' where plan = 'PRO';`,
+      ),
+    );
+    const listed = (await platform.listTenants(operatorId, sessionId)).find(
+      (t) => t.id === tenantId,
+    )!;
+    assert.equal(listed.plan?.code, "PRO");
+    assert.equal(listed.scheduledPlan, null);
+    const same = await changePlan(tenantId, "PRO");
+    assert.deepEqual(
+      { id: same.subscriptionId, changed: same.changed },
+      { id: pro.subscriptionId, changed: false },
+    );
+    const flex = await changePlan(tenantId, "FLEX");
+    assert.equal(flex.changed, true);
+    assert.ok(new Date(flex.validFrom).getTime() > Date.now());
+    const periods = await periodsOf(tenantId);
+    assert.deepEqual(
+      periods.map((p) => p.plan),
+      ["FLEX", "PRO", "FLEX"],
+    );
+    assertContiguous(periods);
+  });
+
+  it("serializes concurrent changes: a call that waited for the lock sees the period started meanwhile", async () => {
+    const tenantId = await insertTenant(owner, "plan-concurrent", "ONBOARDING");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    // B's transaction (and its now()) starts first; A takes the tenant lock and starts FLEX
+    // while B waits for it. B must then schedule PRO instead of starting an overlapping period.
+    const late = app.em.fork().transactional(async (em) => {
+      await em.execute("select 1");
+      await sleep(100);
+      return em.execute<{ plan: string; changed: boolean }[]>(
+        "select plan, changed from whiteoven_change_tenant_plan(?, 'PRO', ?, ?, null, null)",
+        [tenantId, operatorId, sessionId],
+      );
+    });
+    const early = sleep(30).then(() =>
+      app.em.fork().transactional(async (em) => {
+        await em.execute(
+          "select * from whiteoven_change_tenant_plan(?, 'FLEX', ?, ?, null, null)",
+          [tenantId, operatorId, sessionId],
+        );
+        await sleep(250);
+        release();
+      }),
+    );
+    await Promise.all([early, late, held]);
+    const periods = await periodsOf(tenantId);
+    assert.deepEqual(
+      periods.map((p) => p.plan),
+      ["FLEX", "PRO"],
+    );
+    assertContiguous(periods);
+
+    // Many concurrent requests in both directions leave one current period and no overlap.
+    await Promise.all(
+      ["FLEX", "PRO", "FLEX", "PRO", "PRO", "FLEX"].map((plan) =>
+        changePlan(tenantId, plan),
+      ),
+    );
+    const after = await periodsOf(tenantId);
+    assertContiguous(after);
+    assert.equal(
+      after.filter(
+        (p) =>
+          new Date(p.validFrom).getTime() <= Date.now() &&
+          (p.validTo === null || new Date(p.validTo).getTime() > Date.now()),
+      ).length,
+      1,
+    );
+  });
+
+  it("keeps an ACTIVE tenant with a current plan through every change", async () => {
+    const tenantId = await insertTenant(owner, "plan-active", "ONBOARDING");
+    await changePlan(tenantId, "FLEX");
+    await platform.changeTenantStatus(
+      tenantId,
+      "ACTIVE",
+      operatorId,
+      sessionId,
+      REQUEST_ID,
+      "",
+    );
+    for (const plan of ["PRO", "FLEX", "PRO", "PRO", "FLEX", "FLEX"]) {
+      await changePlan(tenantId, plan);
+      const [current] = await runInTenant(owner, tenantId, (em) =>
+        em.execute<{ count: number }[]>(
+          "select count(*)::int as count from plan_subscriptions where valid_from <= now() and (valid_to is null or valid_to > now())",
+        ),
+      );
+      assert.equal(current!.count, 1, plan);
+    }
+  });
+
+  it("links a replaced schedule to its replacement in the audit trail and writes nothing on no-ops", async () => {
+    const tenantId = await insertTenant(owner, "plan-replace", "ONBOARDING");
+    // A third plan exists only in this test, so a schedule can be replaced by a different plan
+    // than the current one (with FLEX and PRO only, the alternative is always a revert).
+    await owner.em.getConnection().execute(`
+      alter table plans drop constraint plans_code_valid;
+      insert into plans (code, fee_basis_points, monthly_fee_cents) values ('TEST', 150, 9900);
+    `);
+    try {
+      await changePlan(tenantId, "FLEX");
+      const pro = await changePlan(tenantId, "PRO");
+      const proAgain = await changePlan(tenantId, "PRO");
+      assert.equal(proAgain.changed, false);
+      const replacement = await changePlanSql(tenantId, "TEST");
+      assert.equal(replacement.changed, true);
+      assert.equal(
+        (await changePlanSql(tenantId, "TEST")).changed,
+        false,
+        "repeating the replacement is a no-op",
+      );
+      const scheduled = await auditChanges(
+        tenantId,
+        "plan_subscription.change_scheduled",
+      );
+      assert.equal(scheduled.length, 2);
+      assert.equal(scheduled[0]!.entityId, pro.subscriptionId);
+      assert.equal(scheduled[0]!.changes.replacesSubscriptionId, null);
+      assert.equal(scheduled[1]!.entityId, replacement.id);
+      assert.equal(
+        scheduled[1]!.changes.replacesSubscriptionId,
+        pro.subscriptionId,
+      );
+      assert.deepEqual(scheduled[1]!.changes.plan, {
+        from: "FLEX",
+        to: "TEST",
+      });
+      const [cancelled] = await auditChanges(
+        tenantId,
+        "plan_subscription.change_cancelled",
+      );
+      assert.equal(cancelled!.entityId, pro.subscriptionId);
+      assert.equal(cancelled!.changes.reason, "REPLACED");
+      assert.equal(cancelled!.changes.replacedBySubscriptionId, replacement.id);
+
+      // Reverting to the current plan cancels without a replacement.
+      await changePlan(tenantId, "FLEX");
+      const cancellations = await auditChanges(
+        tenantId,
+        "plan_subscription.change_cancelled",
+      );
+      assert.equal(cancellations.length, 2);
+      assert.equal(cancellations[1]!.entityId, replacement.id);
+      assert.equal(cancellations[1]!.changes.reason, "REVERTED");
+      assert.equal(cancellations[1]!.changes.replacedBySubscriptionId, null);
+      const before = (await auditActions(tenantId)).length;
+      assert.equal((await changePlan(tenantId, "FLEX")).changed, false);
+      assert.equal((await auditActions(tenantId)).length, before);
+      for (const { changes } of [...scheduled, ...cancellations])
+        assert.ok(
+          !JSON.stringify(changes).includes("@"),
+          "no personal data in audit changes",
+        );
+    } finally {
+      await runInTenant(owner, tenantId, (em) =>
+        em.execute("delete from plan_subscriptions where plan = 'TEST'"),
+      );
+      await owner.em.getConnection().execute(`
+        delete from plans where code = 'TEST';
+        alter table plans add constraint plans_code_valid check (code in ('FLEX', 'PRO'));
+      `);
+    }
+  });
+
+  it("rolls back the plan change and its audit together when the transaction fails", async () => {
+    const tenantId = await insertTenant(owner, "plan-rollback", "ONBOARDING");
+    await assert.rejects(
+      app.em.fork().transactional(async (em) => {
+        await em.execute(
+          "select * from whiteoven_change_tenant_plan(?, 'FLEX', ?, ?, null, null)",
+          [tenantId, operatorId, sessionId],
+        );
+        throw new Error("fail after the change");
+      }),
+      /fail after the change/,
+    );
+    assert.deepEqual(await periodsOf(tenantId), []);
+    assert.deepEqual(await auditActions(tenantId), []);
+  });
 });

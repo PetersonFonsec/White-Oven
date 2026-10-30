@@ -18,31 +18,7 @@ import {
   type PlatformTenant,
 } from "./platform-api";
 
-const PLAN_NAMES: Record<PlanCode, string> = { FLEX: "Flex", PRO: "Pro" };
-
-export const planName = (code: PlanCode): string => PLAN_NAMES[code];
-
-/** "3% por venda, sem mensalidade" from the values recorded for a plan or period. */
-export function planTerms(
-  plan: Pick<Plan, "feeBasisPoints" | "monthlyFeeCents">,
-): string {
-  const fee =
-    plan.feeBasisPoints > 0
-      ? `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(plan.feeBasisPoints / 100)}% por venda`
-      : "sem comissão por venda";
-  const monthly =
-    plan.monthlyFeeCents > 0
-      ? `${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(plan.monthlyFeeCents / 100)} por mês`
-      : "sem mensalidade";
-  return `${fee}, ${monthly}`;
-}
-
-export const planDate = (value: string): string => {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf())
-    ? "—"
-    : new Intl.DateTimeFormat("pt-BR", { dateStyle: "long" }).format(date);
-};
+import { planDate, planName, planTerms } from "./plan-format";
 
 /** Operator dialog to set a tenant's plan and read its plan history (M6.1, ADR 0024). */
 @Component({
@@ -259,9 +235,9 @@ export class TenantPlanDialog implements OnInit {
       const startsLater = new Date(result.validFrom).getTime() > Date.now();
       this.closed.emit(
         !result.changed
-          ? `Nenhuma mudança: ${this.tenant().displayName} já está com o plano ${plan}${startsLater ? ` agendado para ${planDate(result.validFrom)}` : ""}.`
+          ? `Nenhuma mudança: ${this.tenant().displayName} já está com o plano ${plan}${startsLater ? ` agendado para ${planDate(result.validFrom, this.tenant().timeZone)}` : ""}.`
           : startsLater
-            ? `Plano ${plan} agendado para ${planDate(result.validFrom)} em ${this.tenant().displayName}.`
+            ? `Plano ${plan} agendado para ${planDate(result.validFrom, this.tenant().timeZone)} em ${this.tenant().displayName}.`
             : `${this.tenant().displayName} está no plano ${plan}.`,
       );
     } catch (error) {
@@ -291,13 +267,14 @@ export class TenantPlanDialog implements OnInit {
   }
 
   protected periodLabel(period: PlanSubscription): string {
+    const zone = this.tenant().timeZone;
     const now = Date.now();
     const from = new Date(period.validFrom).getTime();
-    if (from > now) return `Começa em ${planDate(period.validFrom)}`;
+    if (from > now) return `Começa em ${planDate(period.validFrom, zone)}`;
     if (period.validTo && new Date(period.validTo).getTime() <= now)
-      return `De ${planDate(period.validFrom)} a ${planDate(period.validTo)}`;
+      return `De ${planDate(period.validFrom, zone)} a ${planDate(period.validTo, zone)}`;
     return period.validTo
-      ? `Atual, desde ${planDate(period.validFrom)}, até ${planDate(period.validTo)}`
-      : `Atual, desde ${planDate(period.validFrom)}`;
+      ? `Atual, desde ${planDate(period.validFrom, zone)}, até ${planDate(period.validTo, zone)}`
+      : `Atual, desde ${planDate(period.validFrom, zone)}`;
   }
 }

@@ -18,6 +18,7 @@ const sample: PlatformTenant = {
   displayName: "White Oven Centro",
   status: "ACTIVE",
   createdAt: "2026-10-24T12:00:00.000Z",
+  timeZone: "America/Sao_Paulo",
   plan: { code: "FLEX", validFrom: "2026-10-24T12:00:00.000Z" },
   scheduledPlan: null,
 };
@@ -312,5 +313,176 @@ describe("PlatformHomePage", () => {
     expect(
       element.querySelector('[role="alertdialog"] [role="alert"]')?.textContent,
     ).toContain("Defina um plano para a pizzaria antes de ativá-la");
+  });
+
+  describe("plan dates in the store's time zone", () => {
+    const env = (
+      globalThis as unknown as {
+        process: { env: Record<string, string | undefined> };
+      }
+    ).process.env;
+    let previousZone: string | undefined;
+    beforeEach(() => {
+      previousZone = env["TZ"];
+      env["TZ"] = "America/Sao_Paulo";
+    });
+    afterEach(() => {
+      if (previousZone === undefined) delete env["TZ"];
+      else env["TZ"] = previousZone;
+    });
+
+    it("shows a Tokyo store's change on 1 November to an operator in Brazil, in the list, history and confirmation", async () => {
+      const startsAt = "2026-10-31T15:00:00.000Z";
+      // The operator's own zone would show the previous day.
+      expect(
+        new Intl.DateTimeFormat("pt-BR", { dateStyle: "long" }).format(
+          new Date(startsAt),
+        ),
+      ).toBe("31 de outubro de 2026");
+      const tokyo: PlatformTenant = {
+        ...sample,
+        timeZone: "Asia/Tokyo",
+        scheduledPlan: { code: "PRO", validFrom: startsAt },
+      };
+      api.listTenants.mockResolvedValue([tokyo]);
+      api.listPlanSubscriptions.mockResolvedValue([
+        {
+          id: "period-2",
+          ...plans[1]!,
+          validFrom: startsAt,
+          validTo: null,
+          createdAt: "2026-10-20T12:00:00.000Z",
+        },
+        {
+          id: "period-1",
+          ...plans[0]!,
+          validFrom: "2026-09-30T15:00:00.000Z",
+          validTo: startsAt,
+          createdAt: "2026-09-30T15:00:00.000Z",
+        },
+      ]);
+      api.changePlan.mockResolvedValue({
+        subscriptionId: "period-2",
+        plan: "PRO",
+        validFrom: startsAt,
+        changed: false,
+      });
+      const { fixture, element } = await render();
+      expect(element.querySelector("tbody tr")?.textContent).toContain(
+        "Pro a partir de 1 de novembro de 2026",
+      );
+      element
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Plano de White Oven Centro"]',
+        )!
+        .click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+      const historyText =
+        element.querySelector(".plan-history")?.textContent ?? "";
+      expect(historyText).toContain("1 de outubro de 2026");
+      expect(historyText).toContain("1 de novembro de 2026");
+      expect(historyText).not.toContain("31 de outubro");
+      element
+        .querySelector("dialog.plan-dialog form")!
+        .dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        );
+      await fixture.whenStable();
+      fixture.detectChanges();
+      const notice =
+        element.querySelector('[role="status"]')?.textContent ?? "";
+      if (new Date(startsAt).getTime() > Date.now())
+        expect(notice).toContain("agendado para 1 de novembro de 2026");
+      else expect(notice).toContain("Nenhuma mudança");
+    });
+  });
+
+  describe("plan catalog loading", () => {
+    const planButton = (element: HTMLElement) =>
+      element.querySelector<HTMLButtonElement>(
+        'button[aria-label="Plano de White Oven Centro"]',
+      )!;
+    const failure = () =>
+      new HttpErrorResponse({
+        status: 503,
+        error: { code: "X", message: "x" },
+      });
+
+    it("enables plan management once the catalog loads", async () => {
+      const { element } = await render();
+      expect(planButton(element).disabled).toBe(false);
+      expect(element.textContent).not.toContain("Tentar novamente");
+    });
+
+    it("reports a failure accessibly, keeps the tenant list usable and recovers on retry", async () => {
+      api.listPlans.mockRejectedValueOnce(failure());
+      const { fixture, element } = await render();
+      const alert = element.querySelector(".plans-status[role='alert']");
+      expect(alert?.textContent).toContain(
+        "Os planos não puderam ser carregados",
+      );
+      expect(planButton(element).disabled).toBe(true);
+      expect(element.textContent).toContain("White Oven Centro");
+      expect(
+        element.querySelector<HTMLButtonElement>(
+          'button[aria-label="Suspender White Oven Centro"]',
+        )!.disabled,
+      ).toBe(false);
+
+      [...element.querySelectorAll("button")]
+        .find((b) => b.textContent?.includes("Tentar novamente"))!
+        .click();
+      await fixture.whenStable();
+      fixture.detectChanges();
+      expect(api.listPlans).toHaveBeenCalledTimes(2);
+      expect(element.querySelector(".plans-status[role='alert']")).toBeNull();
+      expect(planButton(element).disabled).toBe(false);
+    });
+
+    it("stays in the error state when the retry fails again", async () => {
+      api.listPlans
+        .mockRejectedValueOnce(failure())
+        .mockRejectedValueOnce(failure());
+      const { fixture, element } = await render();
+      [...element.querySelectorAll("button")]
+        .find((b) => b.textContent?.includes("Tentar novamente"))!
+        .click();
+      await fixture.whenStable();
+      fixture.detectChanges();
+      expect(api.listPlans).toHaveBeenCalledTimes(2);
+      expect(
+        element.querySelector(".plans-status[role='alert']")?.textContent,
+      ).toContain("Tentar novamente");
+      expect(planButton(element).disabled).toBe(true);
+    });
+
+    it("says the catalog is empty and keeps plan management disabled", async () => {
+      api.listPlans.mockResolvedValueOnce([]);
+      const { element } = await render();
+      expect(element.textContent).toContain("Nenhum plano disponível");
+      expect(planButton(element).disabled).toBe(true);
+    });
+
+    it("does not start a second request while a retry is in flight", async () => {
+      api.listPlans.mockRejectedValueOnce(failure());
+      const { fixture } = await render();
+      let resolve!: (plans: Plan[]) => void;
+      api.listPlans.mockReturnValueOnce(
+        new Promise<Plan[]>((r) => (resolve = r)),
+      );
+      const page = fixture.componentInstance as unknown as {
+        loadPlans: () => Promise<void>;
+        plansState: () => string;
+      };
+      const first = page.loadPlans();
+      const second = page.loadPlans();
+      expect(api.listPlans).toHaveBeenCalledTimes(2);
+      expect(page.plansState()).toBe("loading");
+      resolve(plans);
+      await Promise.all([first, second]);
+      expect(page.plansState()).toBe("ready");
+    });
   });
 });

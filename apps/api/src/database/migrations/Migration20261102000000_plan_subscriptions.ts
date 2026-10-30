@@ -70,6 +70,19 @@ export class Migration20261102000000_plan_subscriptions extends Migration {
     `);
 
     this.addSql(`
+      -- Same as M1.5 plus the tenant's IANA time zone, which the panel needs to show plan dates as
+      -- the store's calendar days. The return type changes, so the function is recreated.
+      drop function whiteoven_platform_tenants(uuid, uuid);
+      create function whiteoven_platform_tenants(p_actor_id uuid, p_session_id uuid)
+      returns table (id uuid, slug text, display_name text, status text, created_at timestamptz, timezone text)
+      language sql stable security definer set search_path = pg_catalog, public as $$
+        select t.id, t.slug, t.display_name, t.status, t.created_at, t.timezone from public.tenants t
+         where public.whiteoven_assert_platform_actor(p_actor_id, p_session_id)
+         order by t.created_at desc
+      $$;
+      revoke all on function whiteoven_platform_tenants(uuid,uuid) from public;
+      grant execute on function whiteoven_platform_tenants(uuid,uuid) to whiteoven_app;
+
       create function whiteoven_platform_plans(p_actor_id uuid, p_session_id uuid)
       returns table (code text, fee_basis_points integer, monthly_fee_cents integer)
       language sql stable security definer set search_path = pg_catalog, public as $$
@@ -115,19 +128,26 @@ export class Migration20261102000000_plan_subscriptions extends Migration {
       revoke all on function whiteoven_platform_plan_subscriptions(uuid,uuid,uuid) from public;
       grant execute on function whiteoven_platform_plan_subscriptions(uuid,uuid,uuid) to whiteoven_app;
 
-      -- Sets the plan a tenant should be on. Without a current period the plan starts now. Otherwise
-      -- the change takes effect at the start of the next calendar month in the tenant's time zone
-      -- (Q-10 recommendation): the current period is closed there and the new one is scheduled.
-      -- A scheduled period that never took effect may be replaced or cancelled; effective periods
-      -- are never deleted. Asking for the plan already current or scheduled changes nothing.
+      -- Sets the plan a tenant should be on (ADR 0024). Runs under the tenant row lock and reads the
+      -- clock after taking it, so concurrent calls see each other's periods and never overlap.
+      -- * No current period and nothing scheduled: the plan starts now.
+      -- * No current period but a scheduled one (only reachable through data written outside this
+      --   function): the plan starts now and ends where the scheduled period begins, filling the
+      --   gap; the scheduled period is kept.
+      -- * A current period: the change takes effect at the start of the next calendar month in the
+      --   tenant's time zone (Q-10 recommendation); the current period is closed there and the new
+      --   one is scheduled. A scheduled period that never took effect may be replaced or cancelled;
+      --   periods that already started are never deleted nor change plan or values.
+      -- * Asking for the plan already current (with nothing scheduled) or already scheduled changes
+      --   nothing and writes no audit event.
       create function whiteoven_change_tenant_plan(
         p_tenant_id uuid, p_plan text, p_actor_id uuid, p_session_id uuid, p_ip_hash bytea, p_request_id uuid
       ) returns table (id uuid, plan text, valid_from timestamptz, changed boolean)
       language plpgsql security definer set search_path = pg_catalog, public as $$
       declare prior_context text := current_setting('app.tenant_id', true);
-        tenant_status text; tenant_zone text; chosen public.plans%rowtype;
+        tenant_status text; tenant_zone text; chosen public.plans%rowtype; at_now timestamptz;
         current_period public.plan_subscriptions%rowtype; scheduled public.plan_subscriptions%rowtype;
-        starts_at timestamptz; new_id uuid; cancelled boolean := false;
+        scheduled_count integer; starts_at timestamptz; new_id uuid; cancelled boolean := false;
       begin
         if not public.whiteoven_assert_platform_actor(p_actor_id, p_session_id) then raise exception using errcode = '42501'; end if;
         select * into chosen from public.plans where code = p_plan;
@@ -135,55 +155,77 @@ export class Migration20261102000000_plan_subscriptions extends Migration {
         select t.status, t.timezone into tenant_status, tenant_zone from public.tenants t where t.id = p_tenant_id for update;
         if tenant_status is null then raise exception using errcode = 'P0002'; end if;
         if tenant_status = 'CLOSED' then raise exception using errcode = 'P0004'; end if;
+        -- now() is the transaction start; a call that waited for the lock must see the present.
+        at_now := clock_timestamp();
         perform set_config('app.tenant_id', p_tenant_id::text, true);
         select * into current_period from public.plan_subscriptions s
-         where s.tenant_id = p_tenant_id and s.valid_from <= now() and (s.valid_to is null or s.valid_to > now());
+         where s.tenant_id = p_tenant_id and s.valid_from <= at_now and (s.valid_to is null or s.valid_to > at_now);
+        select count(*) into scheduled_count from public.plan_subscriptions s
+         where s.tenant_id = p_tenant_id and s.valid_from > at_now;
+        if scheduled_count > 1 then
+          perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
+          raise exception using errcode = 'P0006';
+        end if;
         select * into scheduled from public.plan_subscriptions s
-         where s.tenant_id = p_tenant_id and s.valid_from > now();
+         where s.tenant_id = p_tenant_id and s.valid_from > at_now;
 
         if current_period.id is null then
-          insert into public.plan_subscriptions (tenant_id, plan, fee_basis_points, monthly_fee_cents, valid_from, created_by)
-            values (p_tenant_id, chosen.code, chosen.fee_basis_points, chosen.monthly_fee_cents, now(), p_actor_id)
+          insert into public.plan_subscriptions (tenant_id, plan, fee_basis_points, monthly_fee_cents, valid_from, valid_to, created_by)
+            values (p_tenant_id, chosen.code, chosen.fee_basis_points, chosen.monthly_fee_cents, at_now, scheduled.valid_from, p_actor_id)
             returning plan_subscriptions.id into new_id;
           insert into public.audit_events (tenant_id, actor_type, actor_id, action, entity_type, entity_id, changes, ip_hash, request_id)
             values (p_tenant_id, 'OPERATOR', p_actor_id, 'plan_subscription.started', 'plan_subscription', new_id,
               jsonb_build_object('plan', chosen.code, 'feeBasisPoints', chosen.fee_basis_points,
-                'monthlyFeeCents', chosen.monthly_fee_cents, 'validFrom', now()), p_ip_hash, p_request_id);
+                'monthlyFeeCents', chosen.monthly_fee_cents, 'validFrom', at_now, 'validTo', scheduled.valid_from),
+              p_ip_hash, p_request_id);
           perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
-          return query select new_id, chosen.code, now(), true;
+          return query select new_id, chosen.code, at_now, true;
+          return;
+        end if;
+
+        if scheduled.id is not null and scheduled.plan = chosen.code then
+          perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
+          return query select scheduled.id, scheduled.plan, scheduled.valid_from, false;
           return;
         end if;
 
         if scheduled.id is not null then
-          if scheduled.plan = chosen.code then
-            perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
-            return query select scheduled.id, scheduled.plan, scheduled.valid_from, false;
-            return;
-          end if;
+          -- The scheduled period never took effect: drop it and reopen the current one. A
+          -- replacement below links both audit events.
           delete from public.plan_subscriptions s where s.id = scheduled.id;
           update public.plan_subscriptions s set valid_to = null where s.id = current_period.id;
           cancelled := true;
-          insert into public.audit_events (tenant_id, actor_type, actor_id, action, entity_type, entity_id, changes, ip_hash, request_id)
-            values (p_tenant_id, 'OPERATOR', p_actor_id, 'plan_subscription.change_cancelled', 'plan_subscription', scheduled.id,
-              jsonb_build_object('plan', scheduled.plan, 'validFrom', scheduled.valid_from), p_ip_hash, p_request_id);
         end if;
 
         if current_period.plan = chosen.code then
+          if cancelled then
+            insert into public.audit_events (tenant_id, actor_type, actor_id, action, entity_type, entity_id, changes, ip_hash, request_id)
+              values (p_tenant_id, 'OPERATOR', p_actor_id, 'plan_subscription.change_cancelled', 'plan_subscription', scheduled.id,
+                jsonb_build_object('plan', scheduled.plan, 'validFrom', scheduled.valid_from,
+                  'reason', 'REVERTED', 'replacedBySubscriptionId', null), p_ip_hash, p_request_id);
+          end if;
           perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
           return query select current_period.id, current_period.plan, current_period.valid_from, cancelled;
           return;
         end if;
 
-        starts_at := (date_trunc('month', now() at time zone tenant_zone) + interval '1 month') at time zone tenant_zone;
+        starts_at := (date_trunc('month', at_now at time zone tenant_zone) + interval '1 month') at time zone tenant_zone;
         update public.plan_subscriptions s set valid_to = starts_at where s.id = current_period.id;
         insert into public.plan_subscriptions (tenant_id, plan, fee_basis_points, monthly_fee_cents, valid_from, created_by)
           values (p_tenant_id, chosen.code, chosen.fee_basis_points, chosen.monthly_fee_cents, starts_at, p_actor_id)
           returning plan_subscriptions.id into new_id;
+        if cancelled then
+          insert into public.audit_events (tenant_id, actor_type, actor_id, action, entity_type, entity_id, changes, ip_hash, request_id)
+            values (p_tenant_id, 'OPERATOR', p_actor_id, 'plan_subscription.change_cancelled', 'plan_subscription', scheduled.id,
+              jsonb_build_object('plan', scheduled.plan, 'validFrom', scheduled.valid_from,
+                'reason', 'REPLACED', 'replacedBySubscriptionId', new_id), p_ip_hash, p_request_id);
+        end if;
         insert into public.audit_events (tenant_id, actor_type, actor_id, action, entity_type, entity_id, changes, ip_hash, request_id)
           values (p_tenant_id, 'OPERATOR', p_actor_id, 'plan_subscription.change_scheduled', 'plan_subscription', new_id,
             jsonb_build_object('plan', jsonb_build_object('from', current_period.plan, 'to', chosen.code),
               'feeBasisPoints', chosen.fee_basis_points, 'monthlyFeeCents', chosen.monthly_fee_cents,
-              'validFrom', starts_at), p_ip_hash, p_request_id);
+              'validFrom', starts_at, 'replacesSubscriptionId', case when cancelled then scheduled.id end),
+            p_ip_hash, p_request_id);
         perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
         return query select new_id, chosen.code, starts_at, true;
       end $$;
@@ -205,9 +247,11 @@ export class Migration20261102000000_plan_subscriptions extends Migration {
         if prior_status is null then raise exception using errcode = 'P0002'; end if;
         if prior_status = 'CLOSED' or prior_status = p_status then raise exception using errcode = 'P0004'; end if;
         perform set_config('app.tenant_id', p_tenant_id::text, true);
+        -- clock_timestamp(): a plan started by a call that held the lock before us is current.
         if p_status = 'ACTIVE' and not exists (
           select 1 from public.plan_subscriptions s
-           where s.tenant_id = p_tenant_id and s.valid_from <= now() and (s.valid_to is null or s.valid_to > now())
+           where s.tenant_id = p_tenant_id and s.valid_from <= clock_timestamp()
+             and (s.valid_to is null or s.valid_to > clock_timestamp())
         ) then
           perform set_config('app.tenant_id', coalesce(prior_context, ''), true);
           raise exception using errcode = 'P0005';
