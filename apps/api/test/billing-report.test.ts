@@ -150,6 +150,7 @@ describe("M6.3 monthly billing report", databaseSuite, () => {
         adminOrigins: ["https://admin.example.test"],
       },
       push: { delivery: "disabled", expoAccessToken: null },
+      trustedProxies: [],
     };
     platform = new PlatformService(app, config);
     server = await startTestServer({

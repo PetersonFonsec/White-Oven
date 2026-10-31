@@ -83,6 +83,7 @@ describe("M6.1 plan subscriptions", databaseSuite, () => {
         adminOrigins: ["https://admin.example.test"],
       },
       push: { delivery: "disabled", expoAccessToken: null },
+      trustedProxies: [],
     };
     platform = new PlatformService(app, config);
   });

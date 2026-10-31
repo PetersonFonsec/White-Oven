@@ -17,6 +17,7 @@ import { CustomerModule } from "./customer/customer.module";
 import { OrderModule } from "./order/order.module";
 import { PushModule } from "./push/push.module";
 import { LegalModule } from "./legal/legal.module";
+import { RequestLimits } from "./security/request-limits";
 
 @Module({})
 export class AppModule {
@@ -24,6 +25,7 @@ export class AppModule {
     config: ApiConfig,
     orm: MikroORM,
     logger: JsonLogger,
+    limits: RequestLimits = new RequestLimits(),
   ): DynamicModule {
     return {
       module: AppModule,
@@ -46,10 +48,11 @@ export class AppModule {
       providers: [
         { provide: API_CONFIG, useValue: config },
         { provide: JsonLogger, useValue: logger },
+        { provide: RequestLimits, useValue: limits },
         // Runs before every route guard: undeclared routes are refused.
         { provide: APP_GUARD, useClass: RouteAccessGuard },
       ],
-      exports: [API_CONFIG, JsonLogger],
+      exports: [API_CONFIG, JsonLogger, RequestLimits],
     };
   }
 }

@@ -20,6 +20,8 @@ import { ApiExceptionFilter } from "./errors/api-exception.filter";
 import { JsonLogger } from "./logging/json-logger";
 import { requestContext } from "./logging/request-context";
 import { LEGAL_PAGES_PREFIX } from "./legal/legal.controller";
+import { clientIpResolver, securityHeaders } from "./security/http-security";
+import type { RequestLimits } from "./security/request-limits";
 
 export const API_PREFIX = "v1";
 export const OPENAPI_PATH = `${API_PREFIX}/openapi.json`;
@@ -30,6 +32,8 @@ export interface CreateAppOptions {
   imports?: Type[];
   /** Extra entities for those probe routes; checked by `assertTenantFilters` like any other. */
   entities?: EntitySchema[];
+  /** Request rate limits; tests pass small policies (ADR 0031). */
+  requestLimits?: RequestLimits;
 }
 
 export async function createApp(
@@ -44,7 +48,12 @@ export async function createApp(
       ? { entities: [...ENTITIES, ...options.entities] }
       : {},
   );
-  const appModule = AppModule.forRoot(config, orm, logger);
+  const appModule = AppModule.forRoot(
+    config,
+    orm,
+    logger,
+    options.requestLimits,
+  );
   const root = options.imports?.length
     ? {
         module: class RootModule {},
@@ -58,6 +67,9 @@ export async function createApp(
     abortOnError: false,
   });
   app.disable("x-powered-by");
+  // Before everything else, so error answers (404, 413, body parse errors) carry them too.
+  app.use(securityHeaders());
+  app.use(clientIpResolver(config.trustedProxies));
   app.useBodyParser("json", { limit: "100kb" });
   // Only the account deletion page posts a form (ADR 0030): small and flat. Registering it here
   // replaces Express's default (100 KiB, nested objects) for every route.

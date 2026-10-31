@@ -25,6 +25,8 @@ import {
 import type { Request, Response } from "express";
 import { API_CONFIG, type ApiConfig } from "../config/config";
 import { ApiError, ApiErrorBody } from "../errors/api-error";
+import { clientIpOf, ipLimitKey } from "../security/http-security";
+import { RequestLimits, enforceLimit } from "../security/request-limits";
 import { PublicRoute } from "./route-access";
 import { PASSWORD_MAX_LENGTH } from "./password";
 import {
@@ -192,6 +194,7 @@ export class StaffAuthController {
     @Inject(StaffAuth) private readonly auth: StaffAuth,
     @Inject(StaffMfa) private readonly mfa: StaffMfa,
     @Inject(API_CONFIG) private readonly config: ApiConfig,
+    @Inject(RequestLimits) private readonly limits: RequestLimits,
   ) {}
 
   @Post("login")
@@ -218,7 +221,7 @@ export class StaffAuthController {
   ): Promise<AccessTokenBody | MfaChallengeBody> {
     const fields = stringFields(body, ["email", "password"] as const);
     const email = fields.email.trim().toLowerCase();
-    const ip = clientIp(req);
+    const ip = clientIpOf(req);
     this.assertNotThrottled(email, ip, res);
     // Oversized passwords fail like wrong ones, after throttling, without being hashed.
     const password =
@@ -254,7 +257,7 @@ export class StaffAuthController {
     const factor: SecondFactor = usesRecovery
       ? { recoveryCode: fields.recoveryCode!.slice(0, 64) }
       : { code: fields.code!.slice(0, 16) };
-    const ip = clientIp(req);
+    const ip = clientIpOf(req);
     this.assertNotThrottled(this.mfa.challengeEmail(fields.mfaToken!), ip, res);
     return this.respond(
       res,
@@ -318,11 +321,19 @@ export class StaffAuthController {
   })
   @ApiOkResponse({ type: AccessTokenBody })
   @ApiUnauthorizedResponse({ type: ApiErrorBody })
+  @ApiTooManyRequestsResponse({ type: ApiErrorBody })
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<AccessTokenBody> {
     this.assertAllowedOrigin(req);
+    // A 429 keeps the cookie: the session is fine, only this IP must wait (ADR 0031).
+    enforceLimit(
+      this.limits,
+      "staffRefresh",
+      { ip: ipLimitKey(clientIpOf(req)) },
+      res,
+    );
     try {
       return this.respond(res, await this.auth.refresh(refreshCookie(req)));
     } catch (error) {
@@ -429,9 +440,6 @@ export class PlatformMeController {
     return { staffUserId: staff.access.staffUserId, platformRole: "OPERATOR" };
   }
 }
-
-/** The TCP peer until the API runs behind a trusted proxy (ADR 0007, lockout). */
-const clientIp = (req: Request) => req.socket.remoteAddress ?? "unknown";
 
 function toBody(issued: IssuedTokens): AccessTokenBody {
   return {

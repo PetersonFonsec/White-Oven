@@ -22,7 +22,7 @@ interface Entry {
  * Keys are SHA-256 of the normalized e-mail, whether or not the account exists, so a lockout
  * never reveals which e-mails are registered. Memory only, like the landing's limits (ADR 0002):
  * one API instance in the MVP, reset on restart; revisit before scaling horizontally. The IP is
- * the socket peer until the API is deployed behind a trusted proxy.
+ * `clientIpOf(req)`: the socket peer, or what a proxy of `API_TRUSTED_PROXIES` wrote (ADR 0031).
  */
 export class LoginThrottle {
   private readonly entries = new Map<string, Entry>();

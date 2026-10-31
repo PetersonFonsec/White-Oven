@@ -79,6 +79,7 @@ describe("M6.2 billing ledger", databaseSuite, () => {
         adminOrigins: ["https://admin.example.test"],
       },
       push: { delivery: "disabled", expoAccessToken: null },
+      trustedProxies: [],
     };
     platform = new PlatformService(app, config);
     storeA = await insertTenant(owner, "ledger-a");
@@ -732,6 +733,7 @@ describe("M6.2 billing ledger over development entries", databaseSuite, () => {
         adminOrigins: ["https://admin.example.test"],
       },
       push: { delivery: "disabled", expoAccessToken: null },
+      trustedProxies: [],
     });
   });
 

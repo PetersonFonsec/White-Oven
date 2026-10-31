@@ -12,9 +12,9 @@ export const CUSTOMER_IP_FAILURES_ACROSS_STORES = 300;
  * - Across stores: a wider ceiling per IP alone, so spreading attempts over many stores does not
  *   escape the limit.
  *
- * The IP is the socket peer (`req.socket.remoteAddress`), never a forwarded header the client can
- * set; behind a proxy it is replaced only once a trusted proxy is configured. Memory only, one
- * API instance, like the staff throttle.
+ * The IP is `clientIpOf(req)`: the socket peer, or the address written by a proxy listed in
+ * `API_TRUSTED_PROXIES` (ADR 0031), never a forwarded header the client itself can set. Memory
+ * only, one API instance, like the staff throttle.
  */
 export class CustomerLoginThrottle {
   private readonly perStore: LoginThrottle;

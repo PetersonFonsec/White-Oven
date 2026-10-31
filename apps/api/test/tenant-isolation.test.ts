@@ -668,6 +668,15 @@ describe("tenant isolation", databaseSuite, () => {
         assert.deepEqual(await incidentsOf(victim), { count: 1, open: 1 });
         return response;
       },
+      "GET /customer/stores/:storeSlug/me/orders/:orderId": (
+        attacker,
+        victim,
+      ) =>
+        customerCall(
+          attacker,
+          `/customer/stores/${attacker.slug}/me/orders/${victim.orderId}`,
+          "GET",
+        ),
       "POST /customer/stores/:storeSlug/me/orders/:orderId/transitions": (
         attacker,
         victim,
@@ -796,7 +805,6 @@ describe("tenant isolation", databaseSuite, () => {
         "POST /customer/stores/:storeSlug/me/orders/quote",
         "POST /customer/stores/:storeSlug/me/orders",
         "GET /customer/stores/:storeSlug/me/orders",
-        "GET /customer/stores/:storeSlug/me/orders/:orderId",
         // The session's own device, no id in the path; covered in push.test.ts.
         "GET /customer/stores/:storeSlug/me/push-device",
         "PUT /customer/stores/:storeSlug/me/push-device",
@@ -1429,6 +1437,73 @@ describe("tenant isolation", databaseSuite, () => {
         ),
         INSUFFICIENT_PRIVILEGE,
       );
+    });
+
+    it("every production tenant table hides other stores' rows from whiteoven_app (M7.3)", async () => {
+      const tables = (
+        await owner.em.getConnection().execute<{ table: string }[]>(
+          `select c.relname as "table"
+               from pg_class c join pg_attribute a on a.attrelid = c.oid and a.attname = 'tenant_id'
+              where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
+                and c.relname not like 'isolation_probe_%'
+                and c.relname not in ('audit_events', 'customer_erasures')
+              order by 1`,
+        )
+      ).map((row) => row.table);
+      assert.ok(tables.length >= 30, "the production schema was read");
+      /** Rows of `tenantId` in `table` that `orm` sees inside `context` (null: no SELECT grant). */
+      const visible = async (
+        orm: MikroORM,
+        context: string | null,
+        table: string,
+        tenantId: string,
+      ) => {
+        const query = `select count(*)::int as count from "${table}" where tenant_id = ?`;
+        try {
+          const [row] = context
+            ? await runInTenant(orm, context, (em) =>
+                em.execute<{ count: number }[]>(query, [tenantId]),
+              )
+            : await orm.em
+                .getConnection()
+                .execute<{ count: number }[]>(query, [tenantId]);
+          return row!.count;
+        } catch (error) {
+          if ((error as { code?: string }).code === INSUFFICIENT_PRIVILEGE)
+            return null;
+          throw error;
+        }
+      };
+      const seeded: string[] = [];
+      for (const table of tables)
+        for (const [store, other] of [
+          [a, b],
+          [b, a],
+        ] as const) {
+          if (((await visible(owner, other.id, table, other.id)) ?? 0) > 0)
+            seeded.push(table);
+          assert.ok(
+            [0, null].includes(await visible(app, store.id, table, other.id)),
+            `${table}: ${store.slug} sees rows of ${other.slug}`,
+          );
+          assert.ok(
+            [0, null].includes(await visible(app, null, table, other.id)),
+            `${table}: rows visible without a tenant context`,
+          );
+        }
+      // The fixtures put rows of both stores in the tables the routes of the matrix touch.
+      for (const table of [
+        "catalog_flavors",
+        "customer_addresses",
+        "customers",
+        "image_assets",
+        "legal_documents",
+        "memberships",
+        "order_incidents",
+        "orders",
+        "staff_invites",
+      ])
+        assert.ok(seeded.includes(table), `${table} has fixture rows`);
     });
 
     it("the owner is subject to the policies too (FORCE)", async () => {

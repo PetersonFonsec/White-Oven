@@ -44,6 +44,7 @@ describe("loadConfig", () => {
         adminOrigins: [],
       },
       push: { delivery: "disabled", expoAccessToken: null },
+      trustedProxies: [],
     });
   });
 
@@ -169,6 +170,18 @@ describe("loadConfig", () => {
     assert.deepEqual(problems, [
       "MIKRO_ORM_* variables are not supported; use DATABASE_URL",
     ]);
+  });
+
+  it("trusts X-Forwarded-For only from the exact proxy addresses of API_TRUSTED_PROXIES", () => {
+    assert.deepEqual(
+      loadConfig({ ...base, API_TRUSTED_PROXIES: " 172.30.87.4 , ::1" })
+        .trustedProxies,
+      ["172.30.87.4", "::1"],
+    );
+    for (const value of ["172.30.0.0/16", "caddy", "*"])
+      assert.deepEqual(problemsOf({ API_TRUSTED_PROXIES: value }), [
+        "API_TRUSTED_PROXIES must be a comma-separated list of IP addresses",
+      ]);
   });
 
   it("keeps push delivery off unless PUSH_DELIVERY=expo, with an optional Expo token", () => {

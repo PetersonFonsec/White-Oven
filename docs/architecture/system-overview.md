@@ -157,9 +157,9 @@ A autenticação própria é pequena e bem conhecida, desde que siga as regras a
 ### Proteção de endpoints
 
 - Validação de entrada por esquema em toda rota, rejeitando campos desconhecidos (padrão já adotado em `packages/contracts`).
-- Rate limit por IP e por conta em login, refresh, recuperação de senha e criação de pedido; armazenamento em memória enquanto houver uma instância, revisto antes de escalar horizontalmente (mesmo limite registrado no ADR 0002).
+- Rate limit por IP e por conta em login, refresh, recuperação de senha e criação de pedido; armazenamento em memória enquanto houver uma instância, revisto antes de escalar horizontalmente (mesmo limite registrado no ADR 0002). Implementado em M7.3 ([ADR 0031](../adr/0031-security-review.md)): bloqueio progressivo de falhas no login e limites por requisição em refresh, cadastro e pedidos; o IP vem do par TCP ou de um proxy listado em `API_TRUSTED_PROXIES`. Recuperação de senha ainda não existe (Q-12).
 - CORS restrito às origens do painel; o aplicativo nativo não depende de CORS.
-- Cabeçalhos de segurança no reverse proxy, limites de corpo e tempo de leitura.
+- Cabeçalhos de segurança no reverse proxy, limites de corpo e tempo de leitura. A API também põe os seus em toda resposta (CSP sem fontes, `nosniff`, `X-Frame-Options`, `Referrer-Policy`; ADR 0031); HSTS fica no proxy que termina TLS.
 - Upload de imagens: tipos permitidos por assinatura (PNG, JPEG, WebP; SVG só para logotipo após sanitização ou rasterização), tamanho máximo, reprocessamento no servidor, nomes aleatórios e nenhum caminho fornecido pelo cliente.
 
 ### Auditoria

@@ -58,6 +58,7 @@ describe("M1.5 platform operations", databaseSuite, () => {
         adminOrigins: ["https://admin.example.test"],
       },
       push: { delivery: "disabled", expoAccessToken: null },
+      trustedProxies: [],
     };
     platform = new PlatformService(app, testConfig);
   });

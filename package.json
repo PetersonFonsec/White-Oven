@@ -25,6 +25,7 @@
     "api:migrate": "pnpm --filter @whiteoven/api migrate",
     "api:seed-demo": "pnpm --filter @whiteoven/api seed-demo",
     "api:create-operator": "pnpm --filter @whiteoven/api create-operator",
+    "api:check-operators-mfa": "pnpm --filter @whiteoven/api check-operators-mfa",
     "admin:dev": "pnpm --filter @whiteoven/admin dev",
     "admin:build": "pnpm --filter @whiteoven/admin build",
     "mobile:start": "pnpm --filter @whiteoven/mobile start",
