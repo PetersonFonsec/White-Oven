@@ -1,4 +1,5 @@
 import { type KeyObject, createPrivateKey } from "node:crypto";
+import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
 
 export const NODE_ENVS = ["development", "test", "production"] as const;
@@ -17,6 +18,11 @@ export interface ApiConfig {
   database: DatabaseConfig;
   auth: AuthConfig;
   push: PushConfig;
+  /**
+   * Exact addresses of the reverse proxies allowed to set `X-Forwarded-For` (ADR 0031). Empty:
+   * the client IP is always the TCP peer.
+   */
+  trustedProxies: readonly string[];
 }
 
 export const PUSH_DELIVERIES = ["disabled", "expo"] as const;
@@ -165,6 +171,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
       problems.push("EXPO_ACCESS_TOKEN must be an Expo access token");
   }
 
+  const trustedProxies = (env.API_TRUSTED_PROXIES ?? "")
+    .split(",")
+    .map((address) => address.trim())
+    .filter((address) => address !== "");
+  // Exact addresses only: a CIDR or a name would trust whoever ends up behind it.
+  if (trustedProxies.some((address) => isIP(address) === 0))
+    problems.push(
+      "API_TRUSTED_PROXIES must be a comma-separated list of IP addresses",
+    );
+
   if (problems.length > 0) throw new ConfigError(problems);
   return Object.freeze({
     nodeEnv,
@@ -176,6 +192,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
     database: Object.freeze({ url: databaseUrl, poolMax }),
     auth: Object.freeze(auth),
     push: Object.freeze({ delivery: pushDelivery, expoAccessToken }),
+    trustedProxies: Object.freeze(trustedProxies),
   });
 }
 

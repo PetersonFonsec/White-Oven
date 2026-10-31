@@ -2,6 +2,31 @@ import type { NestExpressApplication } from "@nestjs/platform-express";
 import { type CreateAppOptions, createApp } from "../src/app";
 import { type ApiConfig, loadConfig } from "../src/config/config";
 import { JsonLogger } from "../src/logging/json-logger";
+import {
+  LIMIT_POLICIES,
+  type LimitPolicy,
+  RequestLimits,
+} from "../src/security/request-limits";
+
+/**
+ * The production limit names and scopes without a ceiling: suites that are not about rate
+ * limits send hundreds of requests from 127.0.0.1. security.test.ts passes real ceilings.
+ */
+export const unlimitedRequestLimits = () =>
+  new RequestLimits(
+    Date.now,
+    Object.fromEntries(
+      Object.entries(LIMIT_POLICIES).map(([name, policy]) => [
+        name,
+        Object.fromEntries(
+          Object.keys(policy).map((scope) => [
+            scope,
+            { max: Number.POSITIVE_INFINITY, windowMs: 60_000 },
+          ]),
+        ) as LimitPolicy,
+      ]),
+    ),
+  );
 
 export interface TestServer {
   app: NestExpressApplication;
@@ -28,7 +53,11 @@ export async function startTestServer(
   const logger = new JsonLogger(config.logLevel, (line) =>
     logs.push(JSON.parse(line)),
   );
-  const app = await createApp(config, { ...options, logger });
+  const app = await createApp(config, {
+    requestLimits: unlimitedRequestLimits(),
+    ...options,
+    logger,
+  });
   await app.listen(0, "127.0.0.1");
   const address = app.getHttpServer().address();
   if (!address || typeof address === "string")

@@ -149,6 +149,7 @@ describe(
           adminOrigins: ["https://admin.example.test"],
         },
         push: { delivery: "disabled", expoAccessToken: null },
+        trustedProxies: [],
       };
       platform = new PlatformService(app, config);
       server = await startTestServer({

@@ -20,6 +20,7 @@ import { PASSWORD_MAX_LENGTH } from "../auth/password";
 import { CustomerAuth } from "../customer/customer-auth.service";
 import { normalizeEmail } from "../customer/customer-rules";
 import { ApiError } from "../errors/api-error";
+import { clientIpOf } from "../security/http-security";
 import { JsonLogger } from "../logging/json-logger";
 import { requestIdOf } from "../logging/request-context";
 import { describeError } from "../logging/sanitize";
@@ -177,7 +178,7 @@ export class LegalPagesController {
         "incomplete",
         HttpStatus.UNPROCESSABLE_ENTITY,
       );
-    const ip = req.socket.remoteAddress ?? "unknown";
+    const ip = clientIpOf(req);
     const wait = this.auth.loginRetryAfterSeconds(email, ip);
     if (wait > 0) {
       res.setHeader("Retry-After", String(wait));

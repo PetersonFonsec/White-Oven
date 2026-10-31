@@ -23,6 +23,7 @@ import {
 } from "@nestjs/swagger";
 import type { Request, Response } from "express";
 import { ApiError } from "../errors/api-error";
+import { clientIpOf } from "../security/http-security";
 import { requestIdOf } from "../logging/request-context";
 import { CurrentStaff, PlatformRoute } from "../auth/staff.guard";
 import type { StaffPrincipal } from "../auth/staff.guard";
@@ -141,7 +142,7 @@ export class PlatformController {
       staff.access.staffUserId,
       staff.access.sessionId,
       requestIdOf(req),
-      req.ip ?? "",
+      clientIpOf(req),
     );
   }
 
@@ -164,7 +165,7 @@ export class PlatformController {
       staff.access.staffUserId,
       staff.access.sessionId,
       requestIdOf(req),
-      req.ip ?? "",
+      clientIpOf(req),
     );
   }
 
@@ -202,7 +203,7 @@ export class PlatformController {
       staff.access.staffUserId,
       staff.access.sessionId,
       requestIdOf(req),
-      req.ip ?? "",
+      clientIpOf(req),
     );
   }
 }
@@ -294,7 +295,7 @@ export class PlatformBillingController {
       staff.access.staffUserId,
       staff.access.sessionId,
       requestIdOf(req),
-      req.ip ?? "",
+      clientIpOf(req),
     );
     res.status(result.changed ? HttpStatus.CREATED : HttpStatus.OK);
     return result;
@@ -345,7 +346,7 @@ export class PlatformLegalController {
       staff.access.staffUserId,
       staff.access.sessionId,
       requestIdOf(req),
-      req.ip ?? "",
+      clientIpOf(req),
     );
     res.status(result.changed ? HttpStatus.CREATED : HttpStatus.OK);
     return result;
@@ -389,7 +390,7 @@ export class PlatformOperatorController {
       staff.access.staffUserId,
       staff.access.sessionId,
       requestIdOf(req),
-      req.ip ?? "",
+      clientIpOf(req),
     );
   }
 }

@@ -511,3 +511,30 @@ test("secure record: concurrent writes and removals run one at a time", async ()
   assert.equal(await record.read(), "🍕 final");
   h.clean("s");
 });
+
+test("a rate-limited refresh keeps the unspent token; other failures still consume it", async () => {
+  const saved = secret();
+  let answer = () =>
+    Response.json(
+      { code: "RATE_LIMITED", message: "Too many requests." },
+      { status: 429, headers: { "Retry-After": "60" } },
+    );
+  const client = createCustomerClient({
+    apiUrl: "https://api.test",
+    storeSlug: "loja-a",
+    secret: saved,
+    fetch: async (url) => {
+      assert.ok(String(url).endsWith("auth/refresh"));
+      return answer();
+    },
+  });
+  await assert.rejects(
+    client.restore(),
+    (error: unknown) =>
+      error instanceof CustomerError && error.code === "RATE_LIMITED",
+  );
+  assert.equal(saved.value, "old-refresh", "the API never read the token");
+  answer = () => Response.json({ code: "UNAUTHORIZED" }, { status: 401 });
+  await assert.rejects(client.restore());
+  assert.equal(saved.value, null, "a refused token is not kept");
+});

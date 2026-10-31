@@ -4,6 +4,7 @@ import {
   Headers,
   HttpStatus,
   Post,
+  Req,
   Res,
   HttpCode,
   Param,
@@ -17,11 +18,15 @@ import {
   ApiProperty,
   ApiPropertyOptional,
   ApiTags,
+  ApiTooManyRequestsResponse,
   OmitType,
 } from "@nestjs/swagger";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { BILLING_PERIOD } from "../billing/billing-report";
-import { ApiError } from "../errors/api-error";
+import { ApiError, ApiErrorBody } from "../errors/api-error";
+import { clientIpOf } from "../security/http-security";
+import { RequestLimits, enforceLimit } from "../security/request-limits";
+import { currentTenantContext } from "../tenancy/tenant-context";
 import { CustomerRoute } from "../customer/customer.guard";
 import {
   FULFILLMENTS,
@@ -180,7 +185,29 @@ function parseCustomerOrderCursor(
 @ApiTags("customer")
 @Controller("customer/stores/:storeSlug/me/orders")
 export class OrderController {
-  constructor(private readonly orders: OrderService) {}
+  constructor(
+    private readonly orders: OrderService,
+    private readonly limits: RequestLimits,
+  ) {}
+
+  /** Per customer and per IP in the store, after the session guard (ADR 0031). */
+  private limit(
+    name: "orderQuote" | "orderCreate",
+    req: Request,
+    res: Response,
+  ): void {
+    const { tenantId, actor } = currentTenantContext();
+    const account = actor.type === "customer" ? actor.customerId : "";
+    enforceLimit(
+      this.limits,
+      name,
+      {
+        account: `${tenantId}\0${account}`,
+        storeIp: `${tenantId}\0${clientIpOf(req)}`,
+      },
+      res,
+    );
+  }
 
   @Get()
   @CustomerRoute()
@@ -222,7 +249,13 @@ export class OrderController {
     description:
       "409 STORE_CLOSED or STORE_NOT_CONFIGURED; 422 ORDER_INVALID with the offending paths (ORDER_TOTAL_EXCEEDED above maxTotalCents).",
   })
-  quote(@Body() raw: unknown, @Res({ passthrough: true }) res: Response) {
+  @ApiTooManyRequestsResponse({ type: ApiErrorBody })
+  quote(
+    @Body() raw: unknown,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    this.limit("orderQuote", req, res);
     const result = validateOrderRequest(raw);
     if (!result.ok) throw invalid(result.paths);
     res.setHeader("Cache-Control", "no-store");
@@ -243,11 +276,14 @@ export class OrderController {
     description:
       "201 when created; 200 with the same order when the key and body repeat, even if prices changed since. 422 VALIDATION_FAILED without a valid expectedTotalCents; 409 IDEMPOTENCY_CONFLICT when the key was used for another body, ORDER_PRICE_CHANGED when expectedTotalCents differs from the server total (nothing is created).",
   })
+  @ApiTooManyRequestsResponse({ type: ApiErrorBody })
   async create(
     @Body() raw: unknown,
     @Headers("idempotency-key") key: string | undefined,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
+    this.limit("orderCreate", req, res);
     const result = validateOrderRequest(raw, { requireExpectedTotal: true });
     const paths = [
       ...(typeof key === "string" && UUID.test(key) ? [] : ["Idempotency-Key"]),

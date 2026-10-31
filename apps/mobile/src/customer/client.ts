@@ -141,15 +141,29 @@ export function createCustomerClient(options: {
       if (replaced) throw new CustomerError(401, "LOGIN_REQUIRED");
       const saved = await options.secret.read();
       if (!saved) throw new CustomerError(401, "LOGIN_REQUIRED");
+      const owner = identity;
       // Consume before rotation: a lost response must never replay a spent refresh token.
       await options.secret.remove();
-      await accept(
-        await raw(
+      let rotated: unknown;
+      try {
+        rotated = await raw(
           "auth/refresh",
           "POST",
           JSON.stringify({ refreshToken: saved }),
-        ),
-      );
+        );
+      } catch (error) {
+        // 429 is answered before the API reads the token (ADR 0031): it was not spent, so keep
+        // it, unless a sign-in or logout took over the session meanwhile.
+        if (
+          error instanceof CustomerError &&
+          error.status === 429 &&
+          !replaced &&
+          owner === identity
+        )
+          await persist(() => options.secret.write(saved));
+        throw error;
+      }
+      await accept(rotated);
     })().finally(() => {
       refreshing = null;
     });

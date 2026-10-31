@@ -1,6 +1,6 @@
 # Isolamento de tenants
 
-Status: especificação M0.3, implementada em M1.3 ([ADR 0006](../adr/0006-tenant-isolation.md)): `tenants`, `TenantContext`, guard por slug, `set_config(..., true)` por transação, RLS forçado, filtro global e testes 1–6. O teste 7 (revogação) foi implementado em M1.4 com `Membership` e tokens de equipe ([ADR 0007](../adr/0007-staff-authentication.md)). Define como a API garante que uma pizzaria nunca leia nem altere dados de outra. Esta estratégia é pré-requisito de qualquer fluxo de negócio (M1.3 no [roadmap](mvp-roadmap.md)).
+Status: especificação M0.3, implementada em M1.3 ([ADR 0006](../adr/0006-tenant-isolation.md)): `tenants`, `TenantContext`, guard por slug, `set_config(..., true)` por transação, RLS forçado, filtro global e testes 1–6. O teste 7 (revogação) foi implementado em M1.4 com `Membership` e tokens de equipe ([ADR 0007](../adr/0007-staff-authentication.md)). Define como a API garante que uma pizzaria nunca leia nem altere dados de outra. Esta estratégia é pré-requisito de qualquer fluxo de negócio (M1.3 no [roadmap](mvp-roadmap.md)). Em M7.3 ([ADR 0031](../adr/0031-security-review.md)) a matriz de rotas foi completada e um teste confere, em toda tabela com `tenant_id`, que o papel da aplicação não vê linhas de outra loja nem linhas sem contexto.
 
 ## Decisão
 

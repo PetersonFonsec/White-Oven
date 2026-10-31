@@ -17,11 +17,15 @@ import {
   ApiProperty,
   ApiPropertyOptional,
   ApiTags,
+  ApiTooManyRequestsResponse,
 } from "@nestjs/swagger";
 import type { Request, Response } from "express";
 import { PASSWORD_MAX_LENGTH } from "../auth/password";
-import { ApiError } from "../errors/api-error";
+import { ApiError, ApiErrorBody } from "../errors/api-error";
+import { clientIpOf } from "../security/http-security";
+import { RequestLimits, enforceLimit } from "../security/request-limits";
 import { StoreTenant } from "../tenancy/store-tenant.guard";
+import { currentTenantContext } from "../tenancy/tenant-context";
 import { CustomerAddresses } from "./customer-address.service";
 import { CustomerAuth, type CustomerTokens } from "./customer-auth.service";
 import { CustomerRoute } from "./customer.guard";
@@ -114,8 +118,6 @@ function strings<K extends string>(
 const boundedPassword = (password: string) =>
   password.length <= PASSWORD_MAX_LENGTH * 4 ? password : "";
 
-const clientIp = (req: Request) => req.socket.remoteAddress ?? "unknown";
-
 /**
  * Customer accounts of a store (M4.2, ADR 0017). Sign-up, sign-in, refresh and logout resolve
  * the store from the slug; everything under `me` needs a customer token of that same store. The
@@ -128,7 +130,19 @@ export class CustomerController {
   constructor(
     private readonly auth: CustomerAuth,
     private readonly addresses: CustomerAddresses,
+    private readonly limits: RequestLimits,
   ) {}
+
+  /** Per IP in this store and per IP across stores (ADR 0031). */
+  private limitByIp(
+    name: "customerSignup" | "customerRefresh",
+    req: Request,
+    res: Response,
+  ): void {
+    const ip = clientIpOf(req);
+    const storeIp = `${currentTenantContext().tenantId}\0${ip}`;
+    enforceLimit(this.limits, name, { storeIp, ip }, res);
+  }
 
   @Post("auth/register")
   @StoreTenant("customerSignup")
@@ -138,10 +152,13 @@ export class CustomerController {
     description:
       "409 EMAIL_TAKEN or PHONE_TAKEN when another account of this store has it; 409 LEGAL_VERSION_OUTDATED (details: current versions) when a version is not the current one; 409 LEGAL_DOCUMENTS_UNAVAILABLE until the store publishes both documents.",
   })
+  @ApiTooManyRequestsResponse({ type: ApiErrorBody })
   async register(
     @Body() raw: unknown,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<CustomerTokens> {
+    this.limitByIp("customerSignup", req, res);
     const result = validateRegistration(raw);
     if (!result.ok) throw invalid(result.paths);
     res.setHeader("Cache-Control", "no-store");
@@ -160,7 +177,7 @@ export class CustomerController {
   ): Promise<CustomerTokens> {
     const fields = strings(raw, ["email", "password"] as const);
     const email = normalizeEmail(fields.email);
-    const ip = clientIp(req);
+    const ip = clientIpOf(req);
     const wait = this.auth.loginRetryAfterSeconds(email, ip);
     if (wait > 0) {
       res.setHeader("Retry-After", String(wait));
@@ -183,10 +200,13 @@ export class CustomerController {
     description:
       "Presenting an already rotated token revokes the whole session.",
   })
+  @ApiTooManyRequestsResponse({ type: ApiErrorBody })
   refresh(
     @Body() raw: unknown,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<CustomerTokens> {
+    this.limitByIp("customerRefresh", req, res);
     const { refreshToken } = strings(raw, ["refreshToken"] as const);
     res.setHeader("Cache-Control", "no-store");
     return this.auth.refresh(refreshToken);
