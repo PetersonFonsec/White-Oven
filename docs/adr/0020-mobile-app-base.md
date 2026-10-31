@@ -83,6 +83,6 @@ A [ADR 0014](0014-brand-theme.md) deixou para M5.1 o endpoint público de marca.
 
 ## Consequências
 
-- Uma loja nova no app precisa de manifesto e ícone no repositório. A automação do build fica para M5.6.
+- Uma loja nova no app precisa de manifesto e ícone no repositório. O build por loja ficou com a M5.6 ([ADR 0028](0028-mobile-build-publishing.md)).
 - O nome dentro do app vem da API (`tenants.display_name`). O nome sob o ícone é o do manifesto e só muda com outro build.
 - O ícone e as cores de fallback são da build. Uma marca nova aparece pela API, sem build.

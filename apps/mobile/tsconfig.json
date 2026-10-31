@@ -8,5 +8,5 @@
     "erasableSyntaxOnly": true,
     "types": ["node"]
   },
-  "include": ["app.config.ts", "index.ts", "App.tsx", "src", "tests"]
+  "include": ["app.config.ts", "index.ts", "App.tsx", "src", "tests", "scripts"]
 }

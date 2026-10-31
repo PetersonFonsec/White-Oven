@@ -1,0 +1,51 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote",
+    "requireCommit": true,
+    "promptToConfigurePushNotifications": false
+  },
+  "build": {
+    "base": {
+      "node": "22.23.2",
+      "pnpm": "11.25.0"
+    },
+    "preview": {
+      "extends": "base",
+      "distribution": "internal",
+      "environment": "preview",
+      "env": { "WHITEOVEN_RELEASE": "preview" },
+      "android": { "buildType": "apk" }
+    },
+    "production": {
+      "extends": "base",
+      "distribution": "store",
+      "environment": "production",
+      "autoIncrement": true,
+      "env": { "WHITEOVEN_RELEASE": "store" },
+      "android": { "buildType": "app-bundle" }
+    },
+    "pizzaria-bairro-preview": {
+      "extends": "preview",
+      "env": { "WHITEOVEN_TENANT": "pizzaria-bairro" }
+    },
+    "pizzaria-bairro-production": {
+      "extends": "production",
+      "env": { "WHITEOVEN_TENANT": "pizzaria-bairro" }
+    },
+    "pizzaria-centro-preview": {
+      "extends": "preview",
+      "env": { "WHITEOVEN_TENANT": "pizzaria-centro" }
+    },
+    "pizzaria-centro-production": {
+      "extends": "production",
+      "env": { "WHITEOVEN_TENANT": "pizzaria-centro" }
+    }
+  },
+  "submit": {
+    "production": {
+      "android": { "track": "internal", "releaseStatus": "draft" },
+      "ios": { "language": "pt-BR" }
+    }
+  }
+}
