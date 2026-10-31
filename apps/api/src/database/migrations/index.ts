@@ -21,6 +21,7 @@ import { Migration20261102000000_plan_subscriptions } from "./Migration202611020
 import { Migration20261103000000_billing_ledger } from "./Migration20261103000000_billing_ledger";
 import { Migration20261104000000_customer_push } from "./Migration20261104000000_customer_push";
 import { Migration20261105000000_customer_erasures } from "./Migration20261105000000_customer_erasures";
+import { Migration20261106000000_legal_documents } from "./Migration20261106000000_legal_documents";
 
 /**
  * Explicit, ordered list: no folder discovery at runtime. Names are stored in
@@ -114,5 +115,9 @@ export const MIGRATIONS: MigrationObject[] = [
   {
     name: "Migration20261105000000_customer_erasures",
     class: Migration20261105000000_customer_erasures,
+  },
+  {
+    name: "Migration20261106000000_legal_documents",
+    class: Migration20261106000000_legal_documents,
   },
 ];

@@ -5,6 +5,17 @@ import { createOrm } from "./orm";
 
 const SEED_KEY = "whiteoven-admin-demo-v1";
 const DEMO_TENANT = "whiteoven-demo";
+const DEMO_LEGAL_VERSION = "demo-2026-11";
+const DEMO_LEGAL_DOCUMENTS = [
+  [
+    "PRIVACY_POLICY",
+    "## Ambiente demonstrativo\n\nEste texto existe só para testar o WhiteOven com dados fictícios. Não é a política de privacidade de nenhuma pizzaria real e não pode ser usado com clientes reais.",
+  ],
+  [
+    "TERMS_OF_USE",
+    "## Ambiente demonstrativo\n\nEstes termos existem só para testar o WhiteOven com dados fictícios. Não valem para nenhuma pizzaria real.",
+  ],
+] as const;
 const DEMO_PROFILES = [
   { role: "OWNER", email: "owner@whiteoven.local", name: "Demo Owner" },
   { role: "MANAGER", email: "manager@whiteoven.local", name: "Demo Manager" },
@@ -209,6 +220,16 @@ export async function seedDemo(env: NodeJS.ProcessEnv = process.env) {
         [tenantId],
       );
       records.planSubscription = subscription!.id;
+      // Demonstration text only (ADR 0030): the `demo-` version is refused by a store build and
+      // by the onboarding checklist, so it never reaches real customers.
+      for (const [kind, body] of DEMO_LEGAL_DOCUMENTS) {
+        const [document] = await em.execute<{ id: string }[]>(
+          `insert into legal_documents (tenant_id,kind,version,revision,body,body_sha256)
+           values (?,?,?,1,?,sha256(convert_to(?,'UTF8'))) returning id`,
+          [tenantId, kind, DEMO_LEGAL_VERSION, body, body],
+        );
+        records[`legal:${kind}`] = document!.id;
+      }
       await em.execute(
         "insert into demo_seed_manifest (seed_key,demo_tenant_id,records) values (?,?,?::jsonb)",
         [SEED_KEY, tenantId, JSON.stringify(records)],

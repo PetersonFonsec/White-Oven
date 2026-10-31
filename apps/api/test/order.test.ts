@@ -115,6 +115,7 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
           password: PASSWORD,
           phone: `+55119${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`,
           privacyPolicyVersion: "2026-10",
+          termsOfUseVersion: "2026-10",
         }),
       },
     );

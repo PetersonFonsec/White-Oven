@@ -5,29 +5,7 @@ import { type BrandColors, parseBrandColors } from "../brand/colors.ts";
  * code base. The binary knows only its store slug; name shown inside the app, colors and status
  * come from the API at runtime. Icon and bundle ids are build-time, as the stores require.
  */
-export interface CustomerPrivacyPolicy {
-  version: string;
-  text: string;
-}
-
-function privacyPolicy(raw: unknown): CustomerPrivacyPolicy | undefined {
-  if (raw === undefined) return undefined;
-  const value = raw as Partial<CustomerPrivacyPolicy> | null;
-  if (
-    !value ||
-    typeof value.version !== "string" ||
-    !value.version.trim() ||
-    value.version.length > 40 ||
-    typeof value.text !== "string" ||
-    !value.text.trim() ||
-    value.text.length > 20000
-  )
-    throw new ManifestError(["privacyPolicy"]);
-  return { version: value.version, text: value.text };
-}
-
 export interface TenantManifest {
-  privacyPolicy?: CustomerPrivacyPolicy;
   /** The store's slug in `/v1/public/stores/{slug}`. */
   slug: string;
   /** App name on the home screen and in the stores. */
@@ -56,7 +34,6 @@ export interface TenantManifest {
 
 /** What the running app reads from `expo-constants` (`extra.whiteoven`). */
 export interface AppRuntimeConfig {
-  privacyPolicy?: CustomerPrivacyPolicy;
   storeSlug: string;
   storeName: string;
   apiUrl: string;
@@ -143,17 +120,16 @@ export function parseManifest(value: unknown): TenantManifest {
     "icon",
     "iconBackgroundColor",
     "fallbackColors",
-    "privacyPolicy",
     "easProjectId",
     "expoOwner",
   ];
   for (const key of Object.keys(record))
-    if (!known.includes(key)) problems.push(`${key} (unknown)`);
+    if (key === "privacyPolicy")
+      // M7.2 (ADR 0030): the store's texts are published on the API, never built into the app.
+      problems.push("privacyPolicy (published on the API since M7.2)");
+    else if (!known.includes(key)) problems.push(`${key} (unknown)`);
   if (problems.length) throw new ManifestError(problems);
   return {
-    ...(record["privacyPolicy"] === undefined
-      ? {}
-      : { privacyPolicy: privacyPolicy(record["privacyPolicy"]) }),
     slug,
     name,
     version,
@@ -197,9 +173,6 @@ export function parseApiUrl(value: string): string {
  */
 export function buildAppConfig(manifest: TenantManifest, apiUrl: string) {
   const runtime: AppRuntimeConfig = {
-    ...(manifest.privacyPolicy
-      ? { privacyPolicy: manifest.privacyPolicy }
-      : {}),
     storeSlug: manifest.slug,
     storeName: manifest.name,
     apiUrl: parseApiUrl(apiUrl),
@@ -247,7 +220,6 @@ export function parseRuntimeConfig(extra: unknown): AppRuntimeConfig | null {
   if (!value || typeof value !== "object") return null;
   const fallbackColors = parseBrandColors(value.fallbackColors);
   try {
-    privacyPolicy(value.privacyPolicy);
     if (
       typeof value.storeSlug !== "string" ||
       !STORE_SLUG.test(value.storeSlug) ||
@@ -265,9 +237,6 @@ export function parseRuntimeConfig(extra: unknown): AppRuntimeConfig | null {
     return null;
   }
   return {
-    ...(value.privacyPolicy
-      ? { privacyPolicy: privacyPolicy(value.privacyPolicy) }
-      : {}),
     storeSlug: value.storeSlug,
     storeName: value.storeName,
     apiUrl: value.apiUrl,

@@ -92,7 +92,7 @@ export type Destination =
   | "cart"
   | null;
 
-const destinationKind = (destination: Destination) =>
+export const destinationKind = (destination: Destination) =>
   typeof destination === "string" ? destination : (destination?.kind ?? null);
 
 /**

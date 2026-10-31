@@ -3,6 +3,7 @@ import type { TenantStatus } from "./tenant.entity";
 
 export type TenantCapability =
   | "publicMenu"
+  | "legalRead"
   | "createOrder"
   | "customerAccount"
   | "customerSignup"
@@ -42,6 +43,11 @@ export const TenantStatusPolicy = {
         return (
           status === "ACTIVE" && (actor === "PUBLIC" || actor === "CUSTOMER")
         );
+      // The privacy policy, the terms and the account deletion page stay readable in every
+      // status (ADR 0030): customers keep their rights after a suspension or a closure, and the
+      // app stores need the URLs before the store goes live.
+      case "legalRead":
+        return actor === "PUBLIC";
       case "createOrder":
         return status === "ACTIVE" && actor === "CUSTOMER";
       case "customerAccount":

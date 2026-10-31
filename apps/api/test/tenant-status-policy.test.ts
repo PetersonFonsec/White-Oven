@@ -28,6 +28,12 @@ const expected: Record<
   Partial<Record<TenantStatus, readonly TenantActor[]>>
 > = {
   publicMenu: { ACTIVE: ["PUBLIC", "CUSTOMER"] },
+  legalRead: {
+    ONBOARDING: ["PUBLIC"],
+    ACTIVE: ["PUBLIC"],
+    SUSPENDED: ["PUBLIC"],
+    CLOSED: ["PUBLIC"],
+  },
   createOrder: { ACTIVE: ["CUSTOMER"] },
   customerAccount: {
     ACTIVE: ["CUSTOMER"],

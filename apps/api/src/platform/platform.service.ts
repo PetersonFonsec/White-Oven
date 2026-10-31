@@ -12,6 +12,10 @@ import {
   type ReportEntry,
   reportMonth,
 } from "../billing/billing-report";
+import {
+  type LegalDocumentKind,
+  legalDocumentProblems,
+} from "@whiteoven/contracts";
 
 const slugFormat = /^[a-z0-9-]{3,40}$/;
 const emailFormat = /^[^\s@]{1,64}@[a-z0-9.-]{1,189}\.[a-z]{2,}$/i;
@@ -67,6 +71,12 @@ function mapPlatformError(error: unknown): unknown {
       HttpStatus.CONFLICT,
       "BILLING_ENTRY_SNAPSHOT_INCOMPLETE",
       "This billing entry has no plan snapshot and cannot be reversed.",
+    );
+  if (code === "P0010")
+    return new ApiError(
+      HttpStatus.CONFLICT,
+      "LEGAL_VERSION_CONFLICT",
+      "This version was already published with another text. Publish it under a new version.",
     );
   if (code === "22023") return invalid();
   if (code === "P0003")
@@ -127,6 +137,18 @@ export interface PlanChange {
   validFrom: Date;
   /** False when the requested plan was already current or scheduled. */
   changed: boolean;
+}
+
+export interface PublishedLegalDocument {
+  id: string;
+  kind: LegalDocumentKind;
+  version: string;
+  /** 1, 2, … per store and kind; the highest is the current text. */
+  revision: number;
+  publishedAt: Date;
+}
+export interface LegalDocumentVersion extends PublishedLegalDocument {
+  body: string;
 }
 
 export const REVERSAL_REASONS = [
@@ -202,6 +224,65 @@ export class PlatformService {
         };
       });
     });
+  }
+
+  /** Every published version of a store's legal documents, newest revision first per kind. */
+  async listLegalDocuments(
+    tenantId: string,
+    actorId: string,
+    sessionId: string,
+  ): Promise<LegalDocumentVersion[]> {
+    if (!uuidFormat.test(tenantId)) throw invalid();
+    try {
+      return await this.orm.em.fork().transactional((em) =>
+        em.execute<LegalDocumentVersion[]>(
+          `select id, kind, version, revision, body, published_at as "publishedAt"
+             from whiteoven_platform_legal_documents(?, ?, ?)`,
+          [tenantId, actorId, sessionId],
+        ),
+      );
+    } catch (error) {
+      throw mapPlatformError(error);
+    }
+  }
+
+  /**
+   * Publishes the text the store's counsel approved as the new current version (ADR 0030).
+   * Repeating a publication with the same version and text changes nothing.
+   */
+  async publishLegalDocument(
+    tenantId: string,
+    input: { kind: unknown; version: unknown; body: unknown },
+    actorId: string,
+    sessionId: string,
+    requestId: string,
+    ip: string,
+  ): Promise<PublishedLegalDocument & { changed: boolean }> {
+    if (!uuidFormat.test(tenantId) || legalDocumentProblems(input).length)
+      throw invalid();
+    let row: (PublishedLegalDocument & { changed: boolean }) | undefined;
+    try {
+      [row] = await this.orm.em.fork().transactional((em) =>
+        em.execute<(PublishedLegalDocument & { changed: boolean })[]>(
+          `select id, kind, version, revision, published_at as "publishedAt", changed
+               from whiteoven_publish_legal_document(?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            tenantId,
+            input.kind,
+            input.version,
+            input.body,
+            actorId,
+            sessionId,
+            this.ipHash(ip),
+            this.requestUuid(requestId),
+          ],
+        ),
+      );
+    } catch (error) {
+      throw mapPlatformError(error);
+    }
+    if (!row) throw new Error("legal publication returned no row");
+    return row;
   }
 
   async listPlans(actorId: string, sessionId: string): Promise<Plan[]> {

@@ -9,6 +9,8 @@
  *   `WHITEOVEN_API_URL` there (needs an EXPO_TOKEN or a logged-in EAS CLI). Only the exit
  *   status of the CLI is read; its output is discarded. Without it, a
  *   `WHITEOVEN_API_URL` in the shell is checked instead, and otherwise only the worker checks.
+ * - for a `store` build, the API checked above must serve the store's privacy policy and terms
+ *   of use, neither of them demonstration text (ADR 0030).
  *
  * With `GITHUB_OUTPUT` set, writes `build_profile`, `submit_profile` and `eas_environment`.
  */
@@ -20,6 +22,7 @@ import { STORE_SLUG, parseManifest } from "../src/config/manifest.ts";
 import {
   apiUrlReleaseProblems,
   easProfileName,
+  fetchLegalReleaseProblems,
   manifestReleaseProblems,
   parseReleaseKind,
 } from "../src/config/release.ts";
@@ -101,6 +104,7 @@ if (eas && !problems.length) {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     WHITEOVEN_TENANT: slug,
+    WHITEOVEN_RELEASE: kind!,
   };
   delete env["WHITEOVEN_API_URL"];
   const inner =
@@ -116,6 +120,10 @@ if (eas && !problems.length) {
   else apiChecked = true;
 } else if (!eas && process.env.WHITEOVEN_API_URL) {
   problems.push(...apiUrlReleaseProblems(process.env.WHITEOVEN_API_URL));
+  if (!problems.length && kind === "store")
+    problems.push(
+      ...(await fetchLegalReleaseProblems(process.env.WHITEOVEN_API_URL, slug)),
+    );
   apiChecked = !problems.length;
 }
 
@@ -133,5 +141,10 @@ console.log(
   `${slug} is ready for a ${kind} build (${platform}) with the EAS profile ${build.profile}` +
     (submission ? ` and the submit profile ${submission.profile}` : "") +
     "." +
-    (apiChecked ? "" : " WHITEOVEN_API_URL is checked on the EAS worker."),
+    (apiChecked
+      ? ""
+      : " WHITEOVEN_API_URL is checked on the EAS worker" +
+        (kind === "store"
+          ? "; run with --eas to check the store's legal documents on that API."
+          : ".")),
 );

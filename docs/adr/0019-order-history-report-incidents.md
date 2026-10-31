@@ -81,6 +81,6 @@ Três pontos não estavam decididos: o que é "dia" no histórico e no relatóri
   - `order_status_changes (tenant_id, at) where to_status = 'COMPLETED'`, para o relatório;
   - `order_incidents (tenant_id, order_id, created_at)`.
 - O relatório é por dia civil. Uma pizzaria que fecha às 2h vê as vendas da madrugada no dia seguinte. Se o piloto pedir o dia operacional, ele pode ser um parâmetro novo sem mudar dados.
-- A descrição das ocorrências continua depois da exclusão da conta do cliente, porque a anonimização da [ADR 0017](0017-customer-identity.md) cobre os campos do pedido, não texto livre da equipe. Fica para a revisão de privacidade da M7.2.
+- A descrição das ocorrências continua depois da exclusão da conta do cliente, porque a anonimização da [ADR 0017](0017-customer-identity.md) cobre os campos do pedido, não texto livre da equipe. Fica para a revisão de privacidade da M7.2; a [ADR 0030](0030-legal-documents.md) deixa a decisão com o jurídico (Pendências, item 4).
 - O nome do autor é o atual: renomear uma pessoa da equipe muda o nome no histórico antigo. A trilha imutável continua em `audit_events`, pelo id.
 - O relatório mensal (M6.3) e o ledger (M6.2) seguem separados; esta ADR não muda a base de cobrança.

@@ -157,13 +157,49 @@ export function manifestReleaseProblems(
     problems.push("icon (PNG of 1024 x 1024 px)");
   else if (kind === "store" && image.transparency)
     problems.push("icon (transparency; the App Store refuses it)");
-  if (kind === "store") {
-    if (!manifest.privacyPolicy)
-      problems.push("privacyPolicy (approved text, M7.2)");
-    else if (/^demo-/i.test(manifest.privacyPolicy.version))
-      problems.push("privacyPolicy (demonstration text, M7.2)");
+  return problems;
+}
+
+/**
+ * What the store's legal documents still lack for a store build (ADR 0030), from the answer of
+ * `GET /v1/public/stores/{slug}/legal` on the build's API. The texts live on the API, not in the
+ * binary; a store build waits until both are published and none is demonstration text.
+ */
+export function legalReleaseProblems(answer: unknown): string[] {
+  const value = answer as Record<string, unknown> | null;
+  const problems: string[] = [];
+  for (const [key, label] of [
+    ["privacyPolicy", "privacy policy"],
+    ["termsOfUse", "terms of use"],
+  ] as const) {
+    const document = (value?.[key] ?? null) as { version?: unknown } | null;
+    if (!document || typeof document.version !== "string")
+      problems.push(`${label} (not published on the API, M7.2)`);
+    // Same rule as `isDemonstrationLegalVersion` in @whiteoven/contracts; app.config.ts loads
+    // this file, so it imports nothing outside the app.
+    else if (/^demo-/i.test(document.version))
+      problems.push(`${label} (demonstration text on the API, M7.2)`);
   }
   return problems;
+}
+
+/** Fetches the legal documents of `slug` from `apiUrl` and checks them; never prints values. */
+export async function fetchLegalReleaseProblems(
+  apiUrl: string,
+  slug: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string[]> {
+  try {
+    const response = await fetchImpl(
+      `${parseApiUrl(apiUrl)}/v1/public/stores/${encodeURIComponent(slug)}/legal`,
+      { headers: { accept: "application/json" } },
+    );
+    if (!response.ok)
+      return [`legal documents (the API answered ${response.status})`];
+    return legalReleaseProblems(await response.json());
+  } catch {
+    return ["legal documents (the API could not be reached)"];
+  }
 }
 
 /** A build that leaves the developer's machine calls the real API over HTTPS. */

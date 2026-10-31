@@ -8,6 +8,8 @@ import appConfig from "../app.config.ts";
 import { ManifestError, parseManifest } from "../src/config/manifest.ts";
 import {
   apiUrlReleaseProblems,
+  fetchLegalReleaseProblems,
+  legalReleaseProblems,
   easProfileName,
   manifestReleaseProblems,
   parseReleaseKind,
@@ -73,12 +75,11 @@ const png = (
 const opaqueIcon = png(1024, 1024, 2);
 const palette = [0xb3, 0x26, 0x1e, 0xff, 0xff, 0xff];
 
-/** A store that finished M5.6 and M7.2: EAS project, organization, approved privacy text. */
+/** A store that finished M5.6: EAS project and organization (its texts are on the API, M7.2). */
 const ready = parseManifest({
   ...manifestFile("pizzaria-bairro"),
   easProjectId: "0f3c1a52-6d2e-4b8f-9a77-3f1e2d4c5b6a",
   expoOwner: "whiteoven",
-  privacyPolicy: { version: "2026-11-15", text: "Política aprovada." },
 });
 
 const withEnv = <T>(env: Record<string, string | undefined>, run: () => T) => {
@@ -249,26 +250,19 @@ describe("store builds (ADR 0028)", () => {
   it("lists what a manifest still lacks for each kind of build", () => {
     assert.deepEqual(manifestReleaseProblems(ready, "store", opaqueIcon), []);
     assert.deepEqual(manifestReleaseProblems(ready, "preview", opaqueIcon), []);
-    // The example manifests are demonstrations: no EAS project, demonstration privacy text.
+    // The example manifests are demonstrations: no EAS project.
     const example = parseManifest(manifestFile("pizzaria-bairro"));
     const icon = read(example.icon);
     assert.deepEqual(manifestReleaseProblems(example, "store", icon), [
       "easProjectId (EAS project)",
       "expoOwner (Expo organization)",
       "icon (transparency; the App Store refuses it)",
-      "privacyPolicy (demonstration text, M7.2)",
     ]);
-    // Testers can see the demonstration text and a transparent icon.
+    // Testers can see a transparent icon.
     assert.deepEqual(manifestReleaseProblems(example, "preview", icon), [
       "easProjectId (EAS project)",
       "expoOwner (Expo organization)",
     ]);
-    const { privacyPolicy: _policy, ...withoutPolicy } = ready;
-    assert.ok(_policy);
-    assert.deepEqual(
-      manifestReleaseProblems(withoutPolicy, "store", opaqueIcon),
-      ["privacyPolicy (approved text, M7.2)"],
-    );
     assert.deepEqual(
       manifestReleaseProblems(ready, "preview", png(512, 512, 2)),
       ["icon (PNG of 1024 x 1024 px)"],
@@ -283,6 +277,66 @@ describe("store builds (ADR 0028)", () => {
     assert.deepEqual(manifestReleaseProblems(ready, "store", indexed), [
       "icon (transparency; the App Store refuses it)",
     ]);
+  });
+
+  it("requires the store's published, non-demonstration legal documents for a store build", async () => {
+    const doc = (version: string) => ({ version, body: "Texto" });
+    assert.deepEqual(
+      legalReleaseProblems({
+        privacyPolicy: doc("2026-11"),
+        termsOfUse: doc("2026-11"),
+      }),
+      [],
+    );
+    assert.deepEqual(
+      legalReleaseProblems({
+        privacyPolicy: doc("demo-2026-11"),
+        termsOfUse: null,
+      }),
+      [
+        "privacy policy (demonstration text on the API, M7.2)",
+        "terms of use (not published on the API, M7.2)",
+      ],
+    );
+    assert.deepEqual(legalReleaseProblems(null), [
+      "privacy policy (not published on the API, M7.2)",
+      "terms of use (not published on the API, M7.2)",
+    ]);
+    const asked: string[] = [];
+    const answer = (status: number, body: unknown) =>
+      (async (url: string | URL | Request) => {
+        asked.push(String(url));
+        return new Response(JSON.stringify(body), { status });
+      }) as typeof fetch;
+    assert.deepEqual(
+      await fetchLegalReleaseProblems(
+        "https://api.example.com",
+        "pizzaria-bairro",
+        answer(200, { privacyPolicy: doc("1"), termsOfUse: doc("1") }),
+      ),
+      [],
+    );
+    assert.deepEqual(asked, [
+      "https://api.example.com/v1/public/stores/pizzaria-bairro/legal",
+    ]);
+    assert.deepEqual(
+      await fetchLegalReleaseProblems(
+        "https://api.example.com",
+        "pizzaria-bairro",
+        answer(404, {}),
+      ),
+      ["legal documents (the API answered 404)"],
+    );
+    assert.deepEqual(
+      await fetchLegalReleaseProblems(
+        "https://api.example.com",
+        "pizzaria-bairro",
+        (async () => {
+          throw new TypeError("offline");
+        }) as typeof fetch,
+      ),
+      ["legal documents (the API could not be reached)"],
+    );
   });
 
   it("requires an HTTPS API that is not the developer's machine", () => {
