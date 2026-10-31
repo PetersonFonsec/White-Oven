@@ -129,5 +129,9 @@ A CI roda o ensaio no job `api-container`. Repita o ensaio com o Compose de prod
 
 ## 10. Registro de restaurações
 
-| Data (UTC) | Ambiente | Commit | Cenário | Backup | Restore | Resultado |
-| ---------- | -------- | ------ | ------- | ------ | ------- | --------- |
+| Data (UTC)       | Ambiente                                                                     | Commit    | Cenário       | Backup        | Restore                                  | Resultado                                                                                                                                           |
+| ---------------- | ---------------------------------------------------------------------------- | --------- | ------------- | ------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-31 17:59 | Ensaio local, Compose de desenvolvimento, PostgreSQL 17.11, dados sintéticos | `d6f4933` | Mesmo host    | 1,8 s         | 5,8 s (+7,1 s para a API ficar saudável) | Aprovado: `reapplied=1 already=0 absent=0`; exclusão posterior à cópia mantida, cliente posterior só no banco anterior, imagem idêntica byte a byte |
+| 2026-10-31 17:59 | Ensaio local, cluster novo depois de apagar os volumes                       | `d6f4933` | Perda do host | (mesma cópia) | 5,7 s                                    | Aprovado: recusa `ERASURES_MISSING` sem diário; com o diário exportado, `reapplied=1`; API saudável como `whiteoven_app`                            |
+
+No ensaio de 2026-10-31 a imagem da API foi montada a partir dos artefatos compilados no host, com a mesma base e o mesmo layout do `apps/api/Dockerfile`, porque o ambiente do ensaio não alcançava o registro npm de dentro do build. A CI repete o ensaio com a imagem construída pelo `Dockerfile`.
