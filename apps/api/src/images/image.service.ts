@@ -87,7 +87,7 @@ export class ImageService {
         );
       });
     } catch (error) {
-      if (storageWriteCompleted)
+      if (storageWriteCompleted && !(await this.committedAnyway(assetId)))
         await this.compensateStorageWrite(context.tenantId, assetId, error);
       const code = (error as { code?: string } | null)?.code;
       if (code === "23503" || code === "23514")
@@ -167,6 +167,49 @@ export class ImageService {
         },
       );
       throw missingStorage();
+    }
+  }
+
+  /**
+   * A failed COMMIT can still have committed (the connection dropped after the server committed).
+   * Files are removed only when a new transaction confirms the row does not exist: removing the
+   * files of a committed image would leave the catalog and every backup with a missing image
+   * (ADR 0029), while an unconfirmed orphan is harmless. When the check itself fails, the files
+   * stay.
+   */
+  private async committedAnyway(assetId: string): Promise<boolean> {
+    try {
+      const [row] = await this.transactions.run((em) =>
+        em.execute<{ committed: number }[]>(
+          "select 1 as committed from image_assets where id = ?",
+          [assetId],
+        ),
+      );
+      if (!row) return false;
+    } catch (error) {
+      this.logCompensationSkipped(assetId, "commit_unknown", error);
+      return true;
+    }
+    this.logCompensationSkipped(assetId, "committed", null);
+    return true;
+  }
+
+  private logCompensationSkipped(
+    assetId: string,
+    reason: "committed" | "commit_unknown",
+    error: unknown,
+  ) {
+    try {
+      this.logger.write("warn", "image storage compensation skipped", {
+        event: "image_storage.compensation_skipped",
+        operation: "upload",
+        tenantId: currentTenantContext().tenantId,
+        assetId,
+        reason,
+        ...(error ? { errorType: errorType(error) } : {}),
+      });
+    } catch {
+      // Logging must not replace the original database or commit failure.
     }
   }
 

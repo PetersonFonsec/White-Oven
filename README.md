@@ -55,7 +55,7 @@ A CI usa instalação congelada, formatação, lint, typecheck, testes de domín
 
 ## Deploy e operação — M0.2
 
-Consulte o [runbook](docs/operations/landing-deployment.md) antes de executar comandos de infraestrutura. `Dockerfile` multi-stage compila addons para Linux, executa como UID 1000 e preserva o inicializador seguro. `compose.yaml` mantém dados/backups em volumes e publica Node somente em loopback. Caddy é exemplo opcional separado, sem domínio ou servidor presumido.
+Consulte o [runbook](docs/operations/landing-deployment.md) antes de executar comandos de infraestrutura. Backup e restauração da API (PostgreSQL e imagens) seguem o [runbook da API](docs/operations/api-backup-restore.md) e o `ops/api-backup.sh` ([ADR 0029](docs/adr/0029-api-backup-restore.md)). `Dockerfile` multi-stage compila addons para Linux, executa como UID 1000 e preserva o inicializador seguro. `compose.yaml` mantém dados/backups em volumes e publica Node somente em loopback. Caddy é exemplo opcional separado, sem domínio ou servidor presumido.
 
 `/health/live` verifica HTTP; `/health/ready` distingue prontidão, captação e armazenamento sem gravar no banco. Scripts de atualização/rollback preservam o banco atual; restauração é offline e explícita. Backup usa a API online do SQLite, com integridade, prazo e diário de exclusões.
 

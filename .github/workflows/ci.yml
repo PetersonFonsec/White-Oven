@@ -72,9 +72,12 @@ jobs:
 
   api-container:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
       - name: Build the API image, migrate as owner and wait for health in the development Compose
         run: |
           docker compose -f compose.dev.yaml build api
@@ -93,6 +96,10 @@ jobs:
       - name: API logs
         if: always()
         run: docker compose -f compose.dev.yaml logs migrate api && docker compose -f compose.dev.yaml down -v
+      - name: Restore drill of PostgreSQL and images with synthetic data (M7.1)
+        run: node tests/deployment/api-restore-drill.mjs
+        env:
+          WHITEOVEN_DRILL_SKIP_BUILD: "1"
 
   publish:
     needs: [verify, containers]
