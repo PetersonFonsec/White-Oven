@@ -6,7 +6,8 @@
  * - the store's EAS build profile builds this store, this kind, from the kind's base profile;
  * - `--submit`: the submit profile has what each chosen platform needs;
  * - `--eas`: reads the EAS environment of the build through `eas env:exec` and checks
- *   `WHITEOVEN_API_URL` there (needs an EXPO_TOKEN or a logged-in EAS CLI). Without it, a
+ *   `WHITEOVEN_API_URL` there (needs an EXPO_TOKEN or a logged-in EAS CLI). Only the exit
+ *   status of the CLI is read; its output is discarded. Without it, a
  *   `WHITEOVEN_API_URL` in the shell is checked instead, and otherwise only the worker checks.
  *
  * With `GITHUB_OUTPUT` set, writes `build_profile`, `submit_profile` and `eas_environment`.
@@ -26,6 +27,7 @@ import {
   PLATFORM_CHOICES,
   checkBuildProfile,
   checkSubmitProfile,
+  easApiUrlProblem,
   parsePlatformChoice,
 } from "./eas-profiles.ts";
 
@@ -103,20 +105,15 @@ if (eas && !problems.length) {
   delete env["WHITEOVEN_API_URL"];
   const inner =
     "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/api-url-check.ts";
+  // Output discarded: only the exit status is read, so nothing the CLI prints reaches the log.
   const run = spawnSync(
     process.env.EAS_BIN || "eas",
     ["env:exec", build.environment, inner, "--non-interactive"],
-    { cwd: root, env, encoding: "utf8" },
+    { cwd: root, env, stdio: "ignore" },
   );
-  if (run.status === 0) apiChecked = true;
-  else if (run.status === 3)
-    problems.push(
-      `WHITEOVEN_API_URL in the EAS "${build.environment}" environment:\n${run.stderr.trim()}`,
-    );
-  else
-    problems.push(
-      `EAS "${build.environment}" environment could not be read (check EXPO_TOKEN, access to the store's EAS project and the environment name)`,
-    );
+  const problem = easApiUrlProblem(run, build.environment);
+  if (problem) problems.push(problem);
+  else apiChecked = true;
 } else if (!eas && process.env.WHITEOVEN_API_URL) {
   problems.push(...apiUrlReleaseProblems(process.env.WHITEOVEN_API_URL));
   apiChecked = !problems.length;

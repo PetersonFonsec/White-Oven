@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import {
   checkBuildProfile,
   checkSubmitProfile,
+  easApiUrlProblem,
 } from "../scripts/eas-profiles.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -242,6 +243,47 @@ describe("submit profile of a store (ADR 0028)", () => {
   });
 });
 
+describe("result of the EAS environment check", () => {
+  const run = (
+    status: number | null,
+    signal: NodeJS.Signals | null = null,
+    error?: Error,
+  ) =>
+    easApiUrlProblem(
+      { status, signal, ...(error ? { error } : {}) },
+      "production",
+    );
+
+  it("passes only on exit 0 and keeps every other outcome to a fixed message", () => {
+    assert.equal(run(0), null);
+    assert.equal(
+      run(3),
+      'WHITEOVEN_API_URL is missing or invalid in the EAS "production" environment (set an HTTPS address, plain text or sensitive)',
+    );
+    const failure =
+      'Could not validate the EAS "production" environment (check EXPO_TOKEN, access to the store\'s EAS project and the environment name)';
+    for (const outcome of [
+      run(1),
+      run(2),
+      run(null, "SIGKILL"),
+      run(null, "SIGTERM"),
+      run(
+        null,
+        null,
+        Object.assign(new Error("spawn eas ENOENT"), { code: "ENOENT" }),
+      ),
+      // A start error wins over a status that looks like success.
+      run(0, null, new Error("spawnSync eas ETIMEDOUT")),
+      run(3, "SIGKILL"),
+    ])
+      assert.equal(outcome, failure);
+    assert.match(
+      easApiUrlProblem({ status: 3, signal: null }, "preview")!,
+      /EAS "preview" environment/,
+    );
+  });
+});
+
 describe("release-check command line", () => {
   /**
    * A copy of the app's config, scripts and a store ready for the stores, with a recording
@@ -292,6 +334,8 @@ const [, , command, environment, inner, flag] = process.argv;
 appendFileSync(process.env.FAKE_EAS_LOG, JSON.stringify({ command, environment, flag, tenant: process.env.WHITEOVEN_TENANT, shellUrl: process.env.WHITEOVEN_API_URL ?? null }) + "\\n");
 if (process.env.FAKE_EAS_MODE === "auth") { console.error("Error: GraphQL request failed: Unauthorized (token " + process.env.EXPO_TOKEN + ")"); process.exit(1); }
 if (process.env.FAKE_EAS_MODE === "no-environment") { console.error("Error: Environment not found"); process.exit(1); }
+if (process.env.FAKE_EAS_MODE === "leak") { console.log("stdout: token " + process.env.EXPO_TOKEN + " url https://leak.example/api"); console.error("stderr: WHITEOVEN_API_URL=https://leak.example/api token " + process.env.EXPO_TOKEN); process.exit(Number(process.env.FAKE_EAS_EXIT)); }
+if (process.env.FAKE_EAS_MODE === "signal") process.kill(process.pid, "SIGKILL");
 const env = { ...process.env };
 if (process.env.FAKE_EAS_URL) env.WHITEOVEN_API_URL = process.env.FAKE_EAS_URL;
 const run = spawnSync(inner, { shell: true, stdio: "inherit", env });
@@ -359,45 +403,121 @@ process.exit(run.status ?? 1);
     assert.doesNotMatch(ok.stdout + ok.stderr, /api\.example\.com/);
   });
 
+  const missingOrInvalid =
+    /- WHITEOVEN_API_URL is missing or invalid in the EAS "production" environment/;
+  const couldNotValidate =
+    /- Could not validate the EAS "production" environment \(check EXPO_TOKEN/;
+  /** A refused pre-flight: exit 1, the fixed message, no outputs for the build step. */
+  const assertRefused = (
+    result: ReturnType<typeof run>,
+    message: RegExp,
+    secrets: string[],
+  ) => {
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, message);
+    assert.equal(result.output, "", "no build profile for the build step");
+    for (const secret of secrets)
+      assert.equal(
+        (result.stdout + result.stderr).includes(secret),
+        false,
+        secret,
+      );
+  };
+
   it("stops before the build when the address is missing, HTTP or malformed, without printing it", () => {
-    for (const [url, rule] of [
-      ["", /WHITEOVEN_API_URL \(missing on EAS\)/],
-      ["http://api.example.com", /WHITEOVEN_API_URL \(HTTPS outside/],
-      [
-        "https://api.example.com/v1?x=secret-value",
-        /WHITEOVEN_API_URL \(HTTPS outside/,
-      ],
-      ["não é url secret-value", /WHITEOVEN_API_URL \(HTTPS outside/],
-    ] as const) {
+    for (const url of [
+      "",
+      "http://api.example.com",
+      "https://api.example.com/v1?x=secret-value",
+      "não é url secret-value",
+    ]) {
       const refused = run(store, url ? { FAKE_EAS_URL: url } : {});
-      assert.equal(refused.status, 1, url);
-      assert.match(refused.stderr, rule, url);
-      assert.match(refused.stderr, /EAS "production" environment/);
-      assert.equal(refused.output, "", url);
-      if (url)
-        assert.equal(
-          (refused.stdout + refused.stderr).includes(url),
-          false,
-          url,
-        );
-      assert.doesNotMatch(refused.stdout + refused.stderr, /secret-value/);
+      assertRefused(
+        refused,
+        missingOrInvalid,
+        url ? [url, "secret-value"] : [],
+      );
+      // Only the fixed message: the check's own lines never reach the log.
+      assert.doesNotMatch(refused.stderr, /HTTPS outside|missing on EAS/);
     }
   });
 
-  it("fails with an operational message when EAS cannot be read", () => {
-    for (const mode of ["auth", "no-environment"]) {
-      const failed = run(store, {
-        FAKE_EAS_MODE: mode,
+  it("never forwards what the EAS CLI prints, whatever its exit status", () => {
+    const secrets = ["expo-token-secret", "leak.example"];
+    for (const [exit, message] of [
+      ["3", missingOrInvalid],
+      ["1", couldNotValidate],
+      ["2", couldNotValidate],
+      ["0", null],
+    ] as const) {
+      const result = run(store, {
+        FAKE_EAS_MODE: "leak",
+        FAKE_EAS_EXIT: exit,
         EXPO_TOKEN: "expo-token-secret",
       });
-      assert.equal(failed.status, 1, mode);
-      assert.match(
-        failed.stderr,
-        /EAS "production" environment could not be read \(check EXPO_TOKEN/,
-      );
-      assert.doesNotMatch(failed.stdout + failed.stderr, /expo-token-secret/);
-      assert.equal(failed.output, "");
+      if (message) assertRefused(result, message, secrets);
+      else {
+        // Exit 0 is the success path: the pre-flight continues to the build.
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(
+          result.output,
+          /^build_profile=pizzaria-centro-production$/m,
+        );
+        for (const secret of secrets)
+          assert.equal((result.stdout + result.stderr).includes(secret), false);
+      }
     }
+  });
+
+  it("fails closed when EAS cannot be read, does not start or dies by a signal", () => {
+    for (const env of [
+      { FAKE_EAS_MODE: "auth" } as Record<string, string>,
+      { FAKE_EAS_MODE: "no-environment" },
+      { FAKE_EAS_MODE: "signal" },
+      { EAS_BIN: join(scratch, "no-such-eas") },
+    ])
+      assertRefused(
+        run(store, { ...env, EXPO_TOKEN: "expo-token-secret" }),
+        couldNotValidate,
+        ["expo-token-secret"],
+      );
+  });
+
+  it("checks the preview environment for a preview build", () => {
+    const ok = run([centro, "preview", "--eas"], {
+      FAKE_EAS_URL: "https://api.example.com",
+    });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(ok.calls[0].environment, "preview");
+    assert.match(ok.output, /^eas_environment=preview$/m);
+    assertRefused(
+      run([centro, "preview", "--eas"], { FAKE_EAS_URL: "http://x.example" }),
+      /- WHITEOVEN_API_URL is missing or invalid in the EAS "preview" environment/,
+      ["x.example"],
+    );
+  });
+
+  it("starts the EAS build only after the pre-flight against EAS succeeded", () => {
+    const workflow = readFileSync(
+      join(root, "..", "..", ".github", "workflows", "mobile-build.yml"),
+      "utf8",
+    );
+    assert.doesNotMatch(
+      workflow,
+      /continue-on-error|if: always\(\)|if: failure\(\)/,
+    );
+    const preflight = workflow.indexOf("id: preflight");
+    const build = workflow.indexOf("eas build ");
+    assert.ok(preflight > 0 && build > preflight);
+    assert.match(
+      workflow.slice(preflight, build),
+      /--eas\)[\s\S]*pnpm release-check "\$\{args\[@\]\}"/,
+    );
+    // The build step takes its profile only from the pre-flight's outputs.
+    assert.match(
+      workflow.slice(build - 400, build),
+      /BUILD_PROFILE: \$\{\{ steps\.preflight\.outputs\.build_profile \}\}/,
+    );
   });
 
   it("does not call EAS when the repository already refuses the build", () => {

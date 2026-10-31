@@ -202,3 +202,26 @@ export async function checkSubmitProfile(
   }
   return { profile, problems };
 }
+
+/** What `spawnSync` reports about the `eas env:exec` run; its output is never read. */
+export interface EasRunResult {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  error?: Error;
+}
+
+/**
+ * Turns the `eas env:exec` run of `api-url-check.ts` into the pre-flight's own message: null when
+ * the address passed (exit 0), a fixed message for exit 3 (the check refused the address), and a
+ * fixed message for anything else, including a CLI that did not start or died by a signal. The
+ * CLI's stdout and stderr are discarded, so no token, URL or other output can reach the log.
+ */
+export function easApiUrlProblem(
+  run: EasRunResult,
+  environment: string,
+): string | null {
+  if (!run.error && run.signal === null && run.status === 0) return null;
+  if (!run.error && run.signal === null && run.status === 3)
+    return `WHITEOVEN_API_URL is missing or invalid in the EAS "${environment}" environment (set an HTTPS address, plain text or sensitive)`;
+  return `Could not validate the EAS "${environment}" environment (check EXPO_TOKEN, access to the store's EAS project and the environment name)`;
+}
