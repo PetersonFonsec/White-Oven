@@ -34,7 +34,12 @@ export interface CustomerProfile {
   name: string;
   email: string;
   phone: string | null;
+  /**
+   * The privacy policy version last accepted (ADR 0030); for an account created before M7.2 that
+   * never accepted a published document, the one recorded at sign-up.
+   */
   privacyPolicyVersion: string;
+  /** When the account first accepted the privacy policy, at sign-up; later acceptances never move it. */
   acceptedAt: string;
   /** The terms of use version last accepted; null for accounts created before M7.2. */
   termsOfUseVersion: string | null;
@@ -244,7 +249,12 @@ export class CustomerAuth {
       const [row] = await em.execute<
         (Omit<CustomerProfile, "acceptedAt"> & { acceptedAt: Date })[]
       >(
-        `select c.id, c.name, c.email, c.phone, c.privacy_policy_version as "privacyPolicyVersion",
+        `select c.id, c.name, c.email, c.phone,
+                coalesce((select d.version from customer_legal_acceptances a
+                            join legal_documents d on d.tenant_id = a.tenant_id and d.id = a.document_id
+                           where a.customer_id = c.id and d.kind = 'PRIVACY_POLICY'
+                           order by d.revision desc limit 1),
+                         c.privacy_policy_version) as "privacyPolicyVersion",
                 c.accepted_at as "acceptedAt",
                 (select d.version from customer_legal_acceptances a
                    join legal_documents d on d.tenant_id = a.tenant_id and d.id = a.document_id
@@ -277,13 +287,10 @@ export class CustomerAuth {
     const customerId = customerOf();
     await this.transactions.run(
       async (em) => {
+        // Only `customer_legal_acceptances`: `customers.privacy_policy_version` and
+        // `accepted_at` stay the acceptance given at sign-up (ADR 0017, ADR 0030).
         const documents = await acceptedDocuments(em, versions);
         await recordAcceptances(em, customerId, documents);
-        await em.execute(
-          `update customers set privacy_policy_version = ?, accepted_at = now(), updated_at = now()
-            where id = ? and status = 'ACTIVE'`,
-          [versions.privacyPolicyVersion, customerId],
-        );
       },
       { lockCustomer: true },
     );

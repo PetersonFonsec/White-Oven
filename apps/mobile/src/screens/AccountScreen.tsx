@@ -365,9 +365,10 @@ export function AccountScreen({
           )}
           <Heading>Excluir conta</Heading>
           <Body>
-            A exclusão remove seus dados pessoais e endereços e encerra as
-            sessões. Pedidos são mantidos sem o vínculo com seus dados de
-            cadastro.
+            A exclusão apaga nome, e-mail, telefone, senha, endereços e
+            aparelhos cadastrados, tira esses dados dos seus pedidos e encerra
+            as sessões. A loja mantém os pedidos e registros internos sem esses
+            dados; a página de exclusão da loja detalha o que fica guardado.
           </Body>
           {state.pending ? (
             <Body>Confira primeiro o resultado do pedido pendente.</Body>

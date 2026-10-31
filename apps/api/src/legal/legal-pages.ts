@@ -144,6 +144,30 @@ const DELETION_MESSAGES: Partial<Record<DeletionOutcome, string>> = {
     "Muitas tentativas. Aguarde alguns minutos e tente novamente.",
 };
 
+/**
+ * What the deletion does, in the customer's words. It must match `erase` in
+ * customer-auth.service.ts, `ops/postgres/reapply-customer-erasures.sql` and ADR 0030: change
+ * them together. No legal basis and no retention period here: those belong to the store's privacy
+ * policy, written by counsel (ADR 0030, pending items).
+ */
+const ERASED = [
+  "Nome, e-mail, telefone e senha da conta.",
+  "Endereços salvos e aparelhos cadastrados para avisos de pedido.",
+  "Nome, telefone, endereço de entrega e observações que você escreveu nos pedidos.",
+];
+
+const KEPT = [
+  "Um registro interno de que a conta existiu, sem nome, e-mail, telefone ou senha: um código, as datas de criação e de exclusão e a versão da política de privacidade aceita no cadastro.",
+  "Os pedidos já feitos, com itens, valores, datas e o histórico de andamento, ligados a esse código interno, para os registros da loja.",
+  "O registro de quais versões dos termos e da política de privacidade você aceitou e quando.",
+  "O registro das sessões encerradas, dos avisos de pedido enviados e da própria exclusão, sem dados pessoais. O registro da exclusão serve para que ela seja aplicada de novo se uma cópia de segurança for restaurada.",
+  "Anotações que a loja escreveu sobre um pedido, como o registro de um problema na entrega, ficam como foram escritas.",
+  "Cópias de segurança feitas antes da exclusão ainda contêm os dados até serem substituídas.",
+];
+
+const list = (items: string[]) =>
+  `<ul>\n${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("\n")}\n</ul>`;
+
 export function deletionPage(input: {
   storeName: string;
   slug: string;
@@ -151,13 +175,19 @@ export function deletionPage(input: {
 }): string {
   const store = escapeHtml(input.storeName);
   const base = `/lojas/${encodeURIComponent(input.slug)}`;
+  const policy = `<p>Consulte a <a href="${base}/privacidade">política de privacidade</a> da loja sobre o tratamento desses registros.</p>`;
   if (input.outcome === "deleted")
     return layout({
       ...input,
       title: "Conta excluída",
       current: "excluir-conta",
       content: `<h1>Conta excluída</h1>
-<p role="status">Sua conta na ${store} foi excluída. Seus dados pessoais foram removidos e todas as sessões abertas no app foram encerradas.</p>`,
+<p role="status">Sua conta na ${store} foi excluída e as sessões abertas no app foram encerradas.</p>
+<h2>O que foi apagado</h2>
+${list(ERASED)}
+<h2>O que continua guardado</h2>
+${list(KEPT)}
+${policy}`,
     });
   const message = DELETION_MESSAGES[input.outcome];
   return layout({
@@ -165,19 +195,13 @@ export function deletionPage(input: {
     title: PAGE_TITLES["excluir-conta"],
     current: "excluir-conta",
     content: `<h1>Excluir sua conta</h1>
-<p>Você pode excluir sua conta na ${store} pelo app, em <strong>Minha conta</strong>, ou por esta página, sem precisar instalar o app.</p>
-<h2>O que é excluído</h2>
-<ul>
-<li>Nome, e-mail, telefone e senha da conta.</li>
-<li>Endereços salvos e aparelhos cadastrados para avisos do pedido.</li>
-<li>Todas as sessões abertas, que são encerradas na hora.</li>
-</ul>
-<h2>O que é mantido</h2>
-<ul>
-<li>Os pedidos já feitos, com itens, valores e datas, sem seu nome, telefone, endereço ou observações, para os registros da loja.</li>
-<li>O registro de quais versões dos termos e da política de privacidade você aceitou e quando, sem dados pessoais.</li>
-</ul>
-<p>Os prazos de guarda estão na <a href="${base}/privacidade">política de privacidade</a>. A exclusão não pode ser desfeita.</p>
+<p>Você pode excluir sua conta na ${store} pelo app, em <strong>Minha conta</strong>, ou por esta página, sem precisar instalar o app. As sessões abertas no app são encerradas na hora.</p>
+<h2>O que é apagado</h2>
+${list(ERASED)}
+<h2>O que continua guardado</h2>
+${list(KEPT)}
+${policy}
+<p>A exclusão não pode ser desfeita.</p>
 ${message ? `<p class="alert" role="alert">${message}</p>` : ""}
 <form method="post" action="${base}/excluir-conta">
 <label>E-mail da conta<input type="email" name="email" autocomplete="username" required maxlength="254"></label>

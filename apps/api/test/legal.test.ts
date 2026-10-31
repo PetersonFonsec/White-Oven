@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
+import type { EntityManager, MikroORM } from "@mikro-orm/postgresql";
 import { hashPassword } from "../src/auth/password";
 import type { ApiConfig } from "../src/config/config";
+import { createOrm } from "../src/database/orm";
 import { PlatformService } from "../src/platform/platform.service";
 import { runInTenant } from "../src/tenancy/tenant-transaction";
 import { json, startTestServer, type TestServer } from "./helpers";
@@ -426,6 +428,457 @@ describe(
       assert.equal(count, 3);
     });
 
+    it("keeps the sign-up acceptance date and records each new version once", async () => {
+      const store = slug("data-aceite");
+      const tenantId = await insertTenant(owner, store);
+      const customer = await signedUp(store);
+      const accept = (versions: Record<string, string>) =>
+        fetch(
+          `${server.baseUrl}/v1/customer/stores/${store}/me/legal-acceptances`,
+          {
+            method: "POST",
+            headers: {
+              ...bearer(customer.accessToken),
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(versions),
+          },
+        );
+      const account = async () => {
+        const [row] = await runInTenant(owner, tenantId, (em) =>
+          em.execute<{ version: string; acceptedAt: Date; updatedAt: Date }[]>(
+            `select privacy_policy_version as version, accepted_at as "acceptedAt",
+                    updated_at as "updatedAt"
+               from customers where email = ?`,
+            [customer.email],
+          ),
+        );
+        return {
+          ...row!,
+          acceptedAt: new Date(row!.acceptedAt),
+          updatedAt: new Date(row!.updatedAt),
+        };
+      };
+      const acceptances = () =>
+        runInTenant(owner, tenantId, (em) =>
+          em.execute<{ id: string; version: string; acceptedAt: Date }[]>(
+            `select a.id, d.kind || ':' || d.version as version, a.accepted_at as "acceptedAt"
+               from customer_legal_acceptances a
+               join legal_documents d on d.id = a.document_id
+              order by d.revision, d.kind`,
+          ),
+        ).then((rows) =>
+          rows.map((row) => ({ ...row, acceptedAt: new Date(row.acceptedAt) })),
+        );
+
+      // First acceptance: at sign-up, the same instant in the account and in both records.
+      const signUp = await account();
+      const first = await acceptances();
+      assert.deepEqual(first.map((row) => row.version).sort(), [
+        `PRIVACY_POLICY:${TEST_LEGAL_VERSION}`,
+        `TERMS_OF_USE:${TEST_LEGAL_VERSION}`,
+      ]);
+      for (const row of first)
+        assert.equal(row.acceptedAt.getTime(), signUp.acceptedAt.getTime());
+      const before = await json(await me(store, customer.accessToken));
+      assert.equal(before.acceptedAt, signUp.acceptedAt.toISOString());
+
+      // Repeating the versions already accepted changes nothing at all.
+      const current = {
+        privacyPolicyVersion: TEST_LEGAL_VERSION,
+        termsOfUseVersion: TEST_LEGAL_VERSION,
+      };
+      assert.equal((await accept(current)).status, 204);
+      assert.deepEqual(await account(), signUp);
+      assert.deepEqual(await acceptances(), first);
+
+      // A new version: a new record with its own date; the sign-up acceptance stays.
+      await publish(tenantId, "PRIVACY_POLICY", "2026-12", "Política nova");
+      const next = { ...current, privacyPolicyVersion: "2026-12" };
+      assert.equal((await accept(next)).status, 204);
+      const afterNew = await acceptances();
+      assert.equal(afterNew.length, 3);
+      assert.deepEqual(afterNew.slice(0, 2), first);
+      assert.equal(afterNew[2]!.version, "PRIVACY_POLICY:2026-12");
+      assert.ok(
+        afterNew[2]!.acceptedAt.getTime() > signUp.acceptedAt.getTime(),
+      );
+      assert.deepEqual(await account(), signUp);
+      const profile = await json(await me(store, customer.accessToken));
+      assert.deepEqual(
+        [
+          profile.privacyPolicyVersion,
+          profile.termsOfUseVersion,
+          profile.acceptedAt,
+          profile.legalUpdateRequired,
+        ],
+        ["2026-12", TEST_LEGAL_VERSION, signUp.acceptedAt.toISOString(), false],
+      );
+
+      // The same new version again: still three records, none rewritten.
+      assert.equal((await accept(next)).status, 204);
+      assert.deepEqual(await acceptances(), afterNew);
+      assert.deepEqual(await account(), signUp);
+
+      // The records stay immutable, even for the owner.
+      await assert.rejects(
+        runInTenant(owner, tenantId, (em) =>
+          em.execute(
+            "update customer_legal_acceptances set accepted_at = now()",
+          ),
+        ),
+        /append-only/,
+      );
+      await assert.rejects(
+        runInTenant(app, tenantId, (em) =>
+          em.execute(
+            "update customer_legal_acceptances set accepted_at = now()",
+          ),
+        ),
+        { code: "42501" },
+      );
+    });
+
+    it("keeps the acceptance of an account created before M7.2", async () => {
+      const store = slug("conta-antiga");
+      const tenantId = await insertTenant(owner, store);
+      const email = `antiga-${randomUUID()}@teste.invalid`;
+      const original = new Date("2026-01-15T12:00:00.000Z");
+      // As M4.2 wrote it: the version the app said it showed, no acceptance record.
+      await runInTenant(owner, tenantId, async (em) =>
+        em.execute(
+          `insert into customers (tenant_id, name, email, password_hash, privacy_policy_version, accepted_at)
+           values (?, 'Cliente Antigo', ?, ?, 'pre-m7-2', ?)`,
+          [tenantId, email, await hashPassword(PASSWORD), original],
+        ),
+      );
+      const login = await fetch(
+        `${server.baseUrl}/v1/customer/stores/${store}/auth/login`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, password: PASSWORD }),
+        },
+      );
+      assert.equal(login.status, 200, await login.clone().text());
+      const { accessToken } = (await json(login)) as { accessToken: string };
+      const before = await json(await me(store, accessToken));
+      assert.deepEqual(
+        [
+          before.privacyPolicyVersion,
+          before.termsOfUseVersion,
+          before.acceptedAt,
+          before.legalUpdateRequired,
+        ],
+        ["pre-m7-2", null, original.toISOString(), true],
+      );
+      const accepted = await fetch(
+        `${server.baseUrl}/v1/customer/stores/${store}/me/legal-acceptances`,
+        {
+          method: "POST",
+          headers: {
+            ...bearer(accessToken),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            privacyPolicyVersion: TEST_LEGAL_VERSION,
+            termsOfUseVersion: TEST_LEGAL_VERSION,
+          }),
+        },
+      );
+      assert.equal(accepted.status, 204);
+      const after = await json(await me(store, accessToken));
+      assert.deepEqual(
+        [
+          after.privacyPolicyVersion,
+          after.termsOfUseVersion,
+          after.acceptedAt,
+          after.legalUpdateRequired,
+        ],
+        [TEST_LEGAL_VERSION, TEST_LEGAL_VERSION, original.toISOString(), false],
+      );
+      const [row] = await runInTenant(owner, tenantId, (em) =>
+        em.execute<{ version: string; acceptedAt: Date }[]>(
+          `select privacy_policy_version as version, accepted_at as "acceptedAt"
+             from customers where email = ?`,
+          [email],
+        ),
+      );
+      assert.deepEqual(
+        { ...row!, acceptedAt: new Date(row!.acceptedAt) },
+        { version: "pre-m7-2", acceptedAt: original },
+      );
+    });
+
+    describe("operator listing and the tenant context", () => {
+      let solo: MikroORM;
+      let storeA: string;
+      let storeB: string;
+      const A_TEXT = "Texto exclusivo da loja A";
+      const B_TEXT = "Texto exclusivo da loja B";
+
+      before(async () => {
+        // One connection: every call below reuses the same backend.
+        solo = await createOrm({ url: database.appUrl, poolMax: 1 });
+        storeA = await bareTenant(slug("isolada-a"));
+        storeB = await bareTenant(slug("isolada-b"));
+        await publish(storeA, "PRIVACY_POLICY", "2026-11", A_TEXT);
+        await publish(storeA, "TERMS_OF_USE", "2026-11", A_TEXT);
+        await publish(storeB, "TERMS_OF_USE", "2026-11", B_TEXT);
+      });
+      after(() => solo?.close());
+
+      const listRows = (
+        em: Pick<EntityManager, "execute">,
+        tenantId: string,
+        session = sessionId,
+      ) =>
+        em.execute<{ body: string }[]>(
+          "select body from whiteoven_platform_legal_documents(?, ?, ?)",
+          [tenantId, operatorId, session],
+        );
+      const context = async (em: Pick<EntityManager, "execute">) => {
+        const [row] = await em.execute<
+          { tenant: string | null; visible: number; pid: number }[]
+        >(
+          `select current_setting('app.tenant_id', true) as tenant,
+                  (select count(*)::int from legal_documents) as visible,
+                  pg_backend_pid() as pid`,
+        );
+        return row!;
+      };
+      const solo$ = () => solo.em.fork();
+
+      it("returns only the requested store, one call after the other", async () => {
+        const a = await platform.listLegalDocuments(
+          storeA,
+          operatorId,
+          sessionId,
+        );
+        const b = await platform.listLegalDocuments(
+          storeB,
+          operatorId,
+          sessionId,
+        );
+        assert.deepEqual(
+          a.map((row) => row.body),
+          [A_TEXT, A_TEXT],
+        );
+        assert.deepEqual(
+          b.map((row) => row.body),
+          [B_TEXT],
+        );
+        // Both calls in one transaction on one connection: B never sees A's rows.
+        await solo.em.fork().transactional(async (em) => {
+          assert.deepEqual(
+            (await listRows(em, storeA)).map((row) => row.body),
+            [A_TEXT, A_TEXT],
+          );
+          assert.deepEqual(
+            (await listRows(em, storeB)).map((row) => row.body),
+            [B_TEXT],
+          );
+          // The function put the context back: none, so RLS shows nothing.
+          const after = await context(em);
+          assert.ok(!after.tenant, `context left: ${after.tenant}`);
+          assert.equal(after.visible, 0);
+        });
+      });
+
+      it("restores the caller's tenant context", async () => {
+        await runInTenant(solo, storeB, async (em) => {
+          assert.deepEqual(
+            (await listRows(em, storeA)).map((row) => row.body),
+            [A_TEXT, A_TEXT],
+          );
+          const after = await context(em);
+          assert.equal(after.tenant, storeB);
+          const bodies = await em.execute<{ body: string }[]>(
+            "select body from legal_documents",
+          );
+          assert.deepEqual(
+            bodies.map((row) => row.body),
+            [B_TEXT],
+          );
+        });
+      });
+
+      it("leaks no context when a call fails", async () => {
+        const documentsOfA = async () =>
+          (
+            await owner.em
+              .getConnection()
+              .execute<{ count: number }[]>(
+                "select count(*)::int as count from legal_documents where tenant_id = ?",
+                [storeA],
+              )
+          )[0]!.count;
+        const documentsBefore = await documentsOfA();
+        // A failure after the function switched to store A (the audit row's ip_hash check
+        // fails after the document insert), caught by a savepoint inside store B's transaction.
+        const failingPublish = (em: Pick<EntityManager, "execute">) =>
+          em.execute(
+            "select * from whiteoven_publish_legal_document(?, 'TERMS_OF_USE', 'falha', 'x', ?, ?, ?, ?)",
+            [storeA, operatorId, sessionId, Buffer.alloc(3), REQUEST_ID],
+          );
+        await runInTenant(solo, storeB, async (em) => {
+          await assert.rejects(
+            em.transactional((inner) => failingPublish(inner)),
+            { code: "23514" },
+          );
+          // Refused before the switch (no MFA session) and after it (a version conflict).
+          await assert.rejects(
+            em.transactional((inner) => listRows(inner, storeA, randomUUID())),
+            { code: "42501" },
+          );
+          await assert.rejects(
+            em.transactional((inner) =>
+              inner.execute(
+                "select * from whiteoven_publish_legal_document(?, 'TERMS_OF_USE', '2026-11', 'outro', ?, ?, null, null)",
+                [storeA, operatorId, sessionId],
+              ),
+            ),
+            { code: "P0010" },
+          );
+          const after = await context(em);
+          assert.equal(after.tenant, storeB);
+          assert.equal(after.visible, 1);
+        });
+        assert.equal(await documentsOfA(), documentsBefore);
+
+        // A failure that aborts the whole transaction: the reused connection starts clean.
+        const pid = (await context(solo$())).pid;
+        await assert.rejects(
+          solo.em.fork().transactional((em) => failingPublish(em)),
+          { code: "23514" },
+        );
+        const next = await context(solo$());
+        assert.equal(next.pid, pid);
+        assert.ok(!next.tenant, `context left: ${next.tenant}`);
+        assert.equal(next.visible, 0);
+        assert.equal(await documentsOfA(), documentsBefore);
+      });
+
+      it("does not keep the tenant on a reused connection", async () => {
+        const { pid } = await context(solo$());
+        // Outside a transaction: the call is its own transaction.
+        assert.equal((await listRows(solo$(), storeA)).length, 2);
+        const autocommit = await context(solo$());
+        assert.equal(autocommit.pid, pid);
+        assert.ok(!autocommit.tenant, `context left: ${autocommit.tenant}`);
+        assert.equal(autocommit.visible, 0);
+        await solo.em.fork().transactional((em) => listRows(em, storeA));
+        await runInTenant(solo, storeB, (em) => listRows(em, storeA));
+        const later = await context(solo$());
+        assert.equal(later.pid, pid);
+        assert.ok(!later.tenant, `context left: ${later.tenant}`);
+        assert.equal(later.visible, 0);
+        // Store B's own context sees only store B afterwards.
+        const seen = await runInTenant(solo, storeB, (em) =>
+          em.execute<{ body: string }[]>("select body from legal_documents"),
+        );
+        assert.deepEqual(
+          seen.map((row) => row.body),
+          [B_TEXT],
+        );
+      });
+
+      it("refuses operators without a valid MFA session", async () => {
+        const hash = await hashPassword("outra senha forte do teste 2026");
+        const insertSession = async (user: string, overrides: string) => {
+          const [row] = await owner.em
+            .getConnection()
+            .execute<{ id: string }[]>(
+              `insert into staff_sessions (staff_user_id, mfa, refresh_token_hash, idle_expires_at, revoked_at, revoked_reason)
+               select ?, ${overrides} returning id`,
+              [user, Buffer.alloc(32, 8)],
+            );
+          return row!.id;
+        };
+        const insertUser = async (role: string, mfa: boolean) => {
+          const [row] = await owner.em
+            .getConnection()
+            .execute<{ id: string }[]>(
+              `insert into staff_users (email, name, password_hash, platform_role, mfa_secret, mfa_enabled_at)
+               values (?, 'Outro', ?, ?, ${mfa ? "'v1.x', now()" : "null, null"}) returning id`,
+              [`staff-${randomUUID()}@example.test`, hash, role],
+            );
+          return row!.id;
+        };
+        const withoutMfa = await insertSession(
+          operatorId,
+          "false, ?, now() + interval '1 hour', null, null",
+        );
+        const revoked = await insertSession(
+          operatorId,
+          "true, ?, now() + interval '1 hour', now(), 'LOGOUT'",
+        );
+        const expired = await insertSession(
+          operatorId,
+          "true, ?, now() - interval '1 minute', null, null",
+        );
+        const notOperator = await insertUser("NONE", true);
+        const notOperatorSession = await insertSession(
+          notOperator,
+          "true, ?, now() + interval '1 hour', null, null",
+        );
+        const noMfaOperator = await insertUser("OPERATOR", false);
+        const noMfaOperatorSession = await insertSession(
+          noMfaOperator,
+          "true, ?, now() + interval '1 hour', null, null",
+        );
+        const otherOperatorsSession = await insertSession(
+          noMfaOperator,
+          "true, ?, now() + interval '1 hour', null, null",
+        );
+        for (const [actor, session] of [
+          [operatorId, withoutMfa],
+          [operatorId, revoked],
+          [operatorId, expired],
+          [operatorId, randomUUID()],
+          [operatorId, otherOperatorsSession],
+          [notOperator, notOperatorSession],
+          [noMfaOperator, noMfaOperatorSession],
+        ] as const) {
+          await assert.rejects(
+            platform.listLegalDocuments(storeA, actor, session),
+            { code: "MFA_REQUIRED" },
+          );
+          await assert.rejects(
+            publish(storeA, "TERMS_OF_USE", "2026-11", A_TEXT).then(() =>
+              platform.publishLegalDocument(
+                storeA,
+                { kind: "TERMS_OF_USE", version: "2027-01", body: "x" },
+                actor,
+                session,
+                REQUEST_ID,
+                "127.0.0.1",
+              ),
+            ),
+            { code: "MFA_REQUIRED" },
+          );
+        }
+        // Without the function, the app role reads no other store's text.
+        const direct = await runInTenant(app, storeB, (em) =>
+          em.execute<{ body: string }[]>(
+            "select body from legal_documents where tenant_id = ?",
+            [storeA],
+          ),
+        );
+        assert.deepEqual(direct, []);
+        assert.equal(
+          (
+            await app.em
+              .getConnection()
+              .execute<{ count: number }[]>(
+                "select count(*)::int as count from legal_documents",
+              )
+          )[0]!.count,
+          0,
+        );
+      });
+    });
+
     it("renders the documents as escaped HTML under a strict policy", async () => {
       const store = slug("pagina");
       const tenantId = await bareTenant(store);
@@ -530,7 +983,17 @@ describe(
         confirm: "yes",
       });
       assert.equal(deleted.status, 200);
-      assert.match(await deleted.text(), /Conta excluída/);
+      assert.equal(
+        deleted.headers.get("content-security-policy"),
+        form.headers.get("content-security-policy"),
+      );
+      const deletedText = await deleted.text();
+      assert.match(deletedText, /Conta excluída/);
+      // The page says what was erased and what is kept, and promises no full removal.
+      assert.match(deletedText, /<h2>O que foi apagado<\/h2>/);
+      assert.match(deletedText, /<h2>O que continua guardado<\/h2>/);
+      assert.doesNotMatch(deletedText, /dados pessoais foram removidos/);
+      assert.doesNotMatch(deletedText, /<script/i);
       assert.equal(await customerStatus(aId, customer.email), "ABSENT");
       const [row] = await runInTenant(owner, aId, (em) =>
         em.execute<
@@ -552,6 +1015,30 @@ describe(
         email: null,
         open: 0,
         acceptances: 2,
+      });
+      // What "O que continua guardado" lists: the internal record keeps no personal data but the
+      // sign-up acceptance and its dates, and the deletion record exists for restores.
+      const [kept] = await runInTenant(owner, aId, (em) =>
+        em.execute<Record<string, unknown>[]>(
+          `select c.name, c.phone, c.password_hash as "passwordHash",
+                  c.privacy_policy_version as version, c.accepted_at is not null as "acceptedAt",
+                  c.deleted_at is not null as "deletedAt",
+                  (select count(*)::int from customer_addresses x where x.customer_id = c.id) as addresses,
+                  (select count(*)::int from customer_push_devices x where x.customer_id = c.id) as devices,
+                  (select count(*)::int from customer_erasures x where x.customer_id = c.id) as erasures
+             from customers c where c.status = 'DELETED' order by c.deleted_at desc limit 1`,
+        ),
+      );
+      assert.deepEqual(kept, {
+        name: null,
+        phone: null,
+        passwordHash: null,
+        version: TEST_LEGAL_VERSION,
+        acceptedAt: true,
+        deletedAt: true,
+        addresses: 0,
+        devices: 0,
+        erasures: 1,
       });
       assert.equal((await me(a, customer.accessToken)).status, 401);
       // Deleting again is the same refusal as a wrong password.
