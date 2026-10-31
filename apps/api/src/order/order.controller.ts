@@ -24,7 +24,7 @@ import {
 import type { Request, Response } from "express";
 import { BILLING_PERIOD } from "../billing/billing-report";
 import { ApiError, ApiErrorBody } from "../errors/api-error";
-import { clientIpOf } from "../security/http-security";
+import { clientIpOf, ipLimitKey } from "../security/http-security";
 import { RequestLimits, enforceLimit } from "../security/request-limits";
 import { currentTenantContext } from "../tenancy/tenant-context";
 import { CustomerRoute } from "../customer/customer.guard";
@@ -203,7 +203,7 @@ export class OrderController {
       name,
       {
         account: `${tenantId}\0${account}`,
-        storeIp: `${tenantId}\0${clientIpOf(req)}`,
+        storeIp: `${tenantId}\0${ipLimitKey(clientIpOf(req))}`,
       },
       res,
     );

@@ -22,7 +22,7 @@ import {
 import type { Request, Response } from "express";
 import { PASSWORD_MAX_LENGTH } from "../auth/password";
 import { ApiError, ApiErrorBody } from "../errors/api-error";
-import { clientIpOf } from "../security/http-security";
+import { clientIpOf, ipLimitKey } from "../security/http-security";
 import { RequestLimits, enforceLimit } from "../security/request-limits";
 import { StoreTenant } from "../tenancy/store-tenant.guard";
 import { currentTenantContext } from "../tenancy/tenant-context";
@@ -139,7 +139,7 @@ export class CustomerController {
     req: Request,
     res: Response,
   ): void {
-    const ip = clientIpOf(req);
+    const ip = ipLimitKey(clientIpOf(req));
     const storeIp = `${currentTenantContext().tenantId}\0${ip}`;
     enforceLimit(this.limits, name, { storeIp, ip }, res);
   }

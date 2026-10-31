@@ -5,6 +5,7 @@ import type { MikroORM } from "@mikro-orm/postgresql";
 import { operatorMfaReport } from "../src/auth/check-operators-mfa";
 import {
   API_SECURITY_HEADERS,
+  ipLimitKey,
   normalizeIp,
   resolveClientIp,
 } from "../src/security/http-security";
@@ -29,47 +30,67 @@ const MINUTE = 60_000;
 describe("request limits (M7.3, ADR 0031)", () => {
   const policies: Record<string, LimitPolicy> = {
     probe: {
-      ip: { max: 2, windowMs: MINUTE },
-      account: { max: 3, windowMs: 10 * MINUTE },
+      ip: { max: 3, windowMs: 10 * MINUTE },
+      account: { max: 2, windowMs: MINUTE },
     },
+    one: { ip: { max: 1, windowMs: MINUTE } },
+  };
+  const clock = (start = 1_000_000) => {
+    const state = { now: start };
+    return { state, now: () => state.now };
   };
 
-  it("counts every request per scope and answers the wait of the scope that is exhausted", () => {
-    let now = 1_000_000;
-    const limits = new RequestLimits(() => now, policies);
-    const keys = { ip: "10.0.0.1", account: "ana" };
-    assert.equal(limits.consume("probe", keys), 0);
-    assert.equal(limits.consume("probe", keys), 0);
-    // Third request: the IP (2 per minute) is exhausted, the account (3 per 10 min) is not.
-    assert.equal(limits.consume("probe", keys), 60);
-    now += 30_000;
-    // Fourth: both exhausted; the account's window is the longer wait.
-    assert.equal(limits.consume("probe", keys), 570);
-    // Another IP of the same account still waits for the account; another account is free.
-    assert.equal(
-      limits.consume("probe", { ip: "10.0.0.2", account: "ana" }),
-      570,
-    );
-    assert.equal(
-      limits.consume("probe", { ip: "10.0.0.3", account: "bia" }),
-      0,
-    );
-    now += 570_000;
-    assert.equal(limits.consume("probe", keys), 0);
+  it("admits while every scope has room and answers the wait of the exhausted scope", () => {
+    const { state, now } = clock();
+    const limits = new RequestLimits(now, policies);
+    const ana = { ip: "10.0.0.1", account: "ana" };
+    assert.equal(limits.consume("probe", ana), 0);
+    assert.equal(limits.consume("probe", ana), 0);
+    state.now += 20_000;
+    // Ana's account window (2 per minute, opened at t0) is spent: 40 s left.
+    assert.equal(limits.consume("probe", ana), 40);
+    state.now += 40_000;
+    assert.equal(limits.consume("probe", ana), 0);
   });
 
-  it("a refused request counts, so hammering never shortens the wait", () => {
-    let now = 0;
-    const limits = new RequestLimits(() => now, {
-      probe: { ip: { max: 1, windowMs: MINUTE } },
+  it("a request refused by an individual scope spends nothing of the shared IP scope", () => {
+    const { now } = clock();
+    const limits = new RequestLimits(now, policies);
+    const ana = { ip: "10.0.0.1", account: "ana" };
+    assert.equal(limits.consume("probe", ana), 0);
+    assert.equal(limits.consume("probe", ana), 0);
+    for (let i = 0; i < 100; i++)
+      assert.equal(limits.consume("probe", ana), 60);
+    // The IP (3 per 10 min) holds 2 admitted requests: Bia behind the same NAT still gets one.
+    assert.equal(
+      limits.consume("probe", { ip: "10.0.0.1", account: "bia" }),
+      0,
+    );
+    // That was the IP's third: now the shared scope is legitimately exhausted for everyone.
+    assert.equal(
+      limits.consume("probe", { ip: "10.0.0.1", account: "caio" }),
+      600,
+    );
+  });
+
+  it("Retry-After is the time until every exhausted scope reopens, and a retry then is admitted", () => {
+    const { state, now } = clock();
+    const limits = new RequestLimits(now, {
+      probe: {
+        ip: { max: 2, windowMs: 10 * MINUTE },
+        account: { max: 2, windowMs: MINUTE },
+      },
     });
-    assert.equal(limits.consume("probe", { ip: "x" }), 0);
-    for (let i = 0; i < 50; i++) {
-      now += 1000;
-      assert.ok(limits.consume("probe", { ip: "x" }) > 0);
-    }
-    now = MINUTE;
-    assert.equal(limits.consume("probe", { ip: "x" }), 0);
+    const ana = { ip: "10.0.0.1", account: "ana" };
+    limits.consume("probe", ana);
+    limits.consume("probe", ana);
+    // Both scopes exhausted: the IP window (10 min) is the one that decides.
+    const wait = limits.consume("probe", ana);
+    assert.equal(wait, 600);
+    state.now += (wait - 1) * 1000;
+    assert.ok(limits.consume("probe", ana) > 0);
+    state.now += 1000;
+    assert.equal(limits.consume("probe", ana), 0);
   });
 
   it("refuses an unknown limit or a missing key instead of letting the request through", () => {
@@ -79,6 +100,59 @@ describe("request limits (M7.3, ADR 0031)", () => {
       () => limits.consume("probe", { ip: "10.0.0.1" }),
       /needs the account key/,
     );
+  });
+
+  describe("a full store (capacity 4)", () => {
+    const full = () => {
+      const { state, now } = clock();
+      const limits = new RequestLimits(now, policies, 4);
+      // The victim exhausts its window, then an attacker fills the remaining room.
+      assert.equal(limits.consume("one", { ip: "victim" }), 0);
+      assert.equal(limits.consume("one", { ip: "victim" }), 60);
+      for (const ip of ["a1", "a2", "a3"])
+        assert.equal(limits.consume("one", { ip }), 0);
+      assert.equal(limits.size, 4);
+      return { state, limits };
+    };
+
+    it("never drops a live window: a flood of new keys does not reset a blocked key", () => {
+      const { state, limits } = full();
+      for (let i = 0; i < 1000; i++) {
+        state.now += 10;
+        assert.ok(limits.consume("one", { ip: `flood-${i}` }) > 0);
+      }
+      assert.equal(limits.size, 4);
+      assert.ok(limits.consume("one", { ip: "victim" }) > 0);
+    });
+
+    it("is fail-closed and deterministic for new keys, while known keys are still decided", () => {
+      const { state, limits } = full();
+      state.now += 15_000;
+      // Earliest window ends at t0 + 60 s: the same answer for any new key.
+      assert.equal(limits.consume("one", { ip: "new-1" }), 45);
+      assert.equal(limits.consume("one", { ip: "new-2" }), 45);
+      assert.equal(limits.consume("one", { ip: "victim" }), 45);
+      assert.equal(limits.size, 4);
+    });
+
+    it("sweeps expired windows to admit new keys, and time frees the blocked one", () => {
+      const { state, limits } = full();
+      state.now += MINUTE;
+      assert.equal(limits.consume("one", { ip: "new-1" }), 0);
+      assert.equal(limits.size, 1);
+      assert.equal(limits.consume("one", { ip: "victim" }), 0);
+      assert.equal(limits.consume("one", { ip: "victim" }), 60);
+    });
+
+    it("keeps memory bounded under any sequence of keys", () => {
+      const { state, now } = clock();
+      const limits = new RequestLimits(now, policies, 50);
+      for (let i = 0; i < 5000; i++) {
+        state.now += 37;
+        limits.consume("probe", { ip: `ip-${i % 700}`, account: `acc-${i}` });
+        assert.ok(limits.size <= 50);
+      }
+    });
   });
 
   it("covers refresh, sign-up and order creation per IP and per account", () => {
@@ -108,38 +182,85 @@ describe("client IP (ADR 0031)", () => {
     socket: { remoteAddress: peer } as never,
     headers: forwarded === undefined ? {} : { "x-forwarded-for": forwarded },
   });
-  const trusted = new Set(["172.30.87.3"]);
+  const caddy = "172.30.87.3";
+  const trusted = new Set([caddy]);
 
-  it("is the TCP peer unless the peer is a trusted proxy", () => {
+  it("is the TCP peer unless the peer is a trusted proxy, whatever the header says", () => {
     assert.equal(
       resolveClientIp(request("::ffff:203.0.113.9", "198.51.100.1"), trusted),
       "203.0.113.9",
     );
+  });
+
+  it("reads X-Forwarded-For right to left: a client cannot choose its address", () => {
+    // Caddy replaces the header with the peer it saw ({remote_host} or {client_ip}).
+    assert.equal(
+      resolveClientIp(request(caddy, "203.0.113.7"), trusted),
+      "203.0.113.7",
+    );
+    // A proxy that appends instead: the client's own entries are on the left and never used.
     assert.equal(
       resolveClientIp(
-        request("172.30.87.3", "198.51.100.1, 203.0.113.7"),
+        request(caddy, "1.1.1.1, 198.51.100.1, 203.0.113.7"),
         trusted,
       ),
       "203.0.113.7",
     );
     assert.equal(
-      resolveClientIp(
-        request("172.30.87.3", ["10.0.0.1", "2001:DB8::1"]),
-        trusted,
-      ),
+      resolveClientIp(request(caddy, ["10.0.0.1", "2001:DB8::1"]), trusted),
       "2001:db8::1",
     );
   });
 
-  it("falls back to the peer when the proxy sent no valid address", () => {
-    for (const header of [undefined, "", "not-an-ip", "1.2.3.4, evil"])
-      assert.equal(
-        resolveClientIp(request("172.30.87.3", header), trusted),
-        "172.30.87.3",
-      );
+  it("skips trusted hops of a proxy chain, and only trusted ones", () => {
+    const chain = new Set([caddy, "172.30.87.9"]);
+    assert.equal(
+      resolveClientIp(
+        request(caddy, "6.6.6.6, 203.0.113.7, 172.30.87.9"),
+        chain,
+      ),
+      "203.0.113.7",
+    );
+    // The inner proxy is not listed: it is the client, whatever it forwarded.
+    assert.equal(
+      resolveClientIp(request(caddy, "203.0.113.7, 172.30.87.9"), trusted),
+      "172.30.87.9",
+    );
+  });
+
+  it("stops at an invalid entry and falls back to the last trusted hop", () => {
+    for (const header of [
+      undefined,
+      "",
+      "not-an-ip",
+      "1.2.3.4, evil",
+      "1.2.3.4,",
+    ])
+      assert.equal(resolveClientIp(request(caddy, header), trusted), caddy);
+    assert.equal(
+      resolveClientIp(request(caddy, "evil, 203.0.113.7"), trusted),
+      "203.0.113.7",
+    );
+    assert.equal(resolveClientIp(request(caddy, caddy), trusted), caddy);
     assert.equal(resolveClientIp(request(undefined), trusted), "unknown");
     assert.equal(normalizeIp("::ffff:10.1.2.3"), "10.1.2.3");
     assert.equal(normalizeIp("10.1.2.3/8"), "");
+  });
+
+  it("rate-limits IPv6 by /64 and IPv4 by address", () => {
+    assert.equal(ipLimitKey("203.0.113.7"), "203.0.113.7");
+    for (const ip of [
+      "2001:db8:1:2::1",
+      "2001:db8:1:2:ffff:ffff:ffff:ffff",
+      "2001:0db8:0001:0002::",
+    ])
+      assert.equal(ipLimitKey(ip), "2001:db8:1:2::/64");
+    assert.equal(ipLimitKey("::1"), "0:0:0:0::/64");
+    assert.equal(ipLimitKey("fe80::1:2:3:4"), "fe80:0:0:0::/64");
+    assert.notEqual(
+      ipLimitKey("2001:db8:1:3::1"),
+      ipLimitKey("2001:db8:1:2::1"),
+    );
   });
 });
 
@@ -328,10 +449,12 @@ describe("customer and order limits against PostgreSQL", databaseSuite, () => {
     assert.equal(limited.status, 429);
     assert.equal((await json(limited)).code, "RATE_LIMITED");
     assert.ok(Number(limited.headers.get("retry-after")) > 0);
-    // Store B has its own per-store window, but the IP already spent its ceiling across stores.
+    // The refusal spent nothing: store B has its own window and the IP one more sign-up across
+    // stores (4), after which the shared ceiling refuses B too.
+    assert.equal((await register(stores.b.slug)).status, 201);
     assert.equal((await register(stores.b.slug)).status, 429);
     assert.equal(await countIn(stores.a.id, "customers"), 3);
-    assert.equal(await countIn(stores.b.id, "customers"), 0);
+    assert.equal(await countIn(stores.b.id, "customers"), 1);
   });
 
   it("limits customer refresh per IP in the store", async () => {

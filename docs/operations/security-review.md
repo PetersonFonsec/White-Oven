@@ -24,7 +24,10 @@ Legenda: `[x]` verificado no repositório, `[ ]` falta conferir no ambiente do p
 - [x] Login de equipe, segundo fator, login de cliente e página de exclusão de conta: bloqueio progressivo por conta e por IP (5 e 30 falhas; 30 s dobrando até 15 min), sem revelar se o e-mail existe.
 - [x] Refresh de equipe e de cliente, cadastro de cliente, cotação e criação de pedido: limite por requisição, por IP e por conta onde a conta é conhecida, com `429 RATE_LIMITED` e `Retry-After` (`security.test.ts`). Tetos na ADR 0031.
 - [x] Recuperação de senha: não existe (Q-12). Quando for criada, entra em `LIMIT_POLICIES`.
-- [x] IP do cliente: par TCP, ou o `X-Forwarded-For` escrito por um proxy listado em `API_TRUSTED_PROXIES`; cabeçalho de qualquer outro par é ignorado (`security.test.ts`).
+- [x] Requisição recusada não consome nenhum escopo (um cliente bloqueado não gasta a cota de IP compartilhada); `Retry-After` é o tempo até todos os escopos esgotados reabrirem.
+- [x] Memória limitada (100 mil janelas) sem descartar janela viva: com o mapa cheio, janelas vencidas saem primeiro e, se ainda faltar espaço, a chave nova é recusada (fail closed). IPv6 é limitado por /64 (`security.test.ts`).
+- [x] IP do cliente: par TCP, ou o `X-Forwarded-For` de um proxy listado em `API_TRUSTED_PROXIES`, lido da direita para a esquerda, pulando só proxies confiáveis e parando em entrada inválida; o que o cliente escreve à esquerda nunca é usado (`security.test.ts`).
+- [ ] **No ambiente:** o Caddy da API usa `header_up X-Forwarded-For {client_ip}` (ou `{remote_host}`) e não confia em `X-Forwarded-For` de clientes; CDN ou balanceador, se houver, entra em `trusted_proxies` do Caddy, não na API (ADR 0031). Conferir com `curl -H 'X-Forwarded-For: 1.2.3.4'` que o limite não muda de balde.
 - [ ] **No ambiente:** `API_TRUSTED_PROXIES` igual ao IP do proxy que a API realmente vê (como `LEADS_TRUSTED_PROXIES` na landing). Sem isso, todos os clientes dividem um IP e o bloqueio de login vira bloqueio geral.
 - [ ] **No ambiente:** uma única instância da API (limites em memória). Se houver mais, rever antes.
 

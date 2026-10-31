@@ -25,7 +25,7 @@ import {
 import type { Request, Response } from "express";
 import { API_CONFIG, type ApiConfig } from "../config/config";
 import { ApiError, ApiErrorBody } from "../errors/api-error";
-import { clientIpOf } from "../security/http-security";
+import { clientIpOf, ipLimitKey } from "../security/http-security";
 import { RequestLimits, enforceLimit } from "../security/request-limits";
 import { PublicRoute } from "./route-access";
 import { PASSWORD_MAX_LENGTH } from "./password";
@@ -328,7 +328,12 @@ export class StaffAuthController {
   ): Promise<AccessTokenBody> {
     this.assertAllowedOrigin(req);
     // A 429 keeps the cookie: the session is fine, only this IP must wait (ADR 0031).
-    enforceLimit(this.limits, "staffRefresh", { ip: clientIpOf(req) }, res);
+    enforceLimit(
+      this.limits,
+      "staffRefresh",
+      { ip: ipLimitKey(clientIpOf(req)) },
+      res,
+    );
     try {
       return this.respond(res, await this.auth.refresh(refreshCookie(req)));
     } catch (error) {

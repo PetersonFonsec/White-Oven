@@ -26,11 +26,22 @@ export function securityHeaders() {
 
 const clientIps = new WeakMap<Request, string>();
 
+/** At most this many `X-Forwarded-For` hops are examined (a proxy chain is never longer). */
+const MAX_FORWARDED_HOPS = 16;
+
 /**
- * Resolves the client IP once per request. It is the TCP peer, unless the peer is one of
- * `trustedProxies` (exact addresses, `API_TRUSTED_PROXIES`): then it is the last address of
- * `X-Forwarded-For`, the one that proxy wrote. A header from anyone else is ignored, so a client
- * can never choose the IP its login lockout or rate limits are counted against.
+ * Resolves the client IP once per request (ADR 0031). Rules:
+ *
+ * - The peer of the TCP connection is the starting point. If it is not in `trustedProxies`
+ *   (exact addresses, `API_TRUSTED_PROXIES`), it is the client and `X-Forwarded-For` is ignored.
+ * - From a trusted peer, `X-Forwarded-For` is read **right to left**: each address was appended
+ *   by the hop before it. Addresses that are themselves trusted proxies are skipped; the first
+ *   one that is not is the client. Entries to its left were written by the client (or by
+ *   untrusted hops) and are never used, so a client cannot choose its own IP by sending the
+ *   header.
+ * - An entry that is not a valid IP stops the walk: nothing to its left can be trusted, and the
+ *   last trusted hop is used (fail safe: all such requests share that proxy's quota rather than a
+ *   forged one). The same happens when the header is missing or every entry is a trusted proxy.
  */
 export function clientIpResolver(trustedProxies: readonly string[]) {
   const trusted = new Set(trustedProxies.map(normalizeIp));
@@ -44,13 +55,48 @@ export function resolveClientIp(
   req: Pick<Request, "socket" | "headers">,
   trusted: ReadonlySet<string>,
 ): string {
-  const peer = normalizeIp(req.socket.remoteAddress ?? "");
-  if (!peer) return "unknown";
-  if (!trusted.has(peer)) return peer;
+  let client = normalizeIp(req.socket.remoteAddress ?? "");
+  if (!client) return "unknown";
+  if (!trusted.has(client)) return client;
   const header = req.headers["x-forwarded-for"];
+  // Node joins repeated headers with ", ": the order of hops is kept.
   const raw = Array.isArray(header) ? header.join(",") : (header ?? "");
-  const last = normalizeIp(raw.split(",").at(-1)?.trim() ?? "");
-  return last || peer;
+  const hops = raw.split(",").map((hop) => hop.trim());
+  for (
+    let i = hops.length - 1;
+    i >= 0 && hops.length - i <= MAX_FORWARDED_HOPS;
+    i--
+  ) {
+    const hop = normalizeIp(hops[i]!);
+    if (!hop) break;
+    client = hop;
+    if (!trusted.has(hop)) break;
+  }
+  return client;
+}
+
+/**
+ * The key a client IP is rate-limited under: IPv4 as is, IPv6 by its /64 prefix. One subscriber
+ * usually gets a whole /64, so per-address keys would let a single host mint unlimited keys
+ * (a fresh quota each, and a way to fill `RequestLimits`).
+ */
+export function ipLimitKey(ip: string): string {
+  if (isIP(ip) !== 6) return ip;
+  const [head = "", tail = ""] = ip.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  // An embedded IPv4 tail (::ffff:a.b.c.d forms) only affects the last 32 bits, outside the /64.
+  const groups = ip.includes("::")
+    ? [
+        ...left,
+        ...Array<string>(8 - left.length - right.length).fill("0"),
+        ...right,
+      ]
+    : left;
+  return `${groups
+    .slice(0, 4)
+    .map((group) => (parseInt(group, 16) || 0).toString(16))
+    .join(":")}::/64`;
 }
 
 /** The request's client IP (the TCP peer if the resolver did not run). */
