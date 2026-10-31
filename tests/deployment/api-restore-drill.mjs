@@ -767,6 +767,49 @@ try {
     ],
   });
 
+  // 5c. Activation fails before its PostgreSQL commit point: rolled back, never released.
+  for (const point of ["activation_before_grant", "activation_txn"]) {
+    const op = nextOp();
+    refused(
+      ["restore", "ensaio-1", "--confirm-offline"],
+      /Rollback concluído/,
+      {
+        WHITEOVEN_TEST_FAIL_AT: point,
+        WHITEOVEN_TEST_OPERATION_ID: op,
+      },
+    );
+    assert.equal(opState(op).failed_phase, "ACTIVATING");
+    assertClosed(op, "ROLLED_BACK");
+    assertLiveIntact();
+  }
+  {
+    const op = nextOp();
+    refused(
+      ["restore", "ensaio-1", "--confirm-offline"],
+      /Rollback automático falhou/,
+      {
+        WHITEOVEN_TEST_FAIL_AT: "activation_before_grant",
+        WHITEOVEN_TEST_ROLLBACK_FAIL_AT: "rollback_db_done",
+        WHITEOVEN_TEST_OPERATION_ID: op,
+      },
+    );
+    assert.equal(opState(op).phase, "ROLLBACK_FAILED");
+    assert.equal(appCanConnect(), "f");
+    refused(["restore-finish", op], /não chegou ao PostgreSQL/);
+    ops(["restore-rollback", op]);
+    assertClosed(op, "ROLLED_BACK");
+    assertLiveIntact();
+  }
+  record.scenarios.push({
+    name: "falha na ativação antes do commit",
+    points: ["activation_before_grant", "activation_txn"],
+    checks: [
+      "ACTIVATING gravado antes do GRANT; GRANT e marca restored numa única transação",
+      "falha antes ou dentro da transação: nada liberado, rollback automático",
+      "rollback da ativação com falha: ROLLBACK_FAILED sem CONNECT; restore-finish recusado; nova tentativa de rollback conclui",
+    ],
+  });
+
   // 6. Two full restores.
   const full = [];
   for (const label of ["primeira", "segunda"]) {
@@ -834,6 +877,80 @@ try {
       log: restored.stdout.match(/restore op=.*/)[0],
     });
   }
+  // Interrupted after the activation committed: the verified restored set is in use; rollback
+  // is refused and restore-finish completes the bookkeeping, also after PostgreSQL restarts.
+  {
+    const op = nextOp();
+    const killed = ops(["restore", "ensaio-1", "--confirm-offline"], {
+      allowFailure: true,
+      env: {
+        WHITEOVEN_TEST_KILL_AT: "activation_after_grant",
+        WHITEOVEN_TEST_OPERATION_ID: op,
+      },
+    });
+    assert.equal(killed.signal, "SIGKILL");
+    assert.equal(opState(op).phase, "ACTIVATING");
+    assert.equal(dbComment("whiteoven"), `whiteoven-restore restored op=${op}`);
+    assert.equal(appCanConnect(), "t");
+    refused(["restore-rollback", op], /já foi confirmada no PostgreSQL/);
+    assert.equal(
+      opState(op).phase,
+      "ACTIVATING",
+      "a refused rollback changes nothing",
+    );
+    compose("restart", "postgres");
+    compose("up", "-d", "--wait", "postgres");
+    assert.equal(appCanConnect(), "t");
+    up();
+    assert.equal(await loginStatus(b), 200, "API on the verified restored set");
+    assert.equal(await loginStatus(a), 401);
+    assertReferencedImagesComplete();
+    assert.match(
+      ops(["restore-status"]).stdout,
+      new RegExp(`${op} fase=ACTIVATING .*\\[PENDENTE\\]`),
+    );
+    refused(
+      ["restore", "ensaio-1", "--confirm-offline"],
+      /Há restauração incompleta/,
+    );
+    ops(["restore-finish", op]);
+    const s = opState(op);
+    assert.equal(s.phase, "COMPLETE");
+    assert.match(
+      readFileSync(join(state, "api-restore.log"), "utf8"),
+      new RegExp(`restore op=${op} `),
+    );
+    full.push({ op, s });
+  }
+  {
+    const op = nextOp();
+    refused(
+      ["restore", "ensaio-1", "--confirm-offline"],
+      /conclua o registro com restore-finish/,
+      {
+        WHITEOVEN_TEST_FAIL_AT: "activation_before_complete",
+        WHITEOVEN_TEST_OPERATION_ID: op,
+      },
+    );
+    assert.equal(opState(op).phase, "ACTIVATING");
+    assert.equal(appCanConnect(), "t");
+    ops(["restore-finish", op]);
+    assert.equal(opState(op).phase, "COMPLETE");
+    refused(["restore-finish", op], /Só uma operação interrompida/);
+    full.push({ op, s: opState(op) });
+    up();
+    assert.equal(await loginStatus(b), 200);
+    assert.equal(customerStatus(a.id), "DELETED:true");
+  }
+  record.scenarios.push({
+    name: "interrupção depois do commit da ativação",
+    points: ["activation_after_grant", "activation_before_complete"],
+    checks: [
+      "kill logo após o GRANT: ACTIVATING em disco, banco com marca restored e CONNECT; conjunto já conferido",
+      "rollback recusado sem alterar o estado; reinício do PostgreSQL e da API: API opera só sobre o conjunto conferido",
+      "falha antes de persistir COMPLETE: nada desfeito; restore-finish conclui o registro",
+    ],
+  });
   assert.notEqual(full[0].s.candidate, full[1].s.candidate);
   assert.equal(
     dbComment(full[0].s.previous),
@@ -845,7 +962,9 @@ try {
   assert.equal(restoreDatabases(), "");
   assert.deepEqual(volumeEntries(), ["tenants"]);
   for (const { op } of full) assert.equal(opState(op).phase, "CLEANED");
-  record.scenarios.at(-1).checks = [
+  record.scenarios.find(
+    (x) => x.name === "restauração completa (segunda)",
+  ).checks = [
     "exclusões anteriores e posteriores à cópia mantidas (DELETED, sem e-mail, login 401, sem endereço)",
     "toda imagem referenciada existe e está completa; imagens dos uploads concorrentes idênticas byte a byte",
     "candidatos distintos por operação; banco anterior de cada uma preservado até restore-cleanup",

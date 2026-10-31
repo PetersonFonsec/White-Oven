@@ -29,14 +29,14 @@ LEDGER_FORMAT=whiteoven-customer-erasures-2
 BACKUP_FORMAT=whiteoven-api-backup-2
 # Restore phases, in order. Rollback and status read them from the operation's state file.
 PHASES=(PREPARING CANDIDATE_CREATED CANDIDATE_RESTORED IMAGES_STAGED API_STOPPED
- ERASURES_REAPPLIED SWAP_STARTED DB_SWAPPING DB_SWAPPED IMAGES_SWAPPING IMAGES_SWAPPED COMPLETE)
+ ERASURES_REAPPLIED SWAP_STARTED DB_SWAPPING DB_SWAPPED IMAGES_SWAPPING IMAGES_SWAPPED ACTIVATING COMPLETE)
 
 usage() {
  cat >&2 <<'EOF'
 Uso: bash ops/api-backup.sh COMANDO
   backup ID | verify-backup ID | export-erasures DIR | prune-backups
   restore ID --confirm-offline [--erasures DIARIO.csv [--accept-erasures-until EXPORTADO_EM]]
-  restore-status | restore-rollback OPERACAO | restore-cleanup OPERACAO
+  restore-status | restore-rollback OPERACAO | restore-finish OPERACAO | restore-cleanup OPERACAO
 EOF
  exit 1
 }
@@ -158,6 +158,23 @@ active_ops() {
 candidate_tag() { echo "whiteoven-restore candidate op=$1"; }
 previous_tag() { echo "whiteoven-restore previous op=$1"; }
 restored_tag() { echo "whiteoven-restore restored op=$1"; }
+# The activation is one PostgreSQL transaction (GRANT CONNECT plus the "restored" mark), so the
+# database says whether it happened, whatever the local state file shows.
+activation_committed() {
+ db_exists "$db" && [[ "$(db_comment "$db")" == "$(restored_tag "$op")" ]] &&
+  [[ "$(query postgres "select has_database_privilege('whiteoven_app', '$db', 'CONNECT')")" == t ]]
+}
+# Bookkeeping after a committed activation: COMPLETE, the erasure head this host now knows, the
+# log line. Repeating it is harmless.
+finish_restore() {
+ local line
+ set_phase COMPLETE
+ restoring=0
+ set_known_head "${S[lineage]}" ${S[new_head]}
+ line="$(date -u +%Y-%m-%dT%H:%M:%SZ) restore op=$op id=${S[backup]} previous_db=${S[previous]} previous_images=${S[aside]} sources=${S[erasure_sources]} known_erasures=${S[known_erasures]} ${S[reapply_result]}"
+ echo "$line" >> "$state_dir/api-restore.log"
+ echo "Restauração offline concluída: $line"
+}
 
 # --- Customer erasure registry (ADR 0029): lineage plus a gap-free SHA-256 chain in the database.
 has_registry() {
@@ -360,6 +377,10 @@ verify_backup() {
 # dies at any earlier point leaves the API blocked.
 rollback_resources() {
  local cand="${S[candidate]}" prev="${S[previous]}" current
+ if activation_committed; then
+  echo "A ativação de $op já foi confirmada no PostgreSQL: o conjunto restaurado foi conferido e está em uso. Rollback recusado; conclua com restore-finish $op." >&2
+  return 1
+ fi
  in_api "set -eu
   cd $images_dir
   P='${S[aside]}'; R='${S[staging]}'; ORIG='${S[original_images]:-unknown}'
@@ -426,6 +447,12 @@ run_rollback() {
 restore_failed() {
  local failed="${S[phase]:-PREPARING}"
  [[ -z "$last_error" ]] || echo "Comando que falhou: $last_error" >&2
+ if [[ "$failed" == ACTIVATING ]] && activation_committed; then
+  # Past the commit point: the verified restored set is in use. Undoing it now would pull the
+  # database from under a released API; only the bookkeeping is missing.
+  echo "Restauração $op falhou depois de a ativação ser confirmada no PostgreSQL (conjunto conferido, CONNECT devolvido). Nada foi desfeito; conclua o registro com restore-finish $op." >&2
+  return
+ fi
  S[failed_phase]="$failed"
  set_phase FAILED
  if (( $(rank "$failed") < $(rank SWAP_STARTED) )); then
@@ -445,7 +472,7 @@ restore_failed() {
 }
 
 case "$command" in
- backup|restore|export-erasures|prune-backups|restore-rollback|restore-cleanup) acquire_lock ;;
+ backup|restore|export-erasures|prune-backups|restore-rollback|restore-finish|restore-cleanup) acquire_lock ;;
 esac
 new_scratch
 
@@ -512,8 +539,17 @@ case "$command" in
    COMPLETE) fail "A operação $op foi concluída. Para voltar, restaure a cópia pre-restore-$op (runbook)." ;;
    ROLLED_BACK|CLEANED) echo "A operação $op já está encerrada (${S[phase]})."; exit 0 ;;
   esac
+  ! activation_committed ||
+   fail "A ativação de $op já foi confirmada no PostgreSQL: o conjunto restaurado foi conferido e está em uso. Rollback recusado; conclua com restore-finish $op. Para voltar, restaure a cópia pre-restore-$op."
   run_rollback || fail "Rollback de $op incompleto (ROLLBACK_FAILED); a API continua bloqueada e nada além do relatado foi alterado. Evidências em $restores_dir/$op/rollback.log. Corrija a causa e repita, ou siga a recuperação manual do runbook (seção 7)."
   echo "Rollback de $op concluído: banco e imagens originais em uso e recursos da operação removidos. Suba a API e confira." ;;
+ restore-finish)
+  load_state "${1:-}"
+  [[ "${S[phase]}" =~ ^(ACTIVATING|ROLLING_BACK|ROLLBACK_FAILED)$ ]] || fail "Só uma operação interrompida na ativação pode ser concluída; a $op está em ${S[phase]}."
+  activation_committed ||
+   fail "A ativação de $op não chegou ao PostgreSQL (o banco não tem a marca restored ou o CONNECT da API); nada foi liberado. Use restore-rollback $op."
+  verify_live_set restore || fail "O conjunto em uso não confere; investigue antes de concluir (runbook, seção 7)."
+  finish_restore ;;
  restore-cleanup)
   load_state "${1:-}"
   [[ "${S[phase]}" == COMPLETE ]] || fail "Só uma restauração concluída tem o que limpar; a $op está em ${S[phase]} (use restore-rollback)."
@@ -709,14 +745,23 @@ case "$command" in
   # The restored set must match before the API can connect: every image the restored database
   # references is in tenants, complete and decodable.
   verify_live_set restore || fail 'O conjunto restaurado não confere (imagem referenciada ausente ou inválida); nada foi liberado.'
-  query postgres "grant connect on database \"$db\" to whiteoven_app, whiteoven_platform" > /dev/null
-  query postgres "comment on database \"$db\" is '$(restored_tag "$op")'" > /dev/null
-  set_phase COMPLETE
-  restoring=0
-  set_known_head "$cand_lineage" "$new_seq" "$new_hash"
-  line="$(date -u +%Y-%m-%dT%H:%M:%SZ) restore op=$op id=$id previous_db=$previous previous_images=${S[aside]} sources=${S[erasure_sources]} known_erasures=$known $result"
-  echo "$line" >> "$state_dir/api-restore.log"
-  echo "Restauração offline concluída: $line"
+  # Activation. ACTIVATING is on disk before anything is granted; the grant and the "restored"
+  # mark commit together in PostgreSQL, which is the commit point: before it the API cannot
+  # connect and a rollback applies; after it the set in use is the verified restored one and
+  # only bookkeeping remains (finish_restore, or restore-finish after a crash).
+  S[new_head]="$new_seq $new_hash"; S[known_erasures]="$known"; S[reapply_result]="$result"
+  set_phase ACTIVATING
+  test_hook activation_before_grant
+  {
+   echo 'begin;'
+   echo "grant connect on database \"$db\" to whiteoven_app, whiteoven_platform;"
+   echo "comment on database \"$db\" is '$(restored_tag "$op")';"
+   [[ "${WHITEOVEN_TEST_FAIL_AT:-}" != activation_txn ]] || echo 'select 1 / 0;'
+   echo 'commit;'
+  } | psql_on postgres > /dev/null
+  test_hook activation_after_grant
+  test_hook activation_before_complete
+  finish_restore
   echo "A API continua parada. Suba-a (o migrate roda antes), confira conforme o runbook e depois limpe com restore-cleanup $op." ;;
  *) usage ;;
 esac

@@ -110,6 +110,38 @@ test("internal corruption with a correct RIFF size is reported", async () => {
   assert.match(result.problems[3], /VP8L/);
 });
 
+test("an oversized file is refused without being decoded", async () => {
+  const big = Buffer.alloc(16 * 1024 * 1024 + 1);
+  big.write("RIFF", 0, "latin1");
+  big.writeUInt32LE(big.length - 8, 4);
+  big.write("WEBP", 8, "latin1");
+  const result = await check([{ thumbnail: await lossless(), menu: big }]);
+  assert.equal(result.problems.length, 1);
+  assert.match(result.problems[0], /menu\.webp: maior que/);
+});
+
+test("a directory where a variant should be is reported as missing", async () => {
+  const { dir, list } = store([{ thumbnail: await lossless() }]);
+  try {
+    const [tenant, asset] = list.trim().split(" ");
+    mkdirSync(join(dir, "tenants", tenant, asset, "menu.webp"));
+    const result = await checkAssets(list, dir, sharp);
+    assert.match(result.problems[0], /menu\.webp: ausente/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an image above the pixel limit is refused", async () => {
+  const huge = await sharp({
+    create: { width: 6000, height: 6000, channels: 3, background: "#888" },
+  })
+    .webp()
+    .toBuffer();
+  const result = await check([{ thumbnail: await lossless(), menu: huge }]);
+  assert.match(result.problems[0], /não decodifica .*pixel limit/);
+});
+
 test("a malformed list line is reported instead of skipped", async () => {
   const { dir } = store([]);
   try {

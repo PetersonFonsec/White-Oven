@@ -12,13 +12,21 @@
 // is not VP8, VP8L or VP8X, or whose bitstream signature is wrong; and any content libwebp refuses
 // to decode in full. What it cannot detect: altered pixel data that still decodes. No checksum is
 // recorded when an image is written, so nothing can tell those bytes from the original ones.
-import { readFile } from "node:fs/promises";
+//
+// Resources: variants are checked one at a time, so at most one file and one decoded bitmap are
+// in memory (measured: peak RSS about 220 MB flat from 50 to 500 assets, about 60 ms per asset
+// with a 1600 px menu variant; docs/operations/api-backup-restore.md). Files above
+// MAX_VARIANT_BYTES are refused unread and Sharp refuses images above 30 megapixels.
+import { readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const VARIANTS = ["thumbnail", "menu"];
+// Variants are at most 1600 px WebP at quality 82 (ADR 0010), far below this. A larger file is
+// not one the API wrote, and is refused before it is read into memory.
+const MAX_VARIANT_BYTES = 16 * 1024 * 1024;
 
 /** Structural problem of a WebP file, or null when the container and bitstream headers hold. */
 export function webpStructureProblem(bytes) {
@@ -93,6 +101,12 @@ export async function checkAssets(listText, dir, sharp) {
       const path = `tenants/${tenant}/${asset}/${variant}.webp`;
       let bytes;
       try {
+        const info = await stat(join(dir, path));
+        if (!info.isFile()) throw new Error("not a file");
+        if (info.size > MAX_VARIANT_BYTES) {
+          problems.push(`${path}: maior que ${MAX_VARIANT_BYTES} bytes`);
+          continue;
+        }
         bytes = await readFile(join(dir, path));
       } catch {
         problems.push(`${path}: ausente`);
