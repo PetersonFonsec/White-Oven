@@ -29,8 +29,8 @@ Prazos e preços das lojas mudam; confira nas páginas oficiais da Apple e do Go
 - [ ] Ícone `apps/mobile/assets/tenants/{slug}/icon.png`: PNG 1024 x 1024 **sem transparência**.
 - [ ] Projeto EAS criado na organização: em `apps/mobile`, com `WHITEOVEN_TENANT={slug}`, rodar `eas init` e copiar o id para `easProjectId`; `expoOwner` recebe o nome da organização.
 - [ ] Perfis `{slug}-preview` e `{slug}-production` no `eas.json` (o teste exige).
-- [ ] Aviso de privacidade aprovado no manifesto (M7.2). O texto demonstrativo bloqueia o build de loja.
-- [ ] `pnpm mobile:release-check {slug} store` sem pendências. Com o EAS CLI logado, `--eas` também confere a URL da API no ambiente do EAS, e `--submit --platform ios|android|all` confere o perfil de submit.
+- [ ] Termos de uso e política de privacidade aprovados pelo jurídico e publicados na API pelo operador (`POST /v1/platform/tenants/{tenantId}/legal-documents`, ADR 0030). Versão `demo-` bloqueia o build de loja.
+- [ ] `pnpm mobile:release-check {slug} store` sem pendências. Com o EAS CLI logado, `--eas` também confere a URL da API no ambiente do EAS e se essa API serve os dois documentos aprovados da loja, e `--submit --platform ios|android|all` confere o perfil de submit.
 
 ## 4. Projeto EAS da loja
 
@@ -52,8 +52,8 @@ Prazos e preços das lojas mudam; confira nas páginas oficiais da Apple e do Go
 
 - [ ] Nome, descrição curta e completa, categoria _Comida e bebida_, classificação etária.
 - [ ] Capturas de tela da loja real (iPhone de 6,9" e Android), sem dados pessoais reais.
-- [ ] URL da política de privacidade da pizzaria (M7.2).
-- [ ] **Google Play:** formulário de segurança de dados e **URL para pedir a exclusão da conta** fora do app. O app já exclui a conta pela tela Minha conta, mas o Google exige também um endereço na web, que ainda não existe (M7.2).
+- [ ] URL da política de privacidade da pizzaria: `{WHITEOVEN_API_URL}/lojas/{slug}/privacidade` (ADR 0030).
+- [ ] **Google Play:** formulário de segurança de dados e **URL para pedir a exclusão da conta** fora do app: `{WHITEOVEN_API_URL}/lojas/{slug}/excluir-conta`. O app também exclui a conta pela tela Minha conta.
 - [ ] **Apple:** rótulos de privacidade (dados de contato, endereço, histórico de compras, identificador do aparelho para push), conta de demonstração para o revisor com dados fictícios numa loja aberta, e nota explicando que o app é o canal de pedidos da própria pizzaria.
 - [ ] Contato de suporte da pizzaria.
 

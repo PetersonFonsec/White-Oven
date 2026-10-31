@@ -15,7 +15,8 @@ import {
   lockCustomer,
 } from "../tenancy/tenant-transaction";
 import { CustomerLoginThrottle } from "./customer-login-throttle";
-import type { Registration } from "./customer-rules";
+import type { LegalVersions, Registration } from "./customer-rules";
+import { currentLegalDocuments } from "../legal/legal-documents.service";
 
 /** Customer sessions end 30 days after sign-in; refreshing rotates the token, never extends. */
 export const CUSTOMER_SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
@@ -35,6 +36,13 @@ export interface CustomerProfile {
   phone: string | null;
   privacyPolicyVersion: string;
   acceptedAt: string;
+  /** The terms of use version last accepted; null for accounts created before M7.2. */
+  termsOfUseVersion: string | null;
+  /**
+   * The store published a privacy policy or terms version this customer has not accepted yet
+   * (ADR 0030). The app shows the new text and records the acceptance.
+   */
+  legalUpdateRequired: boolean;
 }
 
 export interface CustomerTokens {
@@ -54,6 +62,13 @@ export const invalidCustomerCredentials = () =>
     HttpStatus.UNAUTHORIZED,
     "INVALID_CREDENTIALS",
     "Invalid e-mail or password.",
+  );
+
+const legalUnavailable = () =>
+  new ApiError(
+    HttpStatus.CONFLICT,
+    "LEGAL_DOCUMENTS_UNAVAILABLE",
+    "This store has not published its privacy policy and terms of use yet.",
   );
 
 export const invalidCustomerSession = () =>
@@ -87,6 +102,7 @@ export class CustomerAuth {
     const passwordHash = await hashPassword(registration.password);
     try {
       return await this.transactions.run(async (em) => {
+        const documents = await acceptedDocuments(em, registration);
         const [row] = await em.execute<{ id: string }[]>(
           `insert into customers (tenant_id, name, email, phone, password_hash, privacy_policy_version, accepted_at)
            values (current_setting('app.tenant_id')::uuid, ?, ?, ?, ?, ?, now()) returning id`,
@@ -98,6 +114,7 @@ export class CustomerAuth {
             registration.privacyPolicyVersion,
           ],
         );
+        await recordAcceptances(em, row!.id, documents);
         return this.startSession(em, row!.id);
       });
     } catch (error) {
@@ -227,9 +244,20 @@ export class CustomerAuth {
       const [row] = await em.execute<
         (Omit<CustomerProfile, "acceptedAt"> & { acceptedAt: Date })[]
       >(
-        `select id, name, email, phone, privacy_policy_version as "privacyPolicyVersion",
-                accepted_at as "acceptedAt"
-           from customers where id = ?`,
+        `select c.id, c.name, c.email, c.phone, c.privacy_policy_version as "privacyPolicyVersion",
+                c.accepted_at as "acceptedAt",
+                (select d.version from customer_legal_acceptances a
+                   join legal_documents d on d.tenant_id = a.tenant_id and d.id = a.document_id
+                  where a.customer_id = c.id and d.kind = 'TERMS_OF_USE'
+                  order by d.revision desc limit 1) as "termsOfUseVersion",
+                exists (
+                  select 1 from (
+                    select distinct on (d.kind) d.id from legal_documents d
+                     order by d.kind, d.revision desc) cur
+                   where not exists (select 1 from customer_legal_acceptances a
+                                      where a.customer_id = c.id and a.document_id = cur.id)
+                ) as "legalUpdateRequired"
+           from customers c where c.id = ?`,
         [customerOf()],
       );
       return { ...row!, acceptedAt: new Date(row!.acceptedAt).toISOString() };
@@ -237,12 +265,30 @@ export class CustomerAuth {
   }
 
   /**
-   * Deletes the account (domain model: exclusion anonymizes). Asks for the password again, so a
-   * stolen access token alone cannot delete an account. In one transaction: name, e-mail, phone
-   * and password become null, the addresses are deleted, the orders lose the name, phone, address
-   * and notes they copied (M4.3), push devices are deleted and every session is revoked. The id
-   * stays, for those orders.
+   * Deletes the account (domain model: exclusion anonymizes, see `erase`). Asks for the password
+   * again, so a stolen access token alone cannot delete an account.
    */
+  /**
+   * Records that the signed-in customer accepted the store's current privacy policy and terms
+   * (ADR 0030). Both versions must be the current ones, as at sign-up; accepting a document
+   * already accepted is a no-op, so a retry is safe.
+   */
+  async acceptLegalDocuments(versions: LegalVersions): Promise<void> {
+    const customerId = customerOf();
+    await this.transactions.run(
+      async (em) => {
+        const documents = await acceptedDocuments(em, versions);
+        await recordAcceptances(em, customerId, documents);
+        await em.execute(
+          `update customers set privacy_policy_version = ?, accepted_at = now(), updated_at = now()
+            where id = ? and status = 'ACTIVE'`,
+          [versions.privacyPolicyVersion, customerId],
+        );
+      },
+      { lockCustomer: true },
+    );
+  }
+
   async deleteAccount(password: string): Promise<void> {
     const customerId = customerOf();
     const [row] = await this.transactions.run((em) =>
@@ -261,35 +307,43 @@ export class CustomerAuth {
     // same account; the Argon2id check above ran without it.
     await this.transactions.run(
       async (em) => {
-        const [changed] = await em.execute<{ id: string }[]>(
-          `update customers
-            set status = 'DELETED', name = null, email = null, phone = null,
-                password_hash = null, deleted_at = now(), updated_at = now()
-          where id = ? and status = 'ACTIVE' and password_hash = ?
-          returning id`,
-          [customerId, row!.passwordHash],
-        );
-        if (!changed) throw invalidCustomerSession();
-        await em.execute(
-          "delete from customer_addresses where customer_id = ?",
-          [customerId],
-        );
-        await em.execute(
-          "delete from customer_push_devices where customer_id = ?",
-          [customerId],
-        );
-        // Orders keep items and totals for the store, without the customer's personal data.
-        await em.execute(
-          `update orders
-              set customer_name = null, customer_phone = null, delivery_address = null,
-                  notes = null, anonymized_at = now(), updated_at = now()
-            where customer_id = ? and anonymized_at is null`,
-          [customerId],
-        );
-        await revoke(em, "s.customer_id = ?", [customerId], "ACCOUNT_DELETED");
+        if (!(await erase(em, customerId, row!.passwordHash)))
+          throw invalidCustomerSession();
       },
       { lockCustomer: true },
     );
+  }
+
+  /**
+   * The same deletion, outside the app (ADR 0030, the web page Google Play requires): the e-mail
+   * and password identify the account, with the sign-in throttle and the same answer for an
+   * unknown e-mail and a wrong password, so the page reveals no account.
+   */
+  async deleteAccountWithCredentials(
+    email: string,
+    password: string,
+    ip: string,
+  ): Promise<void> {
+    const [customer] = await this.transactions.run((em) =>
+      em.execute<{ id: string; passwordHash: string }[]>(
+        `select id, password_hash as "passwordHash" from customers
+          where email = ? and status = 'ACTIVE'`,
+        [email],
+      ),
+    );
+    const ok = await verifyPassword(customer?.passwordHash ?? null, password);
+    const erased =
+      customer &&
+      ok &&
+      (await this.transactions.run(async (em) => {
+        await lockCustomer(em, customer.id);
+        return erase(em, customer.id, customer.passwordHash);
+      }));
+    if (!erased) {
+      this.throttle.recordFailure(tenantOf(), email, ip);
+      throw invalidCustomerCredentials();
+    }
+    this.throttle.recordSuccess(tenantOf(), email);
   }
 
   private async startSession(
@@ -337,6 +391,87 @@ export function customerOf(): string {
   const { actor } = currentTenantContext();
   if (actor.type !== "customer") throw new Error("customer route required");
   return actor.customerId;
+}
+
+/**
+ * Anonymizes one account, under the customer lock, only if it is still ACTIVE with the password
+ * hash that was checked. In one transaction: name, e-mail, phone and password become null, the
+ * addresses are deleted, the orders lose the name, phone, address and notes they copied (M4.3),
+ * push devices are deleted and every session is revoked. The id stays, for those orders, and so
+ * do the legal acceptances, which hold no personal data (ADR 0030).
+ */
+async function erase(
+  em: EntityManager,
+  customerId: string,
+  passwordHash: string,
+): Promise<boolean> {
+  const [changed] = await em.execute<{ id: string }[]>(
+    `update customers
+        set status = 'DELETED', name = null, email = null, phone = null,
+            password_hash = null, deleted_at = now(), updated_at = now()
+      where id = ? and status = 'ACTIVE' and password_hash = ?
+      returning id`,
+    [customerId, passwordHash],
+  );
+  if (!changed) return false;
+  await em.execute("delete from customer_addresses where customer_id = ?", [
+    customerId,
+  ]);
+  await em.execute("delete from customer_push_devices where customer_id = ?", [
+    customerId,
+  ]);
+  // Orders keep items and totals for the store, without the customer's personal data.
+  await em.execute(
+    `update orders
+        set customer_name = null, customer_phone = null, delivery_address = null,
+            notes = null, anonymized_at = now(), updated_at = now()
+      where customer_id = ? and anonymized_at is null`,
+    [customerId],
+  );
+  await revoke(em, "s.customer_id = ?", [customerId], "ACCOUNT_DELETED");
+  return true;
+}
+
+/**
+ * The store's current documents, if the versions the customer was shown are exactly them. A
+ * publication between showing and accepting answers 409 `LEGAL_VERSION_OUTDATED` with the
+ * current versions, so the app shows the new text instead of recording an acceptance of text
+ * the customer never saw.
+ */
+async function acceptedDocuments(
+  em: EntityManager,
+  versions: LegalVersions,
+): Promise<string[]> {
+  const current = await currentLegalDocuments(em);
+  if (!current.privacyPolicy || !current.termsOfUse) throw legalUnavailable();
+  if (
+    current.privacyPolicy.version !== versions.privacyPolicyVersion ||
+    current.termsOfUse.version !== versions.termsOfUseVersion
+  )
+    throw new ApiError(
+      HttpStatus.CONFLICT,
+      "LEGAL_VERSION_OUTDATED",
+      "The privacy policy or the terms of use changed. Read the current version.",
+      {
+        privacyPolicyVersion: current.privacyPolicy.version,
+        termsOfUseVersion: current.termsOfUse.version,
+      },
+    );
+  return [current.privacyPolicy.id, current.termsOfUse.id];
+}
+
+async function recordAcceptances(
+  em: EntityManager,
+  customerId: string,
+  documentIds: string[],
+): Promise<void> {
+  for (const documentId of documentIds)
+    await em.execute(
+      `insert into customer_legal_acceptances (tenant_id, customer_id, document_id)
+       values (current_setting('app.tenant_id')::uuid, ?, ?)
+       on conflict (tenant_id, customer_id, document_id) do nothing`,
+      [customerId, documentId],
+    );
 }
 
 async function revoke(

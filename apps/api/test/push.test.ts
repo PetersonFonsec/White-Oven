@@ -106,6 +106,7 @@ describe("M5.5 order push notifications", databaseSuite, () => {
         email: `push-${randomUUID()}@teste.invalid`,
         password: PASSWORD,
         privacyPolicyVersion: "2026-10",
+        termsOfUseVersion: "2026-10",
       },
     );
     assert.equal(register.status, 201);

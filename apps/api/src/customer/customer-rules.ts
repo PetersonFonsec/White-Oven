@@ -57,20 +57,49 @@ function optionalText(
   return parsed === null ? { ok: false } : { ok: true, value: parsed };
 }
 
-export interface Registration {
+/** The versions of the store's legal documents the app showed and the customer accepted. */
+export interface LegalVersions {
+  privacyPolicyVersion: string;
+  termsOfUseVersion: string;
+}
+
+export interface Registration extends LegalVersions {
   name: string;
   email: string;
   password: string;
   phone: string | null;
-  /** The privacy policy version the app showed and the customer accepted (text arrives in M7.2). */
-  privacyPolicyVersion: string;
+}
+
+const LEGAL_KEYS = ["privacyPolicyVersion", "termsOfUseVersion"] as const;
+
+function legalVersions(
+  raw: Record<string, unknown>,
+  paths: string[],
+): LegalVersions {
+  const [privacy, terms] = LEGAL_KEYS.map((key) => {
+    const version = text(raw[key], POLICY_VERSION_MAX_LENGTH);
+    if (version === null) paths.push(key);
+    return version ?? "";
+  });
+  return { privacyPolicyVersion: privacy!, termsOfUseVersion: terms! };
+}
+
+/** `POST me/legal-acceptances` (ADR 0030): exactly the two current versions. */
+export function validateLegalAcceptance(
+  raw: unknown,
+): RuleResult<LegalVersions> {
+  if (!plain(raw)) return { ok: false, paths: [""] };
+  const paths = keyIssues(raw, LEGAL_KEYS);
+  const versions = legalVersions(raw, paths);
+  if (paths.length) return { ok: false, paths: [...new Set(paths)] };
+  return { ok: true, value: versions };
 }
 
 export function validateRegistration(raw: unknown): RuleResult<Registration> {
   if (!plain(raw)) return { ok: false, paths: [""] };
   const paths = keyIssues(
     raw,
-    ["name", "email", "password", "privacyPolicyVersion"],
+    ["name", "email", "password", ...LEGAL_KEYS],
     ["phone"],
   );
   const name = text(raw["name"], CUSTOMER_NAME_MAX_LENGTH);
@@ -90,8 +119,7 @@ export function validateRegistration(raw: unknown): RuleResult<Registration> {
         ? phoneRaw.trim()
         : undefined;
   if (phone === undefined) paths.push("phone");
-  const version = text(raw["privacyPolicyVersion"], POLICY_VERSION_MAX_LENGTH);
-  if (version === null) paths.push("privacyPolicyVersion");
+  const versions = legalVersions(raw, paths);
   if (paths.length) return { ok: false, paths: [...new Set(paths)] };
   return {
     ok: true,
@@ -100,7 +128,7 @@ export function validateRegistration(raw: unknown): RuleResult<Registration> {
       email,
       password: password as string,
       phone: phone!,
-      privacyPolicyVersion: version!,
+      ...versions,
     },
   };
 }

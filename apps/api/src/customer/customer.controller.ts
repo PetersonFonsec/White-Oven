@@ -28,6 +28,7 @@ import { CustomerRoute } from "./customer.guard";
 import {
   normalizeEmail,
   validateAddress,
+  validateLegalAcceptance,
   validateRegistration,
 } from "./customer-rules";
 
@@ -40,9 +41,19 @@ class RegisterBody {
   phone?: string | null;
   @ApiProperty({
     maxLength: 40,
-    description: "The privacy policy version shown and accepted",
+    description:
+      "The current privacy policy version, shown and accepted (GET /public/stores/{slug}/legal)",
   })
   privacyPolicyVersion!: string;
+  @ApiProperty({
+    maxLength: 40,
+    description: "The current terms of use version, shown and accepted",
+  })
+  termsOfUseVersion!: string;
+}
+class LegalAcceptanceBody {
+  @ApiProperty({ maxLength: 40 }) privacyPolicyVersion!: string;
+  @ApiProperty({ maxLength: 40 }) termsOfUseVersion!: string;
 }
 class LoginBody {
   @ApiProperty({ format: "email" }) email!: string;
@@ -125,7 +136,7 @@ export class CustomerController {
   @ApiOperation({
     summary: "Create an account in this store and sign in",
     description:
-      "409 EMAIL_TAKEN or PHONE_TAKEN when another account of this store has it.",
+      "409 EMAIL_TAKEN or PHONE_TAKEN when another account of this store has it; 409 LEGAL_VERSION_OUTDATED (details: current versions) when a version is not the current one; 409 LEGAL_DOCUMENTS_UNAVAILABLE until the store publishes both documents.",
   })
   async register(
     @Body() raw: unknown,
@@ -211,6 +222,22 @@ export class CustomerController {
   async deleteAccount(@Body() raw: unknown): Promise<void> {
     const { password } = strings(raw, ["password"] as const);
     await this.auth.deleteAccount(boundedPassword(password));
+  }
+
+  @Post("me/legal-acceptances")
+  @CustomerRoute("customerAccountWrite")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiBody({ type: LegalAcceptanceBody })
+  @ApiOperation({
+    summary:
+      "Accept the store's current privacy policy and terms (when `legalUpdateRequired`)",
+    description:
+      "409 LEGAL_VERSION_OUTDATED when a version is not the current one. Idempotent.",
+  })
+  async acceptLegal(@Body() raw: unknown): Promise<void> {
+    const result = validateLegalAcceptance(raw);
+    if (!result.ok) throw invalid(result.paths);
+    await this.auth.acceptLegalDocuments(result.value);
   }
 
   @Get("me/addresses")

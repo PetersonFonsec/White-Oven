@@ -16,6 +16,7 @@ import { TeamModule } from "./team/team.module";
 import { CustomerModule } from "./customer/customer.module";
 import { OrderModule } from "./order/order.module";
 import { PushModule } from "./push/push.module";
+import { LegalModule } from "./legal/legal.module";
 
 @Module({})
 export class AppModule {
@@ -39,6 +40,7 @@ export class AppModule {
         CustomerModule,
         OrderModule,
         PushModule,
+        LegalModule,
       ],
       controllers: [HealthController],
       providers: [

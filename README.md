@@ -120,8 +120,10 @@ Em resposta perdida, use **Recuperar resultado do pedido**: o app preserva a mes
 inclusive após reiniciar. Não monte um segundo pedido antes de confirmar o resultado do primeiro.
 Mudança de preço exige nova cotação e confirmação. Pagamentos são apenas registrados para entrega/retirada.
 
-Os manifestos de demonstração têm `privacyPolicy: { version, text }` exclusivamente para dados fictícios.
-Sem aviso configurado, cadastro fica desabilitado. O texto aprovado para clientes reais continua no M7.2.
+Os termos de uso e a política de privacidade de cada loja ficam na API (M7.2, [ADR 0030](docs/adr/0030-legal-documents.md)):
+o app lê a versão vigente, o cadastro só aceita essa versão e o aceite fica registrado. Sem os dois documentos
+publicados, o cadastro fica fechado. A API também serve as páginas `/lojas/{slug}/privacidade`, `/lojas/{slug}/termos`
+e `/lojas/{slug}/excluir-conta` (exclusão da conta pela web, exigida pelo Google Play). Os textos reais vêm do jurídico.
 
 `pnpm test:e2e:mobile`, com `TEST_DATABASE_OWNER_URL`, usa o cliente e controlador do app contra API real
 em banco PostgreSQL descartável: inclui resposta perdida, reinício, unicidade do pedido, alteração de preço

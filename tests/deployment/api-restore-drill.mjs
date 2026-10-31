@@ -163,6 +163,7 @@ async function register(label) {
     email,
     password: PASSWORD,
     privacyPolicyVersion: "ensaio",
+    termsOfUseVersion: "ensaio",
   });
   assert.equal(created.status, 201, JSON.stringify(created.body));
   const token = created.body.accessToken;
@@ -364,7 +365,11 @@ try {
     `begin; select set_config('app.tenant_id', '${tenantId}', true);
      insert into plan_subscriptions (tenant_id, plan, fee_basis_points, monthly_fee_cents, valid_from)
      select '${tenantId}', code, fee_basis_points, monthly_fee_cents, now() - interval '1 day'
-       from plans where code = 'FLEX'; commit;`,
+       from plans where code = 'FLEX';
+     -- Sign-up needs the store's current documents (ADR 0030); synthetic text only.
+     insert into legal_documents (tenant_id, kind, version, revision, body, body_sha256)
+     select '${tenantId}', k, 'ensaio', 1, 'Texto sintético do ensaio', sha256('Texto sintético do ensaio'::bytea)
+       from unnest(array['PRIVACY_POLICY', 'TERMS_OF_USE']) as k; commit;`,
   );
   const hash = inApi(
     `node -e 'require("./dist/auth/password.js").hashPassword(process.argv[1]).then((h) => process.stdout.write(h))' '${PASSWORD}'`,

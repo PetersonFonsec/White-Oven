@@ -20,6 +20,8 @@ export interface Profile {
   name: string;
   email: string;
   phone: string | null;
+  /** The store published a privacy policy or terms version this account has not accepted. */
+  legalUpdateRequired: boolean;
 }
 export interface Address {
   id: string;
@@ -268,6 +270,10 @@ const messages: Record<string, string> = {
     "Revise os itens, endereço, forma de pagamento, pedido mínimo e troco.",
   VALIDATION_FAILED: "Confira os campos preenchidos.",
   ADDRESS_LIMIT_REACHED: "Sua conta já tem 10 endereços.",
+  LEGAL_VERSION_OUTDATED:
+    "Os termos de uso ou a política de privacidade mudaram. Leia a versão atual e aceite novamente.",
+  LEGAL_DOCUMENTS_UNAVAILABLE:
+    "A loja ainda não publicou os termos de uso e a política de privacidade.",
   IDEMPOTENCY_CONFLICT:
     "Esta confirmação precisa ser conferida com a loja antes de tentar outro pedido.",
 };

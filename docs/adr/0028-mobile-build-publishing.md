@@ -30,7 +30,7 @@ O roadmap pede três coisas para a M5.6: build reproduzível a partir do manifes
 - **API por variável do EAS.** `WHITEOVEN_API_URL` fica nos ambientes `preview` e `production` de cada projeto EAS, como texto simples (não é segredo). Ela não entra no `eas.json` porque nenhum ambiente de produção existe ainda; quando existir, o endereço é cadastrado uma vez por projeto.
 - **Trava de release no worker.** Com `WHITEOVEN_RELEASE` definido e `EAS_BUILD=true`, `app.config.ts` recusa o build quando falta algo:
   - nos dois tipos: `easProjectId`, `expoOwner`, ícone PNG de 1024 x 1024 e `WHITEOVEN_API_URL` em HTTPS fora da máquina de desenvolvimento;
-  - só no `store`: ícone sem transparência (a App Store recusa) e aviso de privacidade aprovado, nunca o texto demonstrativo (`version` começando por `demo-`, que só sai na M7.2).
+  - só no `store`: ícone sem transparência (a App Store recusa) e aviso de privacidade aprovado, nunca o texto demonstrativo (`version` começando por `demo-`, que só sai na M7.2). _Desde a [ADR 0030](0030-legal-documents.md), os textos ficam na API e o `--eas` confere essa API._
   - A trava espera o worker porque o CLI avalia o config antes de baixar as variáveis do EAS: na máquina do operador a URL ainda não está presente.
   - `pnpm mobile:release-check <slug> <preview|store> [--platform android|ios|all] [--submit] [--eas]` roda as mesmas regras antes de gastar um build:
     - manifesto e ícone. O ícone é lido chunk a chunk, com CRC: PNG truncado ou falso é recusado, e conta como transparência um canal alfa (tipos 4 e 6) ou um `tRNS` (paleta com alfa abaixo de 255, ou cor-chave em cinza e RGB);
@@ -58,7 +58,7 @@ O passo a passo das contas, credenciais e fichas das lojas está em [operations/
 ## Consequências
 
 - Uma loja nova no app precisa de manifesto, ícone, os dois perfis no `eas.json` e, para enviar ao iOS, o perfil de submit com o `ascAppId`. O teste falha se faltar perfil.
-- O texto demonstrativo de privacidade bloqueia o build de loja até a M7.2 entregar o texto aprovado. Os manifestos de exemplo nunca passam na trava de loja.
+- O texto demonstrativo de privacidade bloqueia o build de loja até a M7.2 entregar o texto aprovado (desde a ADR 0030, na API da loja). Os manifestos de exemplo nunca passam na trava de loja.
 - O build ainda não foi executado no EAS: este marco não cria a organização Expo nem projetos. O primeiro build real, com a pizzaria piloto (M7.5), valida o pipeline.
 - O EAS instala o monorepo inteiro a partir da raiz (lockfile do pnpm). Se o tempo de instalação pesar, o próximo passo é um `.easignore`, desde que o `pnpm install --frozen-lockfile` continue válido.
 - O plano gratuito do EAS tem limite mensal de builds. Passar dele é um custo novo e precisa de aprovação.

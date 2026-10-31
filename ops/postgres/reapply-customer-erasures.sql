@@ -10,6 +10,8 @@
 --
 -- `apps/api/test/backup-erasures.test.ts` checks that the result is the same as deleteAccount's.
 -- When deleteAccount erases something new, change this file in the same PR.
+-- `customer_legal_acceptances` (M7.2, ADR 0030) is kept, as deleteAccount keeps it: it holds only
+-- the customer id, the document id and the acceptance time.
 --
 -- It runs as the superuser in a restore (RLS does not apply) and as whiteoven_owner in tests, so
 -- it sets the tenant context for each deletion; FORCE RLS would otherwise hide every row from the

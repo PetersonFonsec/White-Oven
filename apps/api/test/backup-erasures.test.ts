@@ -31,11 +31,13 @@ const PASSWORD = "backup-senha-forte-2026";
 
 /**
  * Every table that points at a customer. A new one needs a line in the reapply file, except the
- * erasure registry itself, which holds only ids and the deletion time.
+ * erasure registry itself, which holds only ids and the deletion time, and the legal acceptances
+ * (ADR 0030), which hold only ids and the acceptance time and outlive the account on purpose.
  */
 const CUSTOMER_TABLES = [
   "customer_addresses",
   "customer_erasures",
+  "customer_legal_acceptances",
   "customer_push_devices",
   "customer_sessions",
   "orders",
@@ -83,6 +85,7 @@ describe(
         phone: `+55119${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`,
         password: PASSWORD,
         privacyPolicyVersion: "2026-10",
+        termsOfUseVersion: "2026-10",
       });
       assert.equal(register.status, 201, await register.clone().text());
       const { accessToken } = await json(register);

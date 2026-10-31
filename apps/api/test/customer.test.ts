@@ -75,6 +75,7 @@ describe("M4.2 customer accounts", databaseSuite, () => {
       name: "Maria Cliente",
       password: PASSWORD,
       privacyPolicyVersion: "2026-10",
+      termsOfUseVersion: "2026-10",
       ...overrides,
       email,
     });
@@ -120,6 +121,7 @@ describe("M4.2 customer accounts", databaseSuite, () => {
       password: PASSWORD,
       phone: "+5511999990000",
       privacyPolicyVersion: "2026-10",
+      termsOfUseVersion: "2026-10",
     });
     assert.equal(response.status, 201);
     assert.equal(response.headers.get("cache-control"), "no-store");
@@ -142,6 +144,8 @@ describe("M4.2 customer accounts", databaseSuite, () => {
         email: email.toLowerCase(),
         phone: "+5511999990000",
         privacyPolicyVersion: "2026-10",
+        termsOfUseVersion: "2026-10",
+        legalUpdateRequired: false,
         acceptedAt: undefined,
       },
     );
@@ -168,6 +172,7 @@ describe("M4.2 customer accounts", databaseSuite, () => {
       email: first.email.toUpperCase(),
       password: PASSWORD,
       privacyPolicyVersion: "2026-10",
+      termsOfUseVersion: "2026-10",
     });
     assert.equal(again.status, 409);
     assert.equal((await json(again)).code, "EMAIL_TAKEN");
@@ -181,6 +186,7 @@ describe("M4.2 customer accounts", databaseSuite, () => {
       password: PASSWORD,
       phone,
       privacyPolicyVersion: "2026-10",
+      termsOfUseVersion: "2026-10",
     });
     assert.equal(samePhone.status, 409);
     assert.equal((await json(samePhone)).code, "PHONE_TAKEN");
@@ -200,7 +206,15 @@ describe("M4.2 customer accounts", databaseSuite, () => {
     assert.equal(body.code, "VALIDATION_FAILED");
     assert.deepEqual(
       body.details.errors.map((error: { path: string }) => error.path).sort(),
-      ["admin", "email", "name", "password", "phone", "privacyPolicyVersion"],
+      [
+        "admin",
+        "email",
+        "name",
+        "password",
+        "phone",
+        "privacyPolicyVersion",
+        "termsOfUseVersion",
+      ],
     );
     assert.doesNotMatch(JSON.stringify(body), /1234567890|sem-arroba/);
   });
@@ -586,6 +600,7 @@ describe("M4.2 customer accounts", databaseSuite, () => {
       email: `nova-${randomUUID()}@teste.invalid`,
       password: PASSWORD,
       privacyPolicyVersion: "2026-10",
+      termsOfUseVersion: "2026-10",
     });
     assert.equal(register.status, 403);
     assert.equal((await json(register)).code, "TENANT_NOT_ACTIVE");

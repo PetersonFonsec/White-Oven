@@ -10,6 +10,7 @@ const registration = {
   email: "ana@exemplo.com.br",
   password: "uma-senha-longa",
   privacyPolicyVersion: "2026-10",
+  termsOfUseVersion: "2026-10",
 };
 const address = {
   label: "Casa",
@@ -61,6 +62,7 @@ test("customer rules: a registration reports every bad or unknown field", () => 
     "name",
     "password",
     "privacyPolicyVersion",
+    "termsOfUseVersion",
   ]);
   assert.deepEqual(
     paths(
@@ -71,10 +73,19 @@ test("customer rules: a registration reports every bad or unknown field", () => 
         password: "curta",
         phone: "(11) 99999-0000",
         privacyPolicyVersion: "v".repeat(41),
+        termsOfUseVersion: " ",
         role: "OWNER",
       }),
     ),
-    ["email", "name", "password", "phone", "privacyPolicyVersion", "role"],
+    [
+      "email",
+      "name",
+      "password",
+      "phone",
+      "privacyPolicyVersion",
+      "role",
+      "termsOfUseVersion",
+    ],
   );
   assert.deepEqual(
     paths(validateRegistration({ ...registration, password: "senha12345" })),

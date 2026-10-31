@@ -29,6 +29,7 @@ import {
   buildingAfterRefresh,
   createMenuLoader,
   destinationAfterRefresh,
+  destinationKind,
   screenFor,
 } from "./src/navigation/app-state.ts";
 import { BuilderScreen } from "./src/screens/BuilderScreen.tsx";
@@ -58,6 +59,7 @@ import {
   parseCheckoutSettings,
 } from "./src/cart/summary.ts";
 import { AccountScreen } from "./src/screens/AccountScreen.tsx";
+import { type LegalState, loadStoreLegal } from "./src/customer/legal.ts";
 import { CheckoutScreen } from "./src/screens/CheckoutScreen.tsx";
 import { OrdersScreen } from "./src/screens/OrdersScreen.tsx";
 import { Body, Button } from "./src/components/Form.tsx";
@@ -104,6 +106,26 @@ export default function App() {
         : null,
     [model],
   );
+  // The store's terms and privacy policy (ADR 0030): read again each time the account opens, so
+  // sign-up always shows (and sends) the versions the API holds now.
+  const [legal, setLegal] = useState<LegalState>({ status: "loading" });
+  const legalRequest = useRef(0);
+  const reloadLegal = useCallback(async (): Promise<LegalState> => {
+    if (!runtime) return { status: "error" };
+    const request = ++legalRequest.current;
+    setLegal({ status: "loading" });
+    const next = await loadStoreLegal({
+      apiUrl: runtime.apiUrl,
+      storeSlug: runtime.storeSlug,
+      fetch,
+    });
+    if (request === legalRequest.current) setLegal(next);
+    return next;
+  }, []);
+  const accountOpen = destinationKind(destination) === "account";
+  useEffect(() => {
+    if (accountOpen) void reloadLegal();
+  }, [accountOpen, reloadLegal]);
   const profileId = commerce?.profile?.id ?? null;
   const sessionStatus = commerce?.session ?? "idle";
   // The device's opt-in belongs to the signed-in session; another account starts from its own.
@@ -363,7 +385,8 @@ export default function App() {
           state={commerce}
           push={push}
           notice={commerce.profile ? null : notificationNotice}
-          policy={runtime.privacyPolicy}
+          legal={legal}
+          onReloadLegal={reloadLegal}
           onBack={() => navigate(null)}
           onOrders={() => navigate({ kind: "history" })}
         />

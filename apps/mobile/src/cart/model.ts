@@ -247,6 +247,7 @@ export function createCommerceModel(options: {
         name: p.name,
         email: p.email,
         phone: typeof p.phone === "string" ? p.phone : null,
+        legalUpdateRequired: p.legalUpdateRequired === true,
       },
     });
     await loadAddresses();
@@ -399,6 +400,15 @@ export function createCommerceModel(options: {
         await save({ cart: [], receipt: null });
       }),
     refreshAccount: () => run(loadProfile),
+    /** Accepts the store's current documents (ADR 0030), the versions the screen showed. */
+    acceptLegal: (versions: {
+      privacyPolicyVersion: string;
+      termsOfUseVersion: string;
+    }) =>
+      run(async () => {
+        await client.request("me/legal-acceptances", "POST", versions);
+        await loadProfile();
+      }),
     saveAddress: (address: Omit<Address, "id">, id?: string) =>
       run(async () => {
         if (state.pending)

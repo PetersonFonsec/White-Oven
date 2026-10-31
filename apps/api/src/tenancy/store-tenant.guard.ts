@@ -126,7 +126,7 @@ export class TenantContextInterceptor implements NestInterceptor {
 export const StoreTenant = (
   capability: Extract<
     TenantCapability,
-    "publicMenu" | "customerSignup" | "customerAccount"
+    "publicMenu" | "legalRead" | "customerSignup" | "customerAccount"
   > = "publicMenu",
 ) =>
   applyDecorators(

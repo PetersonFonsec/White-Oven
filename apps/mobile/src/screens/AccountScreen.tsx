@@ -4,7 +4,12 @@ import { Body, Button, Field, FormPage, Heading } from "../components/Form.tsx";
 import { Choice } from "../components/Choice.tsx";
 import type { CommerceModel, CommerceState } from "../cart/model.ts";
 import type { Address } from "../customer/client.ts";
-import type { CustomerPrivacyPolicy } from "../config/manifest.ts";
+import { legalBlocks, type LegalDocument } from "@whiteoven/contracts";
+import {
+  acceptedVersions,
+  type LegalState,
+  type StoreLegal,
+} from "../customer/legal.ts";
 import type { PushModel } from "../customer/push.ts";
 
 const emptyAddress: Omit<Address, "id"> = {
@@ -99,12 +104,65 @@ function OrderNotifications({
   );
 }
 
+/** One legal document, collapsed until asked for; the same blocks as the store's web page. */
+function LegalDocumentView({
+  title,
+  document,
+}: {
+  title: string;
+  document: LegalDocument;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button
+        label={`${open ? "Ocultar" : "Ler"} ${title.toLowerCase()} (versão ${document.version})`}
+        onPress={() => setOpen(!open)}
+      />
+      {open
+        ? legalBlocks(document.body).map((block, index) =>
+            block.type === "heading" ? (
+              <Heading key={index}>{block.text}</Heading>
+            ) : block.type === "list" ? (
+              <View key={index} style={{ gap: 4 }}>
+                {block.items.map((item, at) => (
+                  <Body key={at}>• {item}</Body>
+                ))}
+              </View>
+            ) : (
+              <Body key={index}>{block.text}</Body>
+            ),
+          )
+        : null}
+    </>
+  );
+}
+
+function LegalDocuments({ legal }: { legal: StoreLegal }) {
+  return (
+    <>
+      <LegalDocumentView title="Termos de uso" document={legal.termsOfUse} />
+      <LegalDocumentView
+        title="Política de privacidade"
+        document={legal.privacyPolicy}
+      />
+    </>
+  );
+}
+
+const sameVersions = (a: LegalState, b: LegalState) =>
+  a.status === "ready" &&
+  b.status === "ready" &&
+  a.legal.privacyPolicy.version === b.legal.privacyPolicy.version &&
+  a.legal.termsOfUse.version === b.legal.termsOfUse.version;
+
 export function AccountScreen({
   model,
   state,
   push,
   notice,
-  policy,
+  legal,
+  onReloadLegal,
   onBack,
   onOrders,
 }: {
@@ -113,7 +171,9 @@ export function AccountScreen({
   push: PushModel;
   /** Why the app opened this screen, such as a tapped notification while signed out. */
   notice?: string | null;
-  policy?: CustomerPrivacyPolicy;
+  /** The store's current privacy policy and terms (ADR 0030), loaded by the app from the API. */
+  legal: LegalState;
+  onReloadLegal: () => Promise<LegalState>;
   onBack: () => void;
   onOrders: () => void;
 }) {
@@ -130,7 +190,7 @@ export function AccountScreen({
   const [deletePassword, setDeletePassword] = useState("");
   const disabled = state.busy || !state.ready;
   const signIn = async () => {
-    if (mode === "register" && (!policy || !accepted)) return;
+    if (mode === "register" && (legal.status !== "ready" || !accepted)) return;
     const body =
       mode === "login"
         ? { email: email.trim(), password }
@@ -139,10 +199,15 @@ export function AccountScreen({
             email: email.trim(),
             password,
             phone: phone.trim() || null,
-            privacyPolicyVersion: policy!.version,
+            ...acceptedVersions((legal as { legal: StoreLegal }).legal),
           };
     setPassword("");
-    await model.signIn(mode, body);
+    const ok = await model.signIn(mode, body);
+    // A new version published meanwhile (409 LEGAL_VERSION_OUTDATED) must be read again.
+    if (!ok && mode === "register") {
+      const fresh = await onReloadLegal();
+      if (!sameVersions(fresh, legal)) setAccepted(false);
+    }
   };
   return (
     <FormPage>
@@ -176,6 +241,38 @@ export function AccountScreen({
             disabled={disabled}
             onPress={() => void model.logout()}
           />
+          <Heading>Termos e privacidade</Heading>
+          {state.profile.legalUpdateRequired ? (
+            <Body alert>
+              A loja atualizou os termos de uso ou a política de privacidade.
+              Leia a versão atual.
+            </Body>
+          ) : null}
+          {legal.status === "ready" ? (
+            <>
+              <LegalDocuments legal={legal.legal} />
+              {state.profile.legalUpdateRequired ? (
+                <Button
+                  label="Li e aceito a versão atual"
+                  disabled={disabled}
+                  onPress={() =>
+                    void model
+                      .acceptLegal(acceptedVersions(legal.legal))
+                      .then((ok) => {
+                        if (!ok) void onReloadLegal();
+                      })
+                  }
+                />
+              ) : null}
+            </>
+          ) : legal.status === "loading" ? (
+            <Body>Carregando os documentos da loja…</Body>
+          ) : (
+            <Button
+              label="Carregar termos e privacidade"
+              onPress={() => void onReloadLegal()}
+            />
+          )}
           <OrderNotifications push={push} disabled={disabled} />
           <Heading>Endereços</Heading>
           <Button
@@ -373,24 +470,37 @@ export function AccountScreen({
             editable={!disabled}
           />
           {mode === "register" ? (
-            policy ? (
+            legal.status === "ready" ? (
               <>
-                <Heading>Privacidade</Heading>
-                <Body>{policy.text}</Body>
-                <Body>Versão: {policy.version}</Body>
+                <Heading>Termos e privacidade</Heading>
+                <Body>
+                  Leia os termos de uso e a política de privacidade desta
+                  pizzaria antes de criar a conta.
+                </Body>
+                <LegalDocuments legal={legal.legal} />
                 <Choice
                   kind="checkbox"
-                  label="Li e aceito o aviso de privacidade"
+                  label="Li e aceito os termos de uso e a política de privacidade"
                   selected={accepted}
                   disabled={disabled}
                   onPress={() => setAccepted(!accepted)}
                 />
               </>
+            ) : legal.status === "loading" ? (
+              <Body>Carregando os termos e a política de privacidade…</Body>
             ) : (
-              <Body alert>
-                O cadastro está indisponível até a loja configurar o aviso de
-                privacidade.
-              </Body>
+              <>
+                <Body alert>
+                  {legal.status === "unavailable"
+                    ? "O cadastro está indisponível até a loja publicar os termos de uso e a política de privacidade."
+                    : "Não foi possível carregar os termos de uso e a política de privacidade."}
+                </Body>
+                <Button
+                  label="Tentar carregar de novo"
+                  disabled={disabled}
+                  onPress={() => void onReloadLegal()}
+                />
+              </>
             )
           ) : null}
           <Button
@@ -401,7 +511,10 @@ export function AccountScreen({
               !email.trim() ||
               !password ||
               (mode === "register" &&
-                (!name.trim() || password.length < 10 || !accepted || !policy))
+                (!name.trim() ||
+                  password.length < 10 ||
+                  !accepted ||
+                  legal.status !== "ready"))
             }
           />
         </>

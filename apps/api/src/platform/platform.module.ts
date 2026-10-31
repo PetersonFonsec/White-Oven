@@ -5,6 +5,7 @@ import {
   PlatformOperatorController,
   PlatformPlanController,
   PlatformBillingController,
+  PlatformLegalController,
 } from "./platform.controller";
 import { PlatformService } from "./platform.service";
 
@@ -14,6 +15,7 @@ import { PlatformService } from "./platform.service";
     PlatformOperatorController,
     PlatformPlanController,
     PlatformBillingController,
+    PlatformLegalController,
     OwnerInviteController,
   ],
   providers: [PlatformService],
