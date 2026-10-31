@@ -23,6 +23,6 @@ O catálogo precisa receber imagens sem confiar no nome, extensão ou tipo MIME 
 ## Consequências
 
 - O desenvolvimento não depende de fornecedor externo, e uma futura implementação de storage pode substituir `ImageStorage`.
-- O volume local é persistente, mas não é backup externo. Os bytes e o PostgreSQL precisam ser copiados e restaurados como um conjunto consistente antes de qualquer captação real. O runbook operacional da landing não inclui esse volume.
+- O volume local é persistente, mas não é backup externo. Os bytes e o PostgreSQL precisam ser copiados e restaurados como um conjunto consistente antes de qualquer captação real. O runbook operacional da landing não inclui esse volume. M7.1 implementou essa cópia conjunta ([ADR 0029](0029-api-backup-restore.md)), que depende de as imagens nunca serem apagadas depois do commit.
 - Q-13 permanece sem resposta; esta implementação segue a recomendação local configurável e não autoriza provisionamento ou implantação de produção.
 - Variantes são regeneráveis somente a partir da imagem original, que não é retida; portanto backup deve incluir as variantes armazenadas, não apenas `image_assets`.

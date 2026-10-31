@@ -348,3 +348,57 @@ test("GHCR: interrupted or unconfirmed push fails; wrong revision is refused", (
     h.cleanup();
   }
 });
+test("API restore refuses before touching Docker without confirmation, with a bad ID or a malformed ledger", () => {
+  const h = harness();
+  try {
+    const api = (...args) => h.run("ops/api-backup.sh", args);
+    const noDocker = () =>
+      !existsSync(join(h.state, "log")) ||
+      !readFileSync(join(h.state, "log"), "utf8").includes("docker");
+    const unconfirmed = api("restore", "copia-1");
+    assert.equal(unconfirmed.status, 1);
+    assert.match(unconfirmed.stderr, /--confirm-offline/);
+    assert.equal(api("backup", "../fora").status, 1);
+    assert.equal(api("restore", "copia;rm", "--confirm-offline").status, 1);
+    const ledger = join(h.state, "erasures.csv");
+    writeFileSync(
+      ledger,
+      "tenant_id,customer_id,deleted_at\n" +
+        "11111111-1111-4111-8111-111111111111,22222222-2222-4222-8222-222222222222,2026-10-31 12:00:00.5+00\n" +
+        "\\.\n",
+    );
+    const malformed = api(
+      "restore",
+      "copia-1",
+      "--confirm-offline",
+      "--erasures",
+      ledger,
+    );
+    assert.equal(malformed.status, 1);
+    assert.match(malformed.stderr, /fora do formato/);
+    writeFileSync(ledger, "id,customer\n");
+    assert.match(
+      api("restore", "copia-1", "--confirm-offline", "--erasures", ledger)
+        .stderr,
+      /cabeçalho/,
+    );
+    assert.equal(
+      api(
+        "restore",
+        "copia-1",
+        "--confirm-offline",
+        "--erasures",
+        join(h.state, "ausente.csv"),
+      ).status,
+      1,
+    );
+    assert.ok(noDocker(), "nothing reached Docker");
+    assert.equal(
+      existsSync(join(h.state, "ops-state", "api-backup.lock")),
+      false,
+      "the lock is released on refusal",
+    );
+  } finally {
+    h.cleanup();
+  }
+});
