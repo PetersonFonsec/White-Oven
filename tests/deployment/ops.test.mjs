@@ -391,6 +391,24 @@ test("API restore refuses before touching Docker without confirmation or with a 
       ).status,
       1,
     );
+    // The cut-off confirmation is a ledger export time and only goes with a ledger.
+    const ledger = h.ledger(ledgerText());
+    for (const args of [
+      ["--accept-erasures-until", "20261031T120000Z"],
+      ["--erasures", ledger, "--accept-erasures-until", "ontem"],
+      ["--erasures", ledger, "--accept-erasures-until", "2026-10-31"],
+      [
+        "--erasures",
+        ledger,
+        "--accept-erasures-until",
+        "20261031T120000Z",
+        "--accept-erasures-until",
+        "20261031T120000Z",
+      ],
+    ]) {
+      const refused = h.api("restore", "copia-1", "--confirm-offline", ...args);
+      assert.equal(refused.status, 1, args.join(" "));
+    }
     assert.ok(h.noDocker(), "nothing reached Docker");
     assert.ok(h.lockReleased(), "the lock is released on refusal");
   } finally {
@@ -418,6 +436,13 @@ test("API restore refuses a ledger that is not a complete, well-formed export", 
         /fora do formato/,
       ],
       [ledgerText({ head: 2 }), /incompleto/],
+      [
+        ledgerText().replace(
+          "exported_at=20261031T120000Z",
+          "exported_at=ontem",
+        ),
+        /cabeçalho/,
+      ],
       [
         ledgerText({
           rows: `1,${T1},${C1},2026-10-31T12:00:00.500000Z,${"cd".repeat(32)}\n`,

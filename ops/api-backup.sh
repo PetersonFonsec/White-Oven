@@ -35,7 +35,7 @@ usage() {
  cat >&2 <<'EOF'
 Uso: bash ops/api-backup.sh COMANDO
   backup ID | verify-backup ID | export-erasures DIR | prune-backups
-  restore ID --confirm-offline [--erasures DIARIO.csv]
+  restore ID --confirm-offline [--erasures DIARIO.csv [--accept-erasures-until EXPORTADO_EM]]
   restore-status | restore-rollback OPERACAO | restore-cleanup OPERACAO
 EOF
  exit 1
@@ -52,6 +52,11 @@ valid_op() { [[ "$1" =~ ^[0-9]{14}_[0-9a-f]{6}$ ]]; }
 test_hook() {
  [[ "${WHITEOVEN_TEST_KILL_AT:-}" != "$1" ]] || kill -KILL $$
  [[ "${WHITEOVEN_TEST_FAIL_AT:-}" != "$1" ]] || fail "Falha injetada em $1 (teste)."
+}
+# Same, inside the rollback (which must report a failure instead of exiting).
+rollback_hook() {
+ [[ "${WHITEOVEN_TEST_ROLLBACK_KILL_AT:-}" != "$1" ]] || kill -KILL $$
+ [[ "${WHITEOVEN_TEST_ROLLBACK_FAIL_AT:-}" != "$1" ]] || { echo "Falha injetada no rollback em $1 (teste)." >&2; return 1; }
 }
 
 # The superuser reads through RLS (FORCE RLS filters even whiteoven_owner), over the container's
@@ -95,8 +100,11 @@ on_exit() {
  local status=$?
  set +e
  [[ -z "$partial" ]] || rm -rf -- "$partial"
- [[ -z "$scratch" ]] || rm -rf -- "$scratch"
+ partial=""
+ # The automatic rollback still needs the scratch area; it goes after.
  if (( restoring && status != 0 )); then restore_failed; fi
+ [[ -z "$partial" ]] || rm -rf -- "$partial"
+ [[ -z "$scratch" ]] || rm -rf -- "$scratch"
  if (( locked )); then rm -f "$state_dir/api-backup.lock/pid"; rmdir "$state_dir/api-backup.lock"; fi
  exit "$status"
 }
@@ -114,6 +122,7 @@ rank() {
  for i in "${!PHASES[@]}"; do [[ "${PHASES[$i]}" != "$1" ]] || { echo "$i"; return; }; done
  echo -1
 }
+# FAILED, ROLLING_BACK and ROLLBACK_FAILED are not terminal: the operation still blocks others.
 terminal() { [[ "$1" == COMPLETE || "$1" == ROLLED_BACK || "$1" == CLEANED ]]; }
 save_state() {
  local dir="$restores_dir/$op" key
@@ -218,9 +227,9 @@ observe_live_head() {
 parse_ledger() {
  local file="$1" first rows last
  first="$(head -n 1 "$file")"
- [[ "$first" =~ ^\#\ $LEDGER_FORMAT\ lineage=($UUID)\ head=([0-9]+)\ head_hash=($HEX64)\ exported_at=[0-9T:Z-]+$ ]] ||
+ [[ "$first" =~ ^\#\ $LEDGER_FORMAT\ lineage=($UUID)\ head=([0-9]+)\ head_hash=($HEX64)\ exported_at=([0-9]{8}T[0-9]{6}Z)$ ]] ||
   fail "Diário $file sem o cabeçalho $LEDGER_FORMAT; exporte de novo com export-erasures. Nada foi alterado."
- L_LINEAGE="${BASH_REMATCH[1]}"; L_HEAD="${BASH_REMATCH[2]}"; L_HASH="${BASH_REMATCH[3]}"
+ L_LINEAGE="${BASH_REMATCH[1]}"; L_HEAD="${BASH_REMATCH[2]}"; L_HASH="${BASH_REMATCH[3]}"; L_EXPORTED="${BASH_REMATCH[4]}"
  [[ "$(sed -n 2p "$file")" == seq,tenant_id,customer_id,deleted_at,hash ]] || fail "Diário $file sem a linha de colunas esperada."
  rows="$file.rows"
  tail -n +3 "$file" > "$rows"
@@ -234,17 +243,17 @@ parse_ledger() {
  fi
 }
 
-# --- Images: every image the database references must be in the archive, complete.
-# A WebP file is complete when it starts with RIFF....WEBP and the RIFF size covers the file.
-webp_complete() {
- local file="$1" size riff
- [[ -f "$file" ]] || return 1
- size="$(stat -c %s "$file")"
- (( size >= 12 )) || return 1
- [[ "$(dd if="$file" bs=1 count=4 2>/dev/null)" == RIFF && "$(dd if="$file" bs=1 skip=8 count=4 2>/dev/null)" == WEBP ]] || return 1
- riff="$(od -An -tu4 --endian=little -j4 -N4 "$file" | tr -d ' ')"
- (( riff + 8 == size ))
-}
+# --- Images: every image the database references must be in the archive, complete and decodable.
+# ops/api-image-check.mjs runs with the API image's Node and Sharp over the extracted archive; it
+# checks the RIFF/WebP structure and decodes every variant (what it cannot detect: ADR 0010).
+image_checker=ops/api-image-check.mjs
+# Archives tenants (or nothing) to stdout, without temporary variants. Uploads may run meanwhile:
+# GNU tar exits 1 when a directory changed or a file vanished while read (a new asset, an
+# uncommitted one compensated). That is expected; check_images then proves that every image the
+# database references is in the archive, complete. Exit 2 or more is a real failure.
+images_tar="if [ ! -d tenants ]; then exec tar -cf - -T /dev/null; fi
+ status=0; tar --exclude='*.tmp' --warning=no-file-changed --warning=no-file-removed -cf - tenants || status=\$?
+ [ \"\$status\" -le 1 ] || exit \"\$status\""
 # "tenant asset" per line, from the image_assets rows inside a dump.
 dump_assets() {
  "${compose[@]}" exec -T postgres pg_restore --data-only --table=image_assets -f - < "$1" | awk '
@@ -255,27 +264,36 @@ dump_assets() {
   copying && $0 == "\\." { copying = 0; next }
   copying { split($0, f, "\t"); print f[ti] " " f[ci] }'
 }
-# Prints how many referenced images were checked; fails listing the ones missing or truncated.
+# Prints how many referenced images were checked; fails listing the ones missing or invalid.
 check_images() {
- local list="$1" archive="$2" dir bad=0 total=0 tenant asset variant
+ local list="$1" archive="$2" dir checked
  dir="$scratch/images-check"
  rm -rf -- "$dir"
  mkdir "$dir"
- tar -xf "$archive" -C "$dir"
- while read -r tenant asset; do
-  [[ -n "$tenant" ]] || continue
-  if [[ ! "$tenant" =~ ^$UUID$ || ! "$asset" =~ ^$UUID$ ]]; then bad=$((bad + 1)); continue; fi
-  total=$((total + 1))
-  for variant in thumbnail menu; do
-   if ! webp_complete "$dir/tenants/$tenant/$asset/$variant.webp"; then
-    bad=$((bad + 1))
-    echo "Imagem referenciada ausente ou incompleta: tenants/$tenant/$asset/$variant.webp" >&2
-   fi
-  done
- done < "$list"
+ # Owned by the invoking user, which the checker runs as (the API service drops every capability).
+ tar --no-same-owner -xf "$archive" -C "$dir"
+ cp -- "$list" "$dir/.assets"
+ cp -- "$image_checker" "$dir/.check.mjs"
+ dir="$(cd "$dir" && pwd)"
+ # Same image as the API, the directory mounted read-only, as the invoking user (files are 0600).
+ checked="$("${compose[@]}" run --rm --no-deps -T --user "$(id -u):$(id -g)" \
+  -v "$dir:/check:ro" --entrypoint node api /check/.check.mjs /check/.assets /check)" || { rm -rf -- "$dir"; return 1; }
  rm -rf -- "$dir"
- (( bad == 0 )) || return 1
- echo "$total"
+ [[ "$checked" =~ ^[0-9]+$ ]] || return 1
+ echo "$checked"
+}
+
+# The set in use (database plus volume) matches: every image the live database references is in
+# tenants, complete and decodable. After a rollback no directory of this operation may be left in
+# the volume; after a restore the previous images stay aside ($1 = restore) until restore-cleanup.
+verify_live_set() {
+ local list="$scratch/live-assets.txt" leftover="[ -e '${S[staging]}' ] || [ -e '${S[aside]}' ]"
+ [[ "${1:-}" != restore ]] || leftover="[ -e '${S[staging]}' ]"
+ : > "$list"
+ if db_exists "$db"; then query "$db" "select tenant_id || ' ' || id from image_assets" > "$list" || return 1; fi
+ in_api "cd $images_dir; if $leftover; then echo 'Diretório da operação ainda no volume.' >&2; exit 5; fi
+  $images_tar" > "$scratch/live-images.tar" || return 1
+ check_images "$list" "$scratch/live-images.tar" > /dev/null
 }
 
 take_backup() {
@@ -291,7 +309,7 @@ take_backup() {
  # after the dump holds every image the dump references; check_images proves it for this copy.
  "${compose[@]}" exec -T postgres pg_dump -U "$superuser" -d "$db" --format=custom > "$partial/database.dump"
  [[ -s "$partial/database.dump" ]] || fail 'pg_dump não produziu nada; nenhuma cópia foi gravada.'
- in_api "cd $images_dir && if [ -d tenants ]; then exec tar --exclude='*.tmp' -cf - tenants; else exec tar -cf - -T /dev/null; fi" > "$partial/images.tar"
+ in_api "cd $images_dir; $images_tar" > "$partial/images.tar"
  "${compose[@]}" exec -T postgres pg_restore -l < "$partial/database.dump" > /dev/null
  dump_assets "$partial/database.dump" > "$scratch/assets.txt"
  referenced="$(check_images "$scratch/assets.txt" "$partial/images.tar")" ||
@@ -337,6 +355,9 @@ verify_backup() {
 # Puts the original set back, whatever phase the operation reached. Every step looks at what is
 # really there and is safe to repeat. It never drops a database without this operation's mark.
 # Returns non-zero (without exiting) when a step fails, so a failed trap can report it.
+# CONNECT goes back to the API roles only as the last step, after the database is the original
+# one, the images are back and verify_live_set proved that they match. A rollback that fails or
+# dies at any earlier point leaves the API blocked.
 rollback_resources() {
  local cand="${S[candidate]}" prev="${S[previous]}" current
  in_api "set -eu
@@ -354,12 +375,14 @@ rollback_resources() {
    rmdir \"\$P\"
   fi
   if [ -d \"\$R\" ]; then rm -rf -- \"\$R\"; fi" || { echo 'Rollback das imagens falhou; veja o runbook (seção de recuperação manual).' >&2; return 1; }
+ rollback_hook rollback_images_done || return 1
  if db_exists "$db" && [[ "$(db_comment "$db")" == "$(candidate_tag "$op")" ]]; then
   query postgres "alter database \"$db\" rename to \"$cand\"" > /dev/null || return 1
  fi
  if ! db_exists "$db" && db_exists "$prev" && [[ "$(db_comment "$prev")" == "$(previous_tag "$op")" ]]; then
   query postgres "alter database \"$prev\" rename to \"$db\"" > /dev/null || return 1
  fi
+ rollback_hook rollback_db_done || return 1
  if [[ "${S[live_existed]:-yes}" == yes ]]; then
   db_exists "$db" || { echo "Banco original não encontrado: nem $db nem $prev." >&2; return 1; }
   current="$(db_comment "$db")"
@@ -373,10 +396,31 @@ rollback_resources() {
    echo "O banco $cand existe sem a marca desta operação e não foi removido." >&2
   fi
  fi
- if [[ "${S[live_revoked]:-no}" == yes ]] && db_exists "$db"; then
-  query postgres "grant connect on database \"$db\" to whiteoven_app, whiteoven_platform" > /dev/null || return 1
-  query postgres "comment on database \"$db\" is null" > /dev/null || return 1
+ if [[ "${S[live_revoked]:-no}" == yes ]]; then
+  if [[ "${S[live_existed]:-yes}" == no ]] && db_exists "$db"; then
+   echo "O banco $db existe, mas não existia antes desta operação; o acesso da API não foi liberado." >&2; return 1
+  fi
+  rollback_hook rollback_verify || return 1
+  verify_live_set || { echo 'O conjunto original não confere (imagem referenciada ausente ou inválida, ou diretório da operação no volume); o acesso da API continua bloqueado.' >&2; return 1; }
+  if db_exists "$db"; then
+   query postgres "grant connect on database \"$db\" to whiteoven_app, whiteoven_platform" > /dev/null || return 1
+   query postgres "comment on database \"$db\" is null" > /dev/null || return 1
+  fi
  fi
+}
+
+# Runs the rollback with its phase on disk (ROLLING_BACK while it runs, then ROLLED_BACK or
+# ROLLBACK_FAILED) and its messages kept in rollback.log, attempt by attempt.
+run_rollback() {
+ local log="$restores_dir/$op/rollback.log" attempt="$restores_dir/$op/rollback.attempt" status=0
+ S[rollback_attempts]=$(( ${S[rollback_attempts]:-0} + 1 ))
+ set_phase ROLLING_BACK
+ rollback_resources 2> "$attempt" || status=$?
+ { echo "--- tentativa ${S[rollback_attempts]} $(date -u +%Y-%m-%dT%H:%M:%SZ) status=$status"; cat "$attempt"; } >> "$log"
+ grep -v '^ *Container ' "$attempt" >&2 || true
+ rm -f "$attempt"
+ if (( status == 0 )); then set_phase ROLLED_BACK; else set_phase ROLLBACK_FAILED; fi
+ return "$status"
 }
 
 restore_failed() {
@@ -392,11 +436,10 @@ restore_failed() {
   fi
  else
   echo "Restauração $op falhou na fase $failed, durante a troca. Voltando ao conjunto original..." >&2
-  if rollback_resources; then
-   set_phase ROLLED_BACK
-   echo 'Rollback concluído: banco e imagens originais de volta e CONNECT da API devolvido. A API continua parada; suba-a e confira.' >&2
+  if run_rollback; then
+   echo 'Rollback concluído: banco e imagens originais de volta e conferidos, CONNECT da API devolvido. A API continua parada; suba-a e confira.' >&2
   else
-   echo "Rollback automático falhou. A API não consegue conectar ao banco $db até a recuperação. Rode bash ops/api-backup.sh restore-status e restore-rollback $op (runbook, seção 8)." >&2
+   echo "Rollback automático falhou (ROLLBACK_FAILED). A API não consegue conectar ao banco $db até a recuperação; nada foi apagado além do relatado. Evidências em $restores_dir/$op (rollback.log, journal). Rode restore-rollback $op (runbook, seção 7)." >&2
   fi
  fi
 }
@@ -469,8 +512,7 @@ case "$command" in
    COMPLETE) fail "A operação $op foi concluída. Para voltar, restaure a cópia pre-restore-$op (runbook)." ;;
    ROLLED_BACK|CLEANED) echo "A operação $op já está encerrada (${S[phase]})."; exit 0 ;;
   esac
-  rollback_resources || fail "Rollback de $op incompleto; nada além do relatado foi alterado. Siga a recuperação manual do runbook (seção 8)."
-  set_phase ROLLED_BACK
+  run_rollback || fail "Rollback de $op incompleto (ROLLBACK_FAILED); a API continua bloqueada e nada além do relatado foi alterado. Evidências em $restores_dir/$op/rollback.log. Corrija a causa e repita, ou siga a recuperação manual do runbook (seção 7)."
   echo "Rollback de $op concluído: banco e imagens originais em uso e recursos da operação removidos. Suba a API e confira." ;;
  restore-cleanup)
   load_state "${1:-}"
@@ -490,12 +532,20 @@ case "$command" in
   [[ "${2:-}" == --confirm-offline ]] || fail 'Exige o ID da cópia e --confirm-offline; leia o runbook.'
   shift 2
   ledger=""
+  cutoff_ack=""
   while (($#)); do
-   [[ "$1" == --erasures && -z "$ledger" && -f "${2:-}" ]] || usage
-   ledger="$scratch/ledger.csv"
-   cp -- "$2" "$ledger"
+   if [[ "$1" == --erasures && -z "$ledger" && -f "${2:-}" ]]; then
+    ledger="$scratch/ledger.csv"
+    cp -- "$2" "$ledger"
+   elif [[ "$1" == --accept-erasures-until && -z "$cutoff_ack" && "${2:-}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+    cutoff_ack="$2"
+   else
+    usage
+   fi
    shift 2
   done
+  [[ -z "$cutoff_ack" || -n "$ledger" ]] || fail '--accept-erasures-until só vale junto com --erasures.'
+
   # Every check that needs no database runs first: a malformed ledger costs no downtime.
   [[ -z "$ledger" ]] || parse_ledger "$ledger"
   pending="$(active_ops | tr '\n' ' ')"
@@ -590,6 +640,16 @@ case "$command" in
   if (( known_seq > 0 )) && [[ "$live_known" != t && "${ledger_known:-f}" != t ]]; then
    fail "ERASURES_STALE: este host já viu o diário da linhagem até seq $known_seq e nenhuma fonte chega lá. Use um diário exportado depois disso; nada foi trocado."
   fi
+  # A valid ledger proves the deletions up to its export, never that none came after it. When the
+  # live database cannot vouch for the time since, the operator confirms that cut-off explicitly.
+  if [[ "$live_ok" != yes && "$cutoff_ack" != "$L_EXPORTED" ]]; then
+   fail "ERASURES_CUTOFF_UNCONFIRMED: só o diário prova as exclusões, até seq $L_HEAD (exportado em $L_EXPORTED). Uma exclusão feita depois dessa exportação não é conhecida e voltaria com dados pessoais. Confira que não há diário mais novo e repita com --accept-erasures-until $L_EXPORTED; nada foi trocado."
+  fi
+  if [[ "$live_ok" == yes ]]; then
+   S[erasures_until]="banco atual (seq $head)"
+  else
+   S[erasures_until]="diário exportado em $L_EXPORTED (seq $L_HEAD), corte confirmado pelo operador"
+  fi
   S[erasure_sources]=""
   [[ "$live_ok" != yes ]] || S[erasure_sources]=live
   [[ -z "$ledger" ]] || S[erasure_sources]="${S[erasure_sources]:+${S[erasure_sources]},}ledger"
@@ -646,6 +706,9 @@ case "$command" in
    rmdir '${S[staging]}'"
   set_phase IMAGES_SWAPPED
   test_hook before_complete
+  # The restored set must match before the API can connect: every image the restored database
+  # references is in tenants, complete and decodable.
+  verify_live_set restore || fail 'O conjunto restaurado não confere (imagem referenciada ausente ou inválida); nada foi liberado.'
   query postgres "grant connect on database \"$db\" to whiteoven_app, whiteoven_platform" > /dev/null
   query postgres "comment on database \"$db\" is '$(restored_tag "$op")'" > /dev/null
   set_phase COMPLETE

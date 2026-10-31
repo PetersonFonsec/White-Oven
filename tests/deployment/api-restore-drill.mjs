@@ -457,6 +457,9 @@ try {
   const ledgerBefore = ledgerOf("ledger-before");
   const ledgerAtBackup = ledgerOf("ledger-at-backup");
   const ledgerAfter = ledgerOf("ledger-after");
+  const exportedAt = (file) =>
+    readFileSync(file, "utf8").match(/exported_at=(\S+)/)[1];
+  const ackAfter = ["--accept-erasures-until", exportedAt(ledgerAfter)];
   assert.match(
     readFileSync(ledgerAfter, "utf8"),
     /^# whiteoven-customer-erasures-2 .* head=2 /,
@@ -664,8 +667,6 @@ try {
     assertClosed(op, "ROLLED_BACK");
     assertLiveIntact();
   }
-  up();
-  assert.equal(await loginStatus(c), 200);
   record.scenarios.push({
     name: "processo morto durante a troca",
     points: kills.map(([point]) => point),
@@ -673,6 +674,96 @@ try {
       "fase gravada em disco; restore-status mostra a operação pendente",
       "CONNECT do papel da API revogado: a API não fica pronta, inclusive após reiniciar o PostgreSQL",
       "lock órfão retomado; restore-rollback devolve o conjunto original",
+    ],
+  });
+
+  // 5b. The rollback itself fails or dies: the API stays blocked until the set is consistent.
+  {
+    const op = nextOp();
+    const failed = refused(
+      ["restore", "ensaio-1", "--confirm-offline"],
+      /Rollback automático falhou/,
+      {
+        WHITEOVEN_TEST_FAIL_AT: "after_db_swap",
+        WHITEOVEN_TEST_ROLLBACK_FAIL_AT: "rollback_images_done",
+        WHITEOVEN_TEST_OPERATION_ID: op,
+      },
+    );
+    assert.match(failed.stderr, /Falha injetada no rollback/);
+    let s = opState(op);
+    assert.equal(s.phase, "ROLLBACK_FAILED");
+    assert.equal(s.rollback_attempts, "1");
+    assert.equal(lockHeld(), false);
+    // Original images are back, but the restored database still has the live name.
+    assert.equal(
+      dbComment("whiteoven"),
+      `whiteoven-restore candidate op=${op}`,
+    );
+    assert.equal(appCanConnect(), "f", "a half rollback never opens the API");
+    assert.match(
+      readFileSync(join(state, "api-restores", op, "rollback.log"), "utf8"),
+      /tentativa 1 .* status=1[\s\S]*Falha injetada no rollback/,
+    );
+    assert.match(
+      ops(["restore-status"]).stdout,
+      new RegExp(`${op} fase=ROLLBACK_FAILED .*\\[PENDENTE\\]`),
+    );
+    // The original set is damaged meanwhile: the retry puts the database back but must refuse
+    // to open the API while a referenced image is truncated.
+    const path = menuPath(tenantId, image2.id);
+    const original = volumeFiles().get(path);
+    inApi(
+      `set -eu; f=${IMAGES}/${path}; head -c 200 "$f" > "$f.cut"; cat "$f.cut" > "$f"; rm "$f.cut"`,
+    );
+    refused(["restore-rollback", op], /não confere[\s\S]*ROLLBACK_FAILED/);
+    s = opState(op);
+    assert.equal(s.phase, "ROLLBACK_FAILED");
+    assert.equal(s.rollback_attempts, "2");
+    assert.equal(dbComment("whiteoven"), `whiteoven-restore previous op=${op}`);
+    assert.equal(appCanConnect(), "f");
+    inApi(`cat > ${IMAGES}/${path}`, original);
+    ops(["restore-rollback", op]);
+    assertClosed(op, "ROLLED_BACK");
+    assert.equal(opState(op).rollback_attempts, "3");
+    assertLiveIntact();
+  }
+  {
+    const op = nextOp();
+    const killed = ops(["restore", "ensaio-1", "--confirm-offline"], {
+      allowFailure: true,
+      env: {
+        WHITEOVEN_TEST_FAIL_AT: "images_swap",
+        WHITEOVEN_TEST_ROLLBACK_KILL_AT: "rollback_db_done",
+        WHITEOVEN_TEST_OPERATION_ID: op,
+      },
+    });
+    assert.equal(killed.signal, "SIGKILL");
+    assert.equal(
+      opState(op).phase,
+      "ROLLING_BACK",
+      "rollback in progress on disk",
+    );
+    assert.equal(
+      appCanConnect(),
+      "f",
+      "a rollback killed midway keeps the API out",
+    );
+    assert.match(
+      ops(["restore-status"]).stdout,
+      new RegExp(`${op} fase=ROLLING_BACK .*\\[PENDENTE\\]`),
+    );
+    ops(["restore-rollback", op]);
+    assertClosed(op, "ROLLED_BACK");
+    assertLiveIntact();
+  }
+  up();
+  assert.equal(await loginStatus(c), 200);
+  record.scenarios.push({
+    name: "falha e morte durante o rollback",
+    checks: [
+      "rollback com falha injetada: ROLLBACK_FAILED, evidência em rollback.log, API sem CONNECT",
+      "nova tentativa com imagem original truncada: banco devolvido, mas acesso continua bloqueado até o conjunto conferir",
+      "rollback morto no meio: ROLLING_BACK em disco, API sem CONNECT; terceira tentativa conclui",
     ],
   });
 
@@ -760,21 +851,73 @@ try {
     "candidatos distintos por operação; banco anterior de cada uma preservado até restore-cleanup",
   ];
 
-  // 7. The database recreated in the same cluster (new lineage, no deletions known).
+  // 7a. The live database replaced, outside this tool, by an older state of the same lineage
+  // (the backup's own dump, without the later deletion). Its chain is intact and contains the
+  // backup's head, but not what this host already saw.
   const oldLineage = record.backupManifest.lineage;
-  compose("stop", "api");
-  compose("exec", "-T", "postgres", "dropdb", "-U", "postgres", "whiteoven");
-  compose(
-    "exec",
-    "-T",
-    "postgres",
-    "createdb",
-    "-U",
-    "postgres",
-    "-O",
-    "whiteoven_owner",
-    "whiteoven",
+  const recreateDb = () => {
+    compose("stop", "api");
+    compose("exec", "-T", "postgres", "dropdb", "-U", "postgres", "whiteoven");
+    compose(
+      "exec",
+      "-T",
+      "postgres",
+      "createdb",
+      "-U",
+      "postgres",
+      "-O",
+      "whiteoven_owner",
+      "whiteoven",
+    );
+  };
+  recreateDb();
+  run(
+    "docker",
+    [
+      "compose",
+      "-f",
+      "compose.dev.yaml",
+      "exec",
+      "-T",
+      "postgres",
+      "pg_restore",
+      "-U",
+      "postgres",
+      "-d",
+      "whiteoven",
+      "--single-transaction",
+    ],
+    { input: readFileSync(join(backups, "ensaio-1", "database.dump")) },
   );
+  assert.equal(sql("select id from database_lineage"), oldLineage);
+  assert.equal(
+    customerStatus(a.id),
+    "ACTIVE:false",
+    "older state: A not deleted",
+  );
+  const warned = ops(["export-erasures", join(work, "ledger-rolled-back")]);
+  assert.match(
+    warned.stderr,
+    /AVISO: o diário de exclusões do banco atual não contém/,
+  );
+  {
+    const op = nextOp();
+    refused(["restore", "ensaio-1", "--confirm-offline"], /ERASURES_STALE/, {
+      WHITEOVEN_TEST_OPERATION_ID: op,
+    });
+    ops(["restore-rollback", op]);
+    assertClosed(op, "ROLLED_BACK");
+  }
+  record.scenarios.push({
+    name: "banco trocado por estado anterior da mesma linhagem",
+    checks: [
+      "export-erasures avisa que o banco não contém o último estado visto",
+      "restore sem diário recusado com ERASURES_STALE, apesar da cadeia íntegra e contínua com a cópia",
+    ],
+  });
+
+  // 7b. The database recreated in the same cluster (new lineage, no deletions known).
+  recreateDb();
   up();
   assert.notEqual(sql("select id from database_lineage"), oldLineage);
   ops(["export-erasures", join(work, "ledger-other")]);
@@ -789,6 +932,15 @@ try {
       ...lines.slice(4),
     ].join("\n"),
   );
+  // Row 1 removed and row 2 renumbered as 1, header adjusted: the format holds, the chain does not.
+  const [, , row1, row2] = lines;
+  const gapRow = row2.replace(/^2,/, "1,");
+  const ledgerGap = join(work, "gap.csv");
+  writeFileSync(
+    ledgerGap,
+    `${lines[0].replace(/head=2 head_hash=[0-9a-f]+/, `head=1 head_hash=${gapRow.split(",").at(-1)}`)}\n${lines[1]}\n${gapRow}\n`,
+  );
+  assert.ok(row1);
   const ledgerIncomplete = join(work, "incomplete.csv");
   writeFileSync(ledgerIncomplete, `${lines.slice(0, 3).join("\n")}\n`);
   const sameCluster = [
@@ -798,8 +950,20 @@ try {
       /ERASURES_LEDGER_INVALID: o diário é da linhagem/,
     ],
     [["--erasures", ledgerTampered], /ERASURES_LEDGER_INVALID: o encadeamento/],
+    [["--erasures", ledgerGap], /ERASURES_LEDGER_INVALID: o encadeamento/],
     [["--erasures", ledgerBefore], /não contém o estado da cópia/],
     [["--erasures", ledgerAtBackup], /ERASURES_STALE/],
+    // Valid and continuous, but nothing shows it holds deletions after its export.
+    [["--erasures", ledgerAfter], /ERASURES_CUTOFF_UNCONFIRMED/],
+    [
+      [
+        "--erasures",
+        ledgerAfter,
+        "--accept-erasures-until",
+        "20200101T000000Z",
+      ],
+      /ERASURES_CUTOFF_UNCONFIRMED/,
+    ],
   ];
   for (const [extra, pattern] of sameCluster) {
     const op = nextOp();
@@ -833,6 +997,7 @@ try {
     "--confirm-offline",
     "--erasures",
     ledgerAfter,
+    ...ackAfter,
   ]);
   const recreatedSeconds = seconds(start);
   up();
@@ -847,32 +1012,125 @@ try {
     log: recreated.stdout.match(/restore op=.*/)[0],
     checks: [
       "sem diário: ERASURES_MISSING (banco atual de outra linhagem)",
-      "diário de outra linhagem, adulterado, anterior à cópia ou anterior ao último estado visto no host: recusados",
+      "diário de outra linhagem, adulterado, com registro intermediário ausente, anterior à cópia ou anterior ao último estado visto no host: recusados",
+      "diário válido sem confirmação do corte (ou com data errada): ERASURES_CUTOFF_UNCONFIRMED",
       "diário incompleto recusado antes de qualquer operação",
-      "diário válido e contínuo aprovado; exclusões mantidas",
+      "diário válido e contínuo, com o corte confirmado, aprovado; exclusões mantidas",
     ],
   });
 
-  // 8. Host lost: only the backups and the external ledger survive.
+  // 8. Host lost: only the backups and the external ledger survive. Fresh cluster and volume:
+  // the database is the empty one migrate created and there is no tenants directory.
   compose("down", "-v");
   rmSync(state, { recursive: true, force: true });
   up();
-  {
+  assert.deepEqual(volumeEntries(), []);
+  const withLedger = ["--erasures", ledgerAfter, ...ackAfter];
+  const freshFails = [
+    [[], /ERASURES_MISSING/, {}],
+    [["--erasures", ledgerAfter], /ERASURES_CUTOFF_UNCONFIRMED/, {}],
+    [
+      withLedger,
+      /Rollback concluído/,
+      { WHITEOVEN_TEST_FAIL_AT: "after_db_swap" },
+    ],
+    [
+      withLedger,
+      /Rollback concluído/,
+      { WHITEOVEN_TEST_FAIL_AT: "images_swap" },
+    ],
+  ];
+  for (const [extra, pattern, extraEnv] of freshFails) {
     const op = nextOp();
-    refused(["restore", "ensaio-1", "--confirm-offline"], /ERASURES_MISSING/, {
+    refused(["restore", "ensaio-1", "--confirm-offline", ...extra], pattern, {
+      ...extraEnv,
       WHITEOVEN_TEST_OPERATION_ID: op,
     });
-    ops(["restore-rollback", op]);
-    // A fresh volume has no images yet, and the rollback must not create any.
+    if (opState(op).phase !== "ROLLED_BACK") ops(["restore-rollback", op]);
+    // The rollback must not create a tenants directory that did not exist.
     assertClosed(op, "ROLLED_BACK", []);
+    assert.equal(appCanConnect(), "t");
+    assert.equal(
+      sql("select count(*) from customers"),
+      "0",
+      "empty database back",
+    );
+  }
+  {
+    // Killed after the database swap, then recovered by hand as the runbook says.
+    const op = nextOp();
+    const killed = ops(
+      ["restore", "ensaio-1", "--confirm-offline", ...withLedger],
+      {
+        allowFailure: true,
+        env: {
+          WHITEOVEN_TEST_KILL_AT: "after_db_swap",
+          WHITEOVEN_TEST_OPERATION_ID: op,
+        },
+      },
+    );
+    assert.equal(killed.signal, "SIGKILL");
+    assert.equal(appCanConnect(), "f");
+    assert.equal(
+      dbComment("whiteoven"),
+      `whiteoven-restore candidate op=${op}`,
+    );
+    const psql = (command) =>
+      compose(
+        "exec",
+        "-T",
+        "postgres",
+        "psql",
+        "-X",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-c",
+        command,
+      );
+    psql(`alter database "whiteoven" rename to "whiteoven_rc_${op}"`);
+    psql(`alter database "whiteoven_prev_${op}" rename to "whiteoven"`);
+    psql(
+      'grant connect on database "whiteoven" to whiteoven_app, whiteoven_platform',
+    );
+    psql('comment on database "whiteoven" is null');
+    ops(["restore-rollback", op]);
+    assertClosed(op, "ROLLED_BACK", []);
+    assert.equal(sql("select count(*) from customers"), "0");
+  }
+  {
+    // No original database at all.
+    compose("stop", "api");
+    compose("exec", "-T", "postgres", "dropdb", "-U", "postgres", "whiteoven");
+    const op = nextOp();
+    refused(
+      ["restore", "ensaio-1", "--confirm-offline", ...withLedger],
+      /Rollback concluído/,
+      {
+        WHITEOVEN_TEST_FAIL_AT: "after_db_swap",
+        WHITEOVEN_TEST_OPERATION_ID: op,
+      },
+    );
+    assert.equal(opState(op).live_existed, "no");
+    assertClosed(op, "ROLLED_BACK", []);
+    assert.equal(
+      sql(
+        "select count(*) from pg_database where datname = 'whiteoven'",
+        "postgres",
+      ),
+      "0",
+      "nothing left under the live name",
+    );
   }
   start = Date.now();
   const recovered = ops([
     "restore",
     "ensaio-1",
     "--confirm-offline",
-    "--erasures",
-    ledgerAfter,
+    ...withLedger,
   ]);
   const recoverSeconds = seconds(start);
   up();
@@ -901,13 +1159,38 @@ try {
     restoreSeconds: recoverSeconds,
     log: recovered.stdout.match(/restore op=.*/)[0],
     checks: [
-      "restore sem diário recusado com ERASURES_MISSING",
-      "restore com o diário exportado reaplica a exclusão em cluster novo",
+      "restore sem diário recusado com ERASURES_MISSING; sem confirmar o corte, ERASURES_CUTOFF_UNCONFIRMED",
+      "falhas depois da troca do banco e durante a troca das imagens: rollback sem criar tenants nem apagar o banco vazio",
+      "morte depois da troca do banco: recuperação manual do runbook e restore-rollback",
+      "sem banco original: rollback não deixa nada sob o nome do banco",
+      "nova tentativa depois dos rollbacks reaplica a exclusão em cluster novo",
       "API volta saudável como whiteoven_app; imagens referenciadas completas",
     ],
   });
 
-  // 9. A committed image truncated on the volume: the backup refuses.
+  // 9. A committed image corrupted inside (RIFF size intact), then one truncated: the backup
+  // refuses both.
+  {
+    const victim = concurrent.find(
+      (image) =>
+        sql(`select count(*) from image_assets where id = '${image.id}'`) ===
+        "1",
+    );
+    const path = menuPath(tenantId, victim.id);
+    const bytes = volumeFiles().get(path);
+    assert.equal(bytes.toString("latin1", 12, 16), "VP8 ");
+    inApi(
+      `set -eu; printf '\\000\\000\\000' | dd of=${IMAGES}/${path} bs=1 seek=23 conv=notrunc 2>/dev/null`,
+    );
+    assert.equal(volumeFiles().get(path).length, bytes.length);
+    const corrupted = refused(
+      ["backup", "ensaio-corrompida"],
+      /Backup recusado/,
+    );
+    assert.match(corrupted.stderr, /quadro VP8/);
+    assert.equal(existsSync(join(backups, "ensaio-corrompida")), false);
+    inApi(`cat > ${IMAGES}/${path}`, bytes);
+  }
   inApi(
     `set -eu; f=${IMAGES}/${menuPath(tenantId, image1.id)}; head -c 100 "$f" > "$f.cut"; cat "$f.cut" > "$f"; rm "$f.cut"`,
   );
@@ -916,6 +1199,7 @@ try {
   record.scenarios.push({
     name: "imagem truncada",
     checks: [
+      "conteúdo interno corrompido com tamanho RIFF correto: backup recusado",
       "backup recusado e nada gravado quando uma imagem referenciada está incompleta",
     ],
   });

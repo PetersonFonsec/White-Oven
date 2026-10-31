@@ -27,7 +27,9 @@ bash ops/api-backup.sh backup api_AAAAMMDD_HHMMSS
 bash ops/api-backup.sh verify-backup api_AAAAMMDD_HHMMSS
 ```
 
-A cópia pode ser feita com a API no ar e com uploads acontecendo. O banco é copiado primeiro e as imagens depois. Antes de gravar a cópia, o script lê do dump a lista de imagens referenciadas e confere no arquivo de imagens que as duas variantes de cada uma existem e estão completas. Se faltar alguma, o backup falha com `Backup recusado` e nada é gravado; investigue o volume (ADR 0010) antes de repetir.
+A cópia pode ser feita com a API no ar e com uploads acontecendo. O banco é copiado primeiro e as imagens depois. Antes de gravar a cópia, o script lê do dump a lista de imagens referenciadas e confere as duas variantes de cada uma no arquivo de imagens com `ops/api-image-check.mjs`, num container avulso da imagem da API (Node e Sharp dela). Se faltar alguma ou alguma for inválida, o backup falha com `Backup recusado`, lista as variantes e não grava nada; investigue o volume (ADR 0010) antes de repetir.
+
+A conferência detecta: variante ausente; arquivo truncado ou com sobra; assinatura RIFF/WEBP errada; chunks que não cobrem o arquivo; assinatura VP8/VP8L errada; e conteúdo que o libwebp não decodifica. Não detecta pixels alterados que ainda decodificam (não há checksum gravado no upload). O custo é uma decodificação por variante.
 
 Cada cópia é um diretório com `database.dump`, `images.tar` e `manifest.txt` (formato `whiteoven-api-backup-2`, linhagem do banco, última migration, número de imagens conferidas e hashes). Um ID existente nunca é sobrescrito. Não use nomes, e-mails ou telefones no ID. Cópias do formato antigo não são restauráveis por esta versão.
 
@@ -102,20 +104,29 @@ Se o banco atual foi recriado à mão, restaurado fora desta ferramenta ou não 
    bash ops/api-backup.sh restore api_AAAAMMDD_HHMMSS --confirm-offline --erasures /root/whiteoven-import/customer-erasures-AAAAMMDDTHHMMSSZ.csv
    ```
 
+   Quando o diário é a única prova das exclusões, o restore recusa com `ERASURES_CUTOFF_UNCONFIRMED` e mostra a data de exportação. Confira no inventário que não existe diário mais novo e repita com essa data:
+
+   ```bash
+   bash ops/api-backup.sh restore api_AAAAMMDD_HHMMSS --confirm-offline --erasures /root/whiteoven-import/customer-erasures-AAAAMMDDTHHMMSSZ.csv --accept-erasures-until AAAAMMDDTHHMMSSZ
+   ```
+
+   A confirmação registra que exclusões feitas depois da exportação não são conhecidas. É a janela de risco aceita (seção 10).
+
 5. Siga a subida e as conferências da seção 5.
 
 O diário é aceito só se for da mesma linhagem da cópia, tiver o encadeamento íntegro, a contagem igual ao cabeçalho e contiver o último estado do diário da cópia. Num host que já viu um estado mais novo do diário dessa linhagem, ele também precisa chegar a esse estado.
 
-| Recusa                                         | Significado                                                                       |
-| ---------------------------------------------- | --------------------------------------------------------------------------------- |
-| `ERASURES_MISSING`                             | Nenhuma fonte prova as exclusões feitas depois da cópia. Traga o diário externo.  |
-| `ERASURES_LEDGER_INVALID: ... linhagem`        | Diário de outro banco. Use o diário exportado do banco de onde veio a cópia.      |
-| `ERASURES_LEDGER_INVALID: o encadeamento ...`  | Diário alterado, truncado ou fora de ordem. Use outra cópia externa e investigue. |
-| `ERASURES_LEDGER_INVALID: ... estado da cópia` | Diário anterior à cópia. Use um diário exportado depois dela.                     |
-| `ERASURES_STALE`                               | Diário mais antigo que o último estado visto neste host. Use um diário mais novo. |
-| `Diário ... incompleto` ou `fora do formato`   | Arquivo cortado ou editado; recusado antes de qualquer alteração.                 |
+| Recusa                                         | Significado                                                                                                                                                                |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ERASURES_MISSING`                             | Nenhuma fonte prova as exclusões feitas depois da cópia. Traga o diário externo.                                                                                           |
+| `ERASURES_LEDGER_INVALID: ... linhagem`        | Diário de outro banco. Use o diário exportado do banco de onde veio a cópia.                                                                                               |
+| `ERASURES_LEDGER_INVALID: o encadeamento ...`  | Diário alterado, truncado ou fora de ordem. Use outra cópia externa e investigue.                                                                                          |
+| `ERASURES_LEDGER_INVALID: ... estado da cópia` | Diário anterior à cópia. Use um diário exportado depois dela.                                                                                                              |
+| `ERASURES_STALE`                               | Diário (ou banco atual) mais antigo que o último estado visto neste host. Use um diário mais novo; se é o banco atual, ele foi trocado por um estado anterior: investigue. |
+| `ERASURES_CUTOFF_UNCONFIRMED`                  | Só o diário prova as exclusões. Confira que é o mais novo e confirme o corte com `--accept-erasures-until`.                                                                |
+| `Diário ... incompleto` ou `fora do formato`   | Arquivo cortado ou editado; recusado antes de qualquer alteração.                                                                                                          |
 
-Nenhuma dessas recusas pode ser contornada. Se não houver diário válido, a cópia não deve ser restaurada: trazer de volta dados de quem pediu a exclusão é pior do que perder dados posteriores.
+Nenhuma dessas recusas pode ser contornada; a confirmação do corte só aceita a data de exportação do próprio diário. Se não houver diário válido, a cópia não deve ser restaurada: trazer de volta dados de quem pediu a exclusão é pior do que perder dados posteriores.
 
 ## 7. Operações interrompidas e recuperação
 
@@ -123,7 +134,7 @@ Nenhuma dessas recusas pode ser contornada. Se não houver diário válido, a c�
 bash ops/api-backup.sh restore-status
 ```
 
-Lista cada operação com fase, cópia, fase da falha e horário. Uma operação marcada `[PENDENTE]` (em andamento, interrompida ou `FAILED`) bloqueia outro restore até ser encerrada. O estado fica em `.ops-state/api-restores/<operação>/` (`state` e `journal`), e sobrevive à morte do processo e ao reinício do host.
+Lista cada operação com fase, cópia, fase da falha e horário. Uma operação marcada `[PENDENTE]` (em andamento, interrompida, `FAILED`, `ROLLING_BACK` ou `ROLLBACK_FAILED`) bloqueia outro restore até ser encerrada. O estado fica em `.ops-state/api-restores/<operação>/` (`state`, `journal` e, se houve rollback, `rollback.log` com as mensagens de cada tentativa), e sobrevive à morte do processo e ao reinício do host.
 
 **Como reconhecer um restore interrompido:** `restore-status` mostra `[PENDENTE]`; a API não fica pronta e o log dela mostra `permission denied for database`; o banco `whiteoven` tem comentário `whiteoven-restore ...` (`select shobj_description(oid, 'pg_database') from pg_database where datname = 'whiteoven'`), ou o banco nem existe.
 
@@ -133,15 +144,16 @@ Lista cada operação com fase, cópia, fase da falha e horário. Uma operação
 bash ops/api-backup.sh restore-rollback <operação>
 ```
 
-Devolve o banco e as imagens originais, remove o candidato e o preparo da operação, devolve o `CONNECT` da API e grava `ROLLED_BACK`. Pode ser repetido. Um lock deixado por um processo morto é retomado automaticamente. Depois, suba a API e confira.
+Grava `ROLLING_BACK`, devolve o banco e as imagens originais e remove o candidato e o preparo da operação. Depois confere o conjunto original: toda imagem referenciada pelo banco está em `tenants`, completa e decodificável, e não sobrou diretório da operação no volume. Só então devolve o `CONNECT` da API e grava `ROLLED_BACK`. Se qualquer passo falhar, grava `ROLLBACK_FAILED` e a API continua sem acesso. Pode ser repetido. Um lock deixado por um processo morto é retomado automaticamente. Depois, suba a API e confira.
 
-| Fase registrada                                                 | Situação                             | O que fazer                                                       |
-| --------------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------- |
-| `FAILED` com falha antes de `SWAP_STARTED`                      | Nada em uso mudou; candidato mantido | Leia o erro e o `reapply.log`; depois `restore-rollback`.         |
-| `ROLLED_BACK`                                                   | Rollback automático feito            | Suba a API e confira.                                             |
-| `FAILED` com falha a partir de `SWAP_STARTED` (rollback falhou) | API bloqueada                        | `restore-rollback`; se falhar de novo, recuperação manual abaixo. |
-| `SWAP_STARTED` a `IMAGES_SWAPPED` (processo morto)              | API bloqueada                        | `restore-rollback`.                                               |
-| `COMPLETE`                                                      | Restauração concluída                | Para voltar, restaure a cópia `pre-restore-<operação>`.           |
+| Fase registrada                                    | Situação                             | O que fazer                                                                                                     |
+| -------------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `FAILED` com falha antes de `SWAP_STARTED`         | Nada em uso mudou; candidato mantido | Leia o erro e o `reapply.log`; depois `restore-rollback`.                                                       |
+| `ROLLED_BACK`                                      | Rollback automático feito            | Suba a API e confira.                                                                                           |
+| `ROLLBACK_FAILED`                                  | API bloqueada                        | Leia `rollback.log`, corrija a causa e repita `restore-rollback`; se falhar de novo, recuperação manual abaixo. |
+| `ROLLING_BACK` (processo morto no rollback)        | API bloqueada                        | `restore-rollback`.                                                                                             |
+| `SWAP_STARTED` a `IMAGES_SWAPPED` (processo morto) | API bloqueada                        | `restore-rollback`.                                                                                             |
+| `COMPLETE`                                         | Restauração concluída                | Para voltar, restaure a cópia `pre-restore-<operação>`.                                                         |
 
 **Recuperação manual** (só se `restore-rollback` falhar repetidamente; `OP` é o identificador da operação):
 
@@ -183,18 +195,23 @@ Remove só o banco `whiteoven_prev_<operação>` com a marca da operação e o d
 
 Garantias, verificadas pelo ensaio:
 
-- Toda imagem referenciada pelo banco de uma cópia está nela, completa.
+- Toda imagem referenciada pelo banco de uma cópia está nela, estruturalmente íntegra e decodificável.
 - Nenhuma exclusão conhecida por uma fonte válida volta a ter dados pessoais; sem fonte válida o restore não acontece.
 - Falha antes da troca não altera banco nem imagens em uso.
 - Do início da troca até o fim, a API não consegue conectar, mesmo depois de morte do processo ou reinício do host.
 - Falha durante a troca volta ao conjunto original, automaticamente ou com `restore-rollback`.
+- O `CONNECT` da API só volta depois que o conjunto (restaurado ou original) foi conferido; um rollback que falha ou morre no meio mantém a API bloqueada.
+- Num host novo, sem banco ou sem `tenants` originais, o rollback não deixa nada sob o nome do banco e não cria `tenants`; o restore pode ser repetido.
 - Nenhum banco ou diretório sem a marca da operação é removido.
 
 Limites:
 
 - A troca não é atômica; é segura por causa do bloqueio e do rollback.
-- Num host novo, sem `.ops-state`, um diário antigo mas posterior à cópia é aceito; exclusões depois dele se perdem.
-- O encadeamento prova integridade e continuidade, não autenticidade contra quem controla o arquivo inteiro.
+- Integridade, continuidade e completude são coisas diferentes. O encadeamento prova integridade (nada alterado, removido ou fora de ordem) e continuidade (a fonte contém o último estado da cópia e o último visto pelo host). Ele não prova que não houve exclusões depois do último registro.
+- O último estado visto pelo host só avança em backup, exportação e restore, não a cada exclusão. Um banco trocado por um estado anterior da mesma linhagem depois da última observação não é detectado. A janela de risco é o intervalo entre a última exportação do diário e a perda; exporte a cada hora.
+- Num host novo, sem `.ops-state`, o operador confirma o corte do diário (`--accept-erasures-until`). As exclusões feitas depois dele se perdem e só o inventário da cópia externa mostra se havia diário mais novo.
+- O encadeamento não prova autenticidade contra quem controla o arquivo inteiro.
+- A conferência das imagens não detecta pixels alterados que ainda decodificam.
 - A API fica fora do ar desde a parada até ser subida pelo operador.
 
 ## 11. Ensaio
@@ -210,23 +227,30 @@ Sobe um Compose isolado (projeto `whiteoven-drill-*`, portas 55432 e 53000), cri
 - **Colisão de candidato:** banco preexistente com o nome do candidato preservado.
 - **Falhas durante a troca** (`swap_prepare`, `after_db_swap`, `images_swap`): rollback automático, API saudável depois.
 - **Processo morto** (`db_rename`, `after_db_swap` com reinício do PostgreSQL, `before_complete`): API não fica pronta, operação pendente, lock retomado, `restore-rollback`.
+- **Rollback com falha e morto no meio:** `ROLLBACK_FAILED` com evidência em `rollback.log`; nova tentativa com uma imagem original truncada mantém a API bloqueada; `ROLLING_BACK` em disco depois do kill; tentativas seguintes concluem.
 - **Duas restaurações completas:** exclusões mantidas, imagens dos uploads concorrentes idênticas, candidatos distintos, `restore-cleanup`.
-- **Banco recriado no mesmo cluster:** recusas sem diário e com diário de outra linhagem, adulterado, incompleto, anterior à cópia ou antigo; aprovação com o diário atual.
-- **Perda do host:** recusa sem diário, aprovação com o diário.
-- **Imagem truncada:** backup recusado.
+- **Banco trocado por estado anterior da mesma linhagem:** aviso no `export-erasures` e `ERASURES_STALE` no restore.
+- **Banco recriado no mesmo cluster:** recusas sem diário e com diário de outra linhagem, adulterado, com registro intermediário ausente, incompleto, anterior à cópia, antigo ou sem confirmação do corte; aprovação com o diário atual e o corte confirmado.
+- **Perda do host:** recusa sem diário e sem confirmação do corte; falhas depois da troca do banco e durante a troca das imagens sem banco e sem `tenants` originais; kill com recuperação manual; nova tentativa aprovada.
+- **Imagem corrompida por dentro (tamanho RIFF correto) e imagem truncada:** backup recusado.
 
 A CI roda o ensaio no job `api-container`. Repita o ensaio com o Compose de produção da API antes do piloto e registre abaixo.
 
 ## 12. Registro de restaurações
 
-| Data (UTC)       | Ambiente                                                                     | Commit    | Cenário                             | Backup        | Restore                                            | Resultado                                                                                                                                                                                              |
-| ---------------- | ---------------------------------------------------------------------------- | --------- | ----------------------------------- | ------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-10-31 17:59 | Ensaio local, Compose de desenvolvimento, PostgreSQL 17.11, dados sintéticos | `d6f4933` | Mesmo host                          | 1,8 s         | 5,8 s (+7,1 s para a API ficar saudável)           | Aprovado (versão anterior do script, substituída na revisão da PR #45)                                                                                                                                 |
-| 2026-10-31 17:59 | Ensaio local, cluster novo depois de apagar os volumes                       | `d6f4933` | Perda do host                       | (mesma cópia) | 5,7 s                                              | Aprovado (versão anterior do script, substituída na revisão da PR #45)                                                                                                                                 |
-| 2026-10-31 18:43 | Ensaio local, Compose de desenvolvimento, PostgreSQL 17.11, dados sintéticos | `fad9127` | Backup com 123 uploads concorrentes | 3,1 s         | -                                                  | Aprovado: 13 imagens referenciadas conferidas, nenhum `*.tmp` na cópia; imagem truncada faz o backup recusar                                                                                           |
-| 2026-10-31 18:43 | Mesmo ensaio                                                                 | `fad9127` | Falhas e mortes do processo         | (mesma cópia) | -                                                  | Aprovado: 4 falhas antes da troca, 3 durante a troca e 3 mortes (uma com reinício do PostgreSQL); conjunto original intacto, API sem CONNECT até `restore-rollback`; candidato preexistente preservado |
-| 2026-10-31 18:43 | Mesmo ensaio                                                                 | `fad9127` | Mesmo host (duas vezes)             | (mesma cópia) | 13,4 s e 10,7 s (+7,2 s para a API ficar saudável) | Aprovado: `sources=live reapplied=1 already=1 absent=0`; candidatos distintos; 12 imagens dos uploads concorrentes idênticas; `restore-cleanup`                                                        |
-| 2026-10-31 18:43 | Mesmo ensaio, banco apagado e recriado no mesmo cluster                      | `fad9127` | Banco recriado                      | (mesma cópia) | 10,2 s                                             | Aprovado: recusas sem diário e com diário de outra linhagem, adulterado, incompleto, anterior à cópia e antigo (`ERASURES_STALE`); aceito com o diário atual                                           |
-| 2026-10-31 18:43 | Mesmo ensaio, cluster novo e `.ops-state` apagado                            | `fad9127` | Perda do host                       | (mesma cópia) | 10,0 s                                             | Aprovado: `ERASURES_MISSING` sem diário; com o diário, `sources=ledger reapplied=1`; API saudável como `whiteoven_app`                                                                                 |
+| Data (UTC)       | Ambiente                                                                     | Commit                  | Cenário                             | Backup        | Restore                                            | Resultado                                                                                                                                                                                              |
+| ---------------- | ---------------------------------------------------------------------------- | ----------------------- | ----------------------------------- | ------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-31 17:59 | Ensaio local, Compose de desenvolvimento, PostgreSQL 17.11, dados sintéticos | `d6f4933`               | Mesmo host                          | 1,8 s         | 5,8 s (+7,1 s para a API ficar saudável)           | Aprovado (versão anterior do script, substituída na revisão da PR #45)                                                                                                                                 |
+| 2026-10-31 17:59 | Ensaio local, cluster novo depois de apagar os volumes                       | `d6f4933`               | Perda do host                       | (mesma cópia) | 5,7 s                                              | Aprovado (versão anterior do script, substituída na revisão da PR #45)                                                                                                                                 |
+| 2026-10-31 18:43 | Ensaio local, Compose de desenvolvimento, PostgreSQL 17.11, dados sintéticos | `fad9127`               | Backup com 123 uploads concorrentes | 3,1 s         | -                                                  | Aprovado: 13 imagens referenciadas conferidas, nenhum `*.tmp` na cópia; imagem truncada faz o backup recusar                                                                                           |
+| 2026-10-31 18:43 | Mesmo ensaio                                                                 | `fad9127`               | Falhas e mortes do processo         | (mesma cópia) | -                                                  | Aprovado: 4 falhas antes da troca, 3 durante a troca e 3 mortes (uma com reinício do PostgreSQL); conjunto original intacto, API sem CONNECT até `restore-rollback`; candidato preexistente preservado |
+| 2026-10-31 18:43 | Mesmo ensaio                                                                 | `fad9127`               | Mesmo host (duas vezes)             | (mesma cópia) | 13,4 s e 10,7 s (+7,2 s para a API ficar saudável) | Aprovado: `sources=live reapplied=1 already=1 absent=0`; candidatos distintos; 12 imagens dos uploads concorrentes idênticas; `restore-cleanup`                                                        |
+| 2026-10-31 18:43 | Mesmo ensaio, banco apagado e recriado no mesmo cluster                      | `fad9127`               | Banco recriado                      | (mesma cópia) | 10,2 s                                             | Aprovado: recusas sem diário e com diário de outra linhagem, adulterado, incompleto, anterior à cópia e antigo (`ERASURES_STALE`); aceito com o diário atual                                           |
+| 2026-10-31 18:43 | Mesmo ensaio, cluster novo e `.ops-state` apagado                            | `fad9127`               | Perda do host                       | (mesma cópia) | 10,0 s                                             | Aprovado: `ERASURES_MISSING` sem diário; com o diário, `sources=ledger reapplied=1`; API saudável como `whiteoven_app`                                                                                 |
+| 2026-10-31 19:11 | Ensaio local, Compose de desenvolvimento, PostgreSQL 17.11, dados sintéticos | revisão final da PR #45 | Backup com 150 uploads concorrentes | 3,3 s         | -                                                  | Aprovado: 16 imagens referenciadas conferidas por estrutura e decodificação; imagem corrompida por dentro e imagem truncada fazem o backup recusar                                                     |
+| 2026-10-31 19:11 | Mesmo ensaio                                                                 | revisão final da PR #45 | Falhas, mortes e rollback com falha | (mesma cópia) | -                                                  | Aprovado: rollback com falha e com kill ficam em `ROLLBACK_FAILED`/`ROLLING_BACK` sem CONNECT; imagem original truncada mantém a API bloqueada até ser corrigida                                       |
+| 2026-10-31 19:11 | Mesmo ensaio                                                                 | revisão final da PR #45 | Mesmo host (duas vezes)             | (mesma cópia) | 14,4 s e 13,6 s                                    | Aprovado: `sources=live reapplied=1 already=1 absent=0`; conjunto restaurado conferido antes do CONNECT                                                                                                |
+| 2026-10-31 19:11 | Mesmo ensaio, banco trocado e depois recriado                                | revisão final da PR #45 | Estado anterior e banco recriado    | (mesma cópia) | 12,9 s                                             | Aprovado: `ERASURES_STALE` para o estado anterior; diários inválidos, com lacuna ou sem corte confirmado recusados; aceito com `--accept-erasures-until`                                               |
+| 2026-10-31 19:11 | Mesmo ensaio, cluster novo e `.ops-state` apagado                            | revisão final da PR #45 | Perda do host                       | (mesma cópia) | 9,6 s                                              | Aprovado: falhas e kill sem banco e sem `tenants` originais recuperados (um à mão, pelo runbook); nova tentativa aprovada                                                                              |
 
 Nos ensaios locais a imagem da API foi montada a partir dos artefatos compilados no host, com a mesma base e o mesmo layout do `apps/api/Dockerfile`, porque o ambiente do ensaio não alcançava o registro npm de dentro do build. A CI repete o ensaio com a imagem construída pelo `Dockerfile`.
