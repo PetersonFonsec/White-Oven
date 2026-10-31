@@ -56,23 +56,28 @@ jobs:
           node-version: 22.23.2
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Release check of the manifest, icon and EAS profile
-        run: pnpm release-check "$TENANT" "$KIND"
-      - name: Submit needs a store build and the store's submit profile
-        if: inputs.submit
+      - name: Pre-flight of the manifest, icon, build profile and submit profile
         run: |
-          if [ "$KIND" != store ]; then
-            echo "Only a store build can be submitted." >&2
-            exit 1
-          fi
-          node -e 'const s = require("./eas.json").submit ?? {}; if (!s[process.env.TENANT]) { console.error(`eas.json has no submit profile "${process.env.TENANT}" with the App Store Connect app id.`); process.exit(1); }'
+          args=("$TENANT" "$KIND" --platform "$PLATFORM")
+          if [ "$SUBMIT" = true ]; then args+=(--submit); fi
+          pnpm release-check "${args[@]}"
       - uses: expo/expo-github-action@v8
         with:
           eas-version: 27.2.0
           token: ${{ secrets.EXPO_TOKEN }}
-      - name: Build on EAS
+      # Same pre-flight plus WHITEOVEN_API_URL read from the build's EAS environment, so a missing
+      # or plain-HTTP address fails here instead of on a paid build. The value is never printed.
+      - name: Pre-flight against the EAS environment
+        id: preflight
         run: |
-          if [ "$KIND" = store ]; then profile="$TENANT-production"; else profile="$TENANT-preview"; fi
-          args=(--profile "$profile" --platform "$PLATFORM" --non-interactive --no-wait)
-          if [ "$SUBMIT" = true ]; then args+=(--auto-submit-with-profile "$TENANT"); fi
+          args=("$TENANT" "$KIND" --platform "$PLATFORM" --eas)
+          if [ "$SUBMIT" = true ]; then args+=(--submit); fi
+          pnpm release-check "${args[@]}"
+      - name: Build on EAS
+        env:
+          BUILD_PROFILE: ${{ steps.preflight.outputs.build_profile }}
+          SUBMIT_PROFILE: ${{ steps.preflight.outputs.submit_profile }}
+        run: |
+          args=(--profile "$BUILD_PROFILE" --platform "$PLATFORM" --non-interactive --no-wait)
+          if [ "$SUBMIT" = true ]; then args+=(--auto-submit-with-profile "$SUBMIT_PROFILE"); fi
           eas build "${args[@]}"

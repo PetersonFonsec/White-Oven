@@ -9,7 +9,7 @@ Prazos e preços das lojas mudam; confira nas páginas oficiais da Apple e do Go
 ## 1. Uma vez, no WhiteOven
 
 - [ ] Organização Expo do WhiteOven criada, com MFA em todos os membros.
-- [ ] Dois robôs na organização: um para builds de preview e outro para builds de loja. Os tokens vão para os ambientes `mobile-preview` e `mobile-store` do GitHub como `EXPO_TOKEN`.
+- [ ] Dois robôs na organização: um para builds de preview e outro para builds de loja. Os tokens vão para os ambientes `mobile-preview` e `mobile-store` do GitHub como `EXPO_TOKEN`. O robô precisa ler as variáveis de ambiente dos projetos, porque o pré-voo do workflow confere a `WHITEOVEN_API_URL` antes do build.
 - [ ] Ambiente `mobile-store` do GitHub com revisores obrigatórios.
 - [ ] "Enhanced push security" ligado na organização, com o token de acesso só no `EXPO_ACCESS_TOKEN` da API (ADR 0027).
 
@@ -30,7 +30,7 @@ Prazos e preços das lojas mudam; confira nas páginas oficiais da Apple e do Go
 - [ ] Projeto EAS criado na organização: em `apps/mobile`, com `WHITEOVEN_TENANT={slug}`, rodar `eas init` e copiar o id para `easProjectId`; `expoOwner` recebe o nome da organização.
 - [ ] Perfis `{slug}-preview` e `{slug}-production` no `eas.json` (o teste exige).
 - [ ] Aviso de privacidade aprovado no manifesto (M7.2). O texto demonstrativo bloqueia o build de loja.
-- [ ] `pnpm mobile:release-check {slug} store` sem pendências.
+- [ ] `pnpm mobile:release-check {slug} store` sem pendências. Com o EAS CLI logado, `--eas` também confere a URL da API no ambiente do EAS, e `--submit --platform ios|android|all` confere o perfil de submit.
 
 ## 4. Projeto EAS da loja
 
@@ -45,7 +45,7 @@ Prazos e preços das lojas mudam; confira nas páginas oficiais da Apple e do Go
 
 1. **Preview:** Actions → _Mobile build_ → loja, `preview`, plataforma. Instalar o APK e o build ad hoc (os iPhones precisam estar registrados com `eas device:create`). Testar cardápio, pedido, push e exclusão de conta contra a API real.
 2. **Primeiro envio ao Google Play:** a API do Google não aceita o primeiro AAB de um app novo. Rodar o build `store` sem envio e subir o AAB à mão na trilha de teste interno.
-3. **Perfil de submit** `{slug}` no `eas.json`, com `extends: "production"` e `ios.ascAppId` (o id numérico do app no App Store Connect).
+3. **Perfil de submit** `{slug}` no `eas.json`, com `extends: "production"` e `ios.ascAppId` (o id numérico do app no App Store Connect). Só o iOS precisa dele: enviar só o Android usa o perfil `production`.
 4. **Builds seguintes:** _Mobile build_ com `store` e "submit" marcado. O Android chega como rascunho na trilha interna, e o iOS no TestFlight. A promoção para produção e o envio à revisão são feitos nos consoles.
 
 ## 6. Fichas das lojas

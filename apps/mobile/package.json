@@ -27,6 +27,7 @@
     "react-native": "0.88.0"
   },
   "devDependencies": {
+    "@expo/eas-json": "27.2.0",
     "@types/react": "~19.3.0",
     "typescript": "^5.9.3"
   }

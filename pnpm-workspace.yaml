@@ -10,3 +10,4 @@ allowBuilds:
   "@parcel/watcher": false
   lmdb: false
   msgpackr-extract: false
+  dtrace-provider: false
