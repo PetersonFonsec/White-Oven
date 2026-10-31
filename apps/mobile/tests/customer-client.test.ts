@@ -284,6 +284,87 @@ test("a sign-in waits for an in-flight rotation so the previous identity is not 
   assert.equal(client.signedIn, true);
 });
 
+test("a request bound to an earlier identity never reads the token of the account that followed", async () => {
+  const saved = secret("a-refresh");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const sent: string[] = [];
+  const client = createCustomerClient({
+    apiUrl: "https://api.test",
+    storeSlug: "loja-a",
+    secret: saved,
+    fetch: async (url, init) => {
+      const path = String(url);
+      if (path.endsWith("auth/refresh")) {
+        await gate;
+        return Response.json({
+          accessToken: "a-access",
+          refreshToken: "a-rotated",
+          expiresIn: 900,
+        });
+      }
+      if (path.endsWith("auth/logout"))
+        return new Response(null, { status: 204 });
+      if (path.endsWith("auth/login"))
+        return Response.json({
+          accessToken: "b-access",
+          refreshToken: "b-refresh",
+          expiresIn: 900,
+        });
+      sent.push(
+        `${init?.method} ${new Headers(init?.headers).get("Authorization")}`,
+      );
+      return Response.json({ enabled: true });
+    },
+  });
+  // Bound to account A while its access token is still being refreshed.
+  const boundToA = client.identity;
+  const stale = client.request(
+    "me/push-device",
+    "PUT",
+    {},
+    undefined,
+    undefined,
+    boundToA,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const signingIn = client.signIn("login", {});
+  release();
+  await assert.rejects(stale, (error: unknown) => {
+    assert.ok(error instanceof CustomerError);
+    assert.equal(error.code, "ABORTED");
+    return true;
+  });
+  await signingIn;
+  // After the sign-in the old binding stays refused, and a fresh one runs as B.
+  await assert.rejects(
+    client.request("me/push-device", "PUT", {}, undefined, undefined, boundToA),
+  );
+  await client.request(
+    "me/push-device",
+    "PUT",
+    {},
+    undefined,
+    undefined,
+    client.identity,
+  );
+  assert.deepEqual(sent, ["PUT Bearer b-access"]);
+
+  const boundToB = client.identity;
+  await client.logout();
+  await assert.rejects(
+    client.request(
+      "me/push-device",
+      "GET",
+      undefined,
+      undefined,
+      undefined,
+      boundToB,
+    ),
+  );
+  assert.deepEqual(sent, ["PUT Bearer b-access"]);
+});
+
 function faultyKV() {
   const values = new Map<string, string>();
   const faults = {

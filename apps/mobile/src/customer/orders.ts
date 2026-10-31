@@ -8,6 +8,7 @@ import {
   validateCartLines,
 } from "../cart/cart.ts";
 import type { PublicMenu } from "../menu/menu.ts";
+import { CustomerError, customerMessage } from "./client.ts";
 
 export const ORDER_STATUSES = [
   "PLACED",
@@ -337,4 +338,15 @@ export function statusLabel(
     case "CANCELED":
       return "Cancelado";
   }
+}
+
+/**
+ * Why an order's detail did not load. The API answers 404 for an order of another account as for
+ * one that does not exist, so a notification of an earlier account on this device lands here
+ * without showing anything of that order (ADR 0027).
+ */
+export function orderDetailMessage(error: unknown): string {
+  if (error instanceof CustomerError && error.status === 404)
+    return "Este pedido não está disponível nesta conta. Se ele foi feito em outra conta, entre nela para acompanhá-lo.";
+  return customerMessage(error);
 }

@@ -16,6 +16,7 @@ import {
   parseCustomerOrderDetail,
   parseCustomerOrderPage,
 } from "../customer/orders.ts";
+import type { PushApi, PushCall } from "../customer/push.ts";
 
 export interface Quote {
   itemsSubtotalCents: number;
@@ -473,6 +474,37 @@ export function createCommerceModel(options: {
         { from: "PLACED", to: "CANCELED", reasonCode: "CUSTOMER_REQUEST" },
         key,
       ),
+    /** Order notification opt-in of this session (ADR 0027), outside `run`: no busy state. */
+    push: {
+      session: () => client.identity,
+      status: (call: PushCall) =>
+        client.request(
+          "me/push-device",
+          "GET",
+          undefined,
+          undefined,
+          call.signal,
+          call.session,
+        ),
+      register: (token: string, installationId: string, call: PushCall) =>
+        client.request(
+          "me/push-device",
+          "PUT",
+          { token, installationId },
+          undefined,
+          call.signal,
+          call.session,
+        ),
+      unregister: (installationId: string, call: PushCall) =>
+        client.request(
+          `me/push-device?installationId=${encodeURIComponent(installationId)}`,
+          "DELETE",
+          undefined,
+          undefined,
+          call.signal,
+          call.session,
+        ),
+    } satisfies PushApi,
     invalidateQuote: dropQuote,
     quote: (details: CheckoutDetails, expectedTotalCents: number) =>
       run(async () => {

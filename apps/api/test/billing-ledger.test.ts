@@ -78,6 +78,7 @@ describe("M6.2 billing ledger", databaseSuite, () => {
         ownerInviteSecret: Buffer.alloc(32, 9),
         adminOrigins: ["https://admin.example.test"],
       },
+      push: { delivery: "disabled", expoAccessToken: null },
     };
     platform = new PlatformService(app, config);
     storeA = await insertTenant(owner, "ledger-a");
@@ -730,6 +731,7 @@ describe("M6.2 billing ledger over development entries", databaseSuite, () => {
         ownerInviteSecret: Buffer.alloc(32, 9),
         adminOrigins: ["https://admin.example.test"],
       },
+      push: { delivery: "disabled", expoAccessToken: null },
     });
   });
 

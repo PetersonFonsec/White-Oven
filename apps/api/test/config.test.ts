@@ -43,6 +43,7 @@ describe("loadConfig", () => {
         ownerInviteSecret: null,
         adminOrigins: [],
       },
+      push: { delivery: "disabled", expoAccessToken: null },
     });
   });
 
@@ -167,6 +168,32 @@ describe("loadConfig", () => {
     const problems = problemsOf({ MIKRO_ORM_CLIENT_URL: "postgres://x@y/z" });
     assert.deepEqual(problems, [
       "MIKRO_ORM_* variables are not supported; use DATABASE_URL",
+    ]);
+  });
+
+  it("keeps push delivery off unless PUSH_DELIVERY=expo, with an optional Expo token", () => {
+    const token = "a".repeat(40);
+    assert.deepEqual(
+      loadConfig({ ...base, PUSH_DELIVERY: "expo", EXPO_ACCESS_TOKEN: token })
+        .push,
+      { delivery: "expo", expoAccessToken: token },
+    );
+    assert.deepEqual(loadConfig({ ...base, ...production }).push, {
+      delivery: "disabled",
+      expoAccessToken: null,
+    });
+    assert.deepEqual(problemsOf({ PUSH_DELIVERY: "fcm" }), [
+      "PUSH_DELIVERY must be one of: disabled, expo",
+    ]);
+    assert.deepEqual(problemsOf({ EXPO_ACCESS_TOKEN: token }), [
+      "EXPO_ACCESS_TOKEN requires PUSH_DELIVERY=expo",
+    ]);
+    const problems = problemsOf({
+      PUSH_DELIVERY: "expo",
+      EXPO_ACCESS_TOKEN: "not a token!",
+    });
+    assert.deepEqual(problems, [
+      "EXPO_ACCESS_TOKEN must be an Expo access token",
     ]);
   });
 

@@ -67,6 +67,9 @@ export function createCustomerClient(options: {
   let refreshing: Promise<void> | null = null;
   // Set when a sign-in replaces the session: nothing may refresh back into the previous identity.
   let replaced = false;
+  // Changes whenever the signed-in identity may change (sign-in, logout): a request bound to an
+  // older value is refused before it reads a token, so it never runs as another account.
+  let identity = 0;
   async function raw(
     path: string,
     method: string,
@@ -154,6 +157,10 @@ export function createCustomerClient(options: {
     get signedIn() {
       return access !== null;
     },
+    /** The current identity, for `request(..., boundTo)`. */
+    get identity() {
+      return identity;
+    },
     async restore() {
       if (replaced) return;
       const saved = await options.secret.read();
@@ -165,6 +172,7 @@ export function createCustomerClient(options: {
      * network, storage) leaves the client signed out instead of silently refreshing back into it.
      */
     async signIn(mode: "login" | "register", body: unknown) {
+      identity++;
       replaced = true;
       access = null;
       // A rotation already in flight could persist the previous identity after the removal below.
@@ -181,6 +189,8 @@ export function createCustomerClient(options: {
           JSON.stringify({ refreshToken: previous }),
         ).catch(() => undefined);
       await accept(await raw(`auth/${mode}`, "POST", JSON.stringify(body)));
+      // A call bound while the sign-in was still running belongs to neither account.
+      identity++;
     },
     async request(
       path: string,
@@ -188,10 +198,14 @@ export function createCustomerClient(options: {
       body?: unknown,
       key?: string,
       signal?: AbortSignal,
+      boundTo?: number,
     ): Promise<unknown> {
-      if (signal?.aborted) throw new CustomerError(0, "ABORTED");
+      // Checked synchronously right before each token is read, after every wait.
+      const stale = () =>
+        signal?.aborted || (boundTo !== undefined && boundTo !== identity);
+      if (stale()) throw new CustomerError(0, "ABORTED");
       if (!access || now() >= expires) await refresh();
-      if (signal?.aborted) throw new CustomerError(0, "ABORTED");
+      if (stale()) throw new CustomerError(0, "ABORTED");
       const sentToken = access!;
       const encoded =
         body === undefined
@@ -204,14 +218,15 @@ export function createCustomerClient(options: {
       } catch (error) {
         if (!(error instanceof CustomerError) || error.status !== 401)
           throw error;
-        if (signal?.aborted) throw new CustomerError(0, "ABORTED");
+        if (stale()) throw new CustomerError(0, "ABORTED");
         // Concurrent 401s share one rotation, even when one response arrives late.
         if (access === sentToken || !access) await refresh();
-        if (signal?.aborted) throw new CustomerError(0, "ABORTED");
+        if (stale()) throw new CustomerError(0, "ABORTED");
         return raw(path, method, encoded, access!, key, signal);
       }
     },
     async logout() {
+      identity++;
       const saved = await options.secret.read();
       // Keep the token if server revocation cannot be confirmed, allowing an explicit retry.
       if (saved)
@@ -224,6 +239,7 @@ export function createCustomerClient(options: {
       access = null;
     },
     async forget() {
+      identity++;
       await options.secret.remove();
       access = null;
     },

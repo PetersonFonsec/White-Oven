@@ -95,7 +95,7 @@ sequenceDiagram
 
 ### Atualização em tempo real
 
-Recomendação para o MVP: polling no painel a cada 10 segundos para pedidos ativos, com alerta sonoro em pedido novo, e polling no app a cada 20 segundos enquanto a tela do pedido estiver aberta. Push ao cliente depende da aprovação do Expo Push (Q-11 em [mvp-scope](../product/mvp-scope.md)). Alternativas: Server-Sent Events (menos latência, mas exige ajustar timeouts do reverse proxy) e WebSocket (bidirecional, desnecessário). SSE pode substituir o polling depois sem mudar o domínio.
+Recomendação para o MVP: polling no painel a cada 10 segundos para pedidos ativos, com alerta sonoro em pedido novo, e polling no app a cada 20 segundos enquanto a tela do pedido estiver aberta. Push ao cliente usa o Expo Push (Q-11 em [mvp-scope](../product/mvp-scope.md); M5.5, [ADR 0027](../adr/0027-order-push-notifications.md)), opt-in e sem substituir o polling. Alternativas: Server-Sent Events (menos latência, mas exige ajustar timeouts do reverse proxy) e WebSocket (bidirecional, desnecessário). SSE pode substituir o polling depois sem mudar o domínio.
 
 ## Decisões arquiteturais propostas
 
@@ -202,7 +202,7 @@ O tema segue o esquema já previsto em [design-system](design-system.md): a pizz
 
 - **Apple:** as diretrizes de revisão da App Store (4.2.6) rejeitam apps gerados a partir de modelo comercial, a menos que sejam enviados diretamente pelo provedor do conteúdo. Na prática cada pizzaria precisa da própria conta Apple Developer (anuidade em dólar, e conta de organização exige D-U-N-S), com o WhiteOven atuando como membro da equipe para publicar. Há risco de rejeição por funcionalidade mínima (4.2) ou spam (4.3) quando muitos apps parecidos são enviados; cada app deve ter cardápio real e identidade própria.
 - **Google Play:** publicar em conta da pizzaria (taxa única de registro) também é o caminho recomendado. Contas pessoais novas têm exigência de teste fechado antes da produção; contas de organização exigem verificação.
-- **Custo de build:** iOS exige macOS. Alternativas: EAS Build (serviço Expo, pago conforme volume) ou builds próprios com runner macOS. A decisão entra em ADR no M5.5; até lá nenhum fornecedor é contratado.
+- **Custo de build:** iOS exige macOS. Alternativas: EAS Build (serviço Expo, pago conforme volume) ou builds próprios com runner macOS. A decisão entra em ADR no M5.6; até lá nenhum fornecedor é contratado.
 - **Escala:** cada nova pizzaria significa um build, duas fichas de loja e revisão. Isso limita a velocidade de onboarding e precisa entrar no preço/operação. Mitigações futuras: cardápio web/PWA como canal imediato enquanto o app passa pela revisão, e automação de builds por manifesto.
 - **Alternativa descartada:** um único app WhiteOven com todas as pizzarias (agregador). Evita a revisão por pizzaria, mas contradiz a proposta white label e transforma o WhiteOven em marketplace.
 

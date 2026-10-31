@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { Alert, View } from "react-native";
+import { useState, useSyncExternalStore } from "react";
+import { Alert, Linking, View } from "react-native";
 import { Body, Button, Field, FormPage, Heading } from "../components/Form.tsx";
 import { Choice } from "../components/Choice.tsx";
 import type { CommerceModel, CommerceState } from "../cart/model.ts";
 import type { Address } from "../customer/client.ts";
 import type { CustomerPrivacyPolicy } from "../config/manifest.ts";
+import type { PushModel } from "../customer/push.ts";
 
 const emptyAddress: Omit<Address, "id"> = {
   label: "Casa",
@@ -28,15 +29,90 @@ const addressFields = [
   ["state", "UF", 2],
   ["reference", "Referência (opcional)", 120],
 ] as const;
+/**
+ * Order notifications of this device (M5.5, ADR 0027): off until the customer turns them on here;
+ * the permission prompt appears only after that tap.
+ */
+function OrderNotifications({
+  push,
+  disabled,
+}: {
+  push: PushModel;
+  disabled: boolean;
+}) {
+  const state = useSyncExternalStore(push.subscribe, push.getSnapshot);
+  const busy = disabled || state.busy;
+  return (
+    <>
+      <Heading>Avisos do pedido</Heading>
+      {state.status === "unavailable" ? (
+        <Body>
+          Os avisos do pedido não estão disponíveis nesta versão do app.
+        </Body>
+      ) : (
+        <>
+          <Body>
+            Receba um aviso quando a pizzaria aceitar, preparar, enviar ou
+            concluir seu pedido. O aviso mostra só o nome da loja, o número e o
+            estado do pedido.
+          </Body>
+          {state.error ? <Body alert>{state.error}</Body> : null}
+          {state.status === "unknown" ? (
+            <Button
+              label="Verificar avisos do pedido"
+              disabled={busy}
+              onPress={() => void push.refresh()}
+            />
+          ) : null}
+          {state.status === "on" ? (
+            <Body>Avisos ativados neste aparelho.</Body>
+          ) : null}
+          {state.status === "denied" ? (
+            <>
+              <Body alert>
+                As notificações estão bloqueadas nos ajustes do aparelho.
+                Libere-as para receber os avisos.
+              </Body>
+              <Button
+                label="Abrir ajustes do aparelho"
+                onPress={() => void Linking.openSettings()}
+              />
+            </>
+          ) : null}
+          {state.status === "off" || state.status === "denied" ? (
+            <Button
+              label="Ativar avisos do pedido"
+              disabled={busy}
+              onPress={() => void push.enable()}
+            />
+          ) : null}
+          {state.status === "on" || state.status === "denied" ? (
+            <Button
+              label="Desativar avisos do pedido"
+              disabled={busy}
+              onPress={() => void push.disable()}
+            />
+          ) : null}
+        </>
+      )}
+    </>
+  );
+}
+
 export function AccountScreen({
   model,
   state,
+  push,
+  notice,
   policy,
   onBack,
   onOrders,
 }: {
   model: CommerceModel;
   state: CommerceState;
+  push: PushModel;
+  /** Why the app opened this screen, such as a tapped notification while signed out. */
+  notice?: string | null;
   policy?: CustomerPrivacyPolicy;
   onBack: () => void;
   onOrders: () => void;
@@ -72,6 +148,7 @@ export function AccountScreen({
     <FormPage>
       <Button label="Voltar" onPress={onBack} disabled={state.busy} />
       <Heading>Minha conta</Heading>
+      {notice ? <Body alert>{notice}</Body> : null}
       {state.error ? <Body alert>{state.error}</Body> : null}
       {state.busy ? <Body>Processando…</Body> : null}
       {!state.ready ? (
@@ -99,6 +176,7 @@ export function AccountScreen({
             disabled={disabled}
             onPress={() => void model.logout()}
           />
+          <OrderNotifications push={push} disabled={disabled} />
           <Heading>Endereços</Heading>
           <Button
             label="Atualizar endereços"

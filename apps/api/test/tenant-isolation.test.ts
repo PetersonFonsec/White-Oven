@@ -786,6 +786,10 @@ describe("tenant isolation", databaseSuite, () => {
         "POST /customer/stores/:storeSlug/me/orders",
         "GET /customer/stores/:storeSlug/me/orders",
         "GET /customer/stores/:storeSlug/me/orders/:orderId",
+        // The session's own device, no id in the path; covered in push.test.ts.
+        "GET /customer/stores/:storeSlug/me/push-device",
+        "PUT /customer/stores/:storeSlug/me/push-device",
+        "DELETE /customer/stores/:storeSlug/me/push-device",
       ];
       assert.deepEqual(
         routes.filter((route) => !listings.includes(route)).sort(),
@@ -1091,6 +1095,7 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "catalog_simple_products", forced: true },
         { table: "catalog_versions", forced: true },
         { table: "customer_addresses", forced: true },
+        { table: "customer_push_devices", forced: true },
         { table: "customer_sessions", forced: true },
         { table: "customers", forced: true },
         { table: "image_assets", forced: true },
@@ -1103,6 +1108,8 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "owner_invites", forced: true },
         { table: "pizza_sizes", forced: true },
         { table: "plan_subscriptions", forced: true },
+        { table: "push_deliveries", forced: true },
+        { table: "push_messages", forced: true },
         { table: "staff_invites", forced: true },
         { table: "store_opening_hours", forced: true },
         { table: "store_pauses", forced: true },

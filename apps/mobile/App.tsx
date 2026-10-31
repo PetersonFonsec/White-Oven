@@ -38,7 +38,20 @@ import { menuNotices, storeMessage } from "./src/screens/store-messages.ts";
 
 import { addPizza, addProduct } from "./src/cart/cart.ts";
 
-import { nativeCommerce, randomUUID } from "./src/customer/native.ts";
+import {
+  nativeCommerce,
+  nativeInstallationId,
+  randomUUID,
+} from "./src/customer/native.ts";
+import {
+  type PushModel,
+  createNotificationRouter,
+  createPushModel,
+} from "./src/customer/push.ts";
+import {
+  nativePush,
+  onNotificationOpened,
+} from "./src/customer/push-native.ts";
 import type { CommerceModel, CommerceState } from "./src/cart/model.ts";
 import {
   type CheckoutSettings,
@@ -79,6 +92,55 @@ export default function App() {
     commerceRef.current?.invalidateQuote();
     setDestination(next);
   };
+  const push = useMemo<PushModel | null>(
+    () =>
+      model && runtime
+        ? createPushModel({
+            api: model.push,
+            native: nativePush(runtime.pushProjectId),
+            installation: () =>
+              nativeInstallationId(runtime.apiUrl, runtime.storeSlug),
+          })
+        : null,
+    [model],
+  );
+  const profileId = commerce?.profile?.id ?? null;
+  const sessionStatus = commerce?.session ?? "idle";
+  // The device's opt-in belongs to the signed-in session; another account starts from its own.
+  useEffect(() => {
+    if (!push) return;
+    push.reset();
+    if (profileId) void push.refresh();
+  }, [push, profileId]);
+  // A tapped order notification opens that order once the session is known (ADR 0027).
+  const notifications = useRef(createNotificationRouter());
+  const [notificationTap, setNotificationTap] = useState(0);
+  const [notificationNotice, setNotificationNotice] = useState<string | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!runtime?.pushProjectId) return;
+    return onNotificationOpened((notificationId, data) => {
+      if (notifications.current.opened(notificationId, data))
+        setNotificationTap((count) => count + 1);
+    });
+  }, []);
+  useEffect(() => {
+    const route = notifications.current.take({
+      status: sessionStatus,
+      signedIn: profileId !== null,
+    });
+    if (route.kind === "order") {
+      setNotificationNotice(null);
+      setOrderReturn("history");
+      navigate({ kind: "order", orderId: route.orderId });
+    } else if (route.kind === "login") {
+      setNotificationNotice(
+        "Entre na conta que fez o pedido para acompanhá-lo.",
+      );
+      navigate({ kind: "account" });
+    }
+  }, [notificationTap, sessionStatus, profileId]);
   const [checkoutSettings, setCheckoutSettings] =
     useState<CheckoutSettings | null>(null);
   const settingsRequest = useRef<AbortController | null>(null);
@@ -294,11 +356,13 @@ export default function App() {
           }}
           onOpenCart={() => navigate({ kind: "cart" })}
         />
-      ) : screen.kind === "account" && model && commerce ? (
+      ) : screen.kind === "account" && model && commerce && push ? (
         <AccountScreen
           key={commerce.profile?.id ?? "signed-out"}
           model={model}
           state={commerce}
+          push={push}
+          notice={commerce.profile ? null : notificationNotice}
           policy={runtime.privacyPolicy}
           onBack={() => navigate(null)}
           onOrders={() => navigate({ kind: "history" })}
