@@ -10,7 +10,8 @@
     "ios": "expo start --ios",
     "config": "expo config --type public --json",
     "typecheck": "tsc -p .",
-    "test": "node --experimental-strip-types --no-warnings=ExperimentalWarning --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --no-warnings=ExperimentalWarning --test tests/*.test.ts",
+    "release-check": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/release-check.ts"
   },
   "dependencies": {
     "@whiteoven/contracts": "workspace:*",

@@ -1,0 +1,78 @@
+name: Mobile build
+
+# One store's app on EAS (ADR 0028). Manual only: a build spends EAS credits and a store build
+# goes to Apple and Google. The `mobile-preview` and `mobile-store` GitHub environments hold the
+# EXPO_TOKEN of WhiteOven's Expo organization; give `mobile-store` required reviewers.
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: Store slug (a manifest in apps/mobile/manifests)
+        required: true
+        type: string
+      kind:
+        description: preview (internal testers) or store (App Store and Google Play)
+        required: true
+        type: choice
+        options: [preview, store]
+      platform:
+        description: Platform
+        required: true
+        type: choice
+        options: [android, ios, all]
+      submit:
+        description: Send the store build to App Store Connect and the Play Console internal track
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-build-${{ inputs.tenant }}-${{ inputs.kind }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: mobile-${{ inputs.kind }}
+    defaults:
+      run:
+        working-directory: apps/mobile
+    env:
+      TENANT: ${{ inputs.tenant }}
+      KIND: ${{ inputs.kind }}
+      PLATFORM: ${{ inputs.platform }}
+      SUBMIT: ${{ inputs.submit }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Release check of the manifest, icon and EAS profile
+        run: pnpm release-check "$TENANT" "$KIND"
+      - name: Submit needs a store build and the store's submit profile
+        if: inputs.submit
+        run: |
+          if [ "$KIND" != store ]; then
+            echo "Only a store build can be submitted." >&2
+            exit 1
+          fi
+          node -e 'const s = require("./eas.json").submit ?? {}; if (!s[process.env.TENANT]) { console.error(`eas.json has no submit profile "${process.env.TENANT}" with the App Store Connect app id.`); process.exit(1); }'
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: 27.2.0
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Build on EAS
+        run: |
+          if [ "$KIND" = store ]; then profile="$TENANT-production"; else profile="$TENANT-preview"; fi
+          args=(--profile "$profile" --platform "$PLATFORM" --non-interactive --no-wait)
+          if [ "$SUBMIT" = true ]; then args+=(--auto-submit-with-profile "$TENANT"); fi
+          eas build "${args[@]}"

@@ -28,6 +28,7 @@
     "admin:dev": "pnpm --filter @whiteoven/admin dev",
     "admin:build": "pnpm --filter @whiteoven/admin build",
     "mobile:start": "pnpm --filter @whiteoven/mobile start",
+    "mobile:release-check": "pnpm --filter @whiteoven/mobile release-check",
     "db:up": "docker compose -f compose.dev.yaml up -d --wait postgres",
     "test:e2e:admin": "playwright test -c apps/admin/e2e/playwright.config.ts",
     "test:e2e:mobile": "pnpm --filter @whiteoven/api exec tsc -p tsconfig.test.json && node --experimental-strip-types --test apps/mobile/tests/integration/checkout-api.mjs"

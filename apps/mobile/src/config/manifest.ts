@@ -47,6 +47,11 @@ export interface TenantManifest {
    * the account screen says so.
    */
   easProjectId?: string;
+  /**
+   * The Expo account that owns `easProjectId` (ADR 0028): WhiteOven's organization. Only with a
+   * project; a store build requires it, because EAS refuses a robot token without an owner.
+   */
+  expoOwner?: string;
 }
 
 /** What the running app reads from `expo-constants` (`extra.whiteoven`). */
@@ -67,6 +72,7 @@ const VERSION = /^\d+\.\d+\.\d+$/;
 const HEX = /^#[0-9A-F]{6}$/;
 const EAS_PROJECT_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const EXPO_OWNER = /^[a-z0-9][a-z0-9_-]{0,38}$/;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "10.0.2.2"]);
 
 export class ManifestError extends Error {
@@ -120,6 +126,14 @@ export function parseManifest(value: unknown): TenantManifest {
     (typeof easProjectId !== "string" || !EAS_PROJECT_ID.test(easProjectId))
   )
     problems.push("easProjectId");
+  const expoOwner = record["expoOwner"];
+  if (
+    expoOwner !== undefined &&
+    (typeof expoOwner !== "string" || !EXPO_OWNER.test(expoOwner))
+  )
+    problems.push("expoOwner");
+  else if (expoOwner !== undefined && easProjectId === undefined)
+    problems.push("expoOwner (without easProjectId)");
   const known = [
     "slug",
     "name",
@@ -131,6 +145,7 @@ export function parseManifest(value: unknown): TenantManifest {
     "fallbackColors",
     "privacyPolicy",
     "easProjectId",
+    "expoOwner",
   ];
   for (const key of Object.keys(record))
     if (!known.includes(key)) problems.push(`${key} (unknown)`);
@@ -148,6 +163,7 @@ export function parseManifest(value: unknown): TenantManifest {
     iconBackgroundColor,
     fallbackColors: fallbackColors!,
     ...(typeof easProjectId === "string" ? { easProjectId } : {}),
+    ...(typeof expoOwner === "string" ? { expoOwner } : {}),
   };
 }
 
@@ -197,6 +213,7 @@ export function buildAppConfig(manifest: TenantManifest, apiUrl: string) {
       : ["expo-secure-store"],
     name: manifest.name,
     slug: `whiteoven-${manifest.slug}`,
+    ...(manifest.expoOwner ? { owner: manifest.expoOwner } : {}),
     version: manifest.version,
     orientation: "portrait" as const,
     userInterfaceStyle: "light" as const,
@@ -204,6 +221,8 @@ export function buildAppConfig(manifest: TenantManifest, apiUrl: string) {
     ios: {
       bundleIdentifier: manifest.ios.bundleIdentifier,
       supportsTablet: false,
+      // Only HTTPS through the system: exempt, so App Store Connect stops asking on every upload.
+      config: { usesNonExemptEncryption: false },
     },
     android: {
       package: manifest.android.package,
