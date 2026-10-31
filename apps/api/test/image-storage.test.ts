@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -124,6 +124,63 @@ describe("M2.5 image processing and local storage", () => {
       }
     });
   }
+
+  it("leaves neither a final name nor a temporary file when writing the bytes fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "whiteoven-images-io-"));
+    const config = { imageStorageDirectory: root } as ApiConfig;
+    const storage = new LocalImageStorage(config, logger);
+    const tenantId = "51b7cf37-828a-4d18-8f60-804ab23e05e5";
+    const assetId = "510c9890-ece7-4fa8-82b0-26171aa88af1";
+    try {
+      await assert.rejects(
+        storage.write(tenantId, assetId, {
+          thumbnail: Buffer.from("thumbnail"),
+          // Not writable data: the write of the second variant fails mid-way, after open.
+          menu: 42 as unknown as Buffer,
+        }),
+      );
+      await assert.rejects(access(join(root, "tenants", tenantId, assetId)), {
+        code: "ENOENT",
+      });
+      assert.deepEqual(await readdir(join(root, "tenants", tenantId)), []);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes each variant complete under its final name, never a partial file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "whiteoven-images-publish-"));
+    const config = { imageStorageDirectory: root } as ApiConfig;
+    const seen: string[][] = [];
+    class ObservingStorage extends LocalImageStorage {
+      protected override async writeVariant(
+        directory: string,
+        target: string,
+        bytes: Buffer,
+      ) {
+        await super.writeVariant(directory, target, bytes);
+        seen.push((await readdir(directory)).sort());
+      }
+    }
+    const storage = new ObservingStorage(config, logger);
+    const tenantId = "51b7cf37-828a-4d18-8f60-804ab23e05e5";
+    const assetId = "510c9890-ece7-4fa8-82b0-26171aa88af1";
+    const menu = Buffer.alloc(256 * 1024, 7);
+    try {
+      await storage.write(tenantId, assetId, {
+        thumbnail: Buffer.from("thumbnail"),
+        menu,
+      });
+      // After each variant only final names exist, and none is a temporary or truncated file.
+      assert.deepEqual(seen, [
+        ["thumbnail.webp"],
+        ["menu.webp", "thumbnail.webp"],
+      ]);
+      assert.deepEqual(await storage.read(tenantId, assetId, "menu"), menu);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it("does not overwrite or clean an existing asset after an ID collision", async () => {
     const root = await mkdtemp(join(tmpdir(), "whiteoven-images-collision-"));

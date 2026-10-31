@@ -36,6 +36,8 @@ interface HarnessOptions {
   removeError?: Error;
   imageVisible?: boolean;
   readError?: NodeJS.ErrnoException;
+  /** What the check after a failed upload finds: the row (commit happened), nothing, or an error. */
+  afterFailure?: "committed" | "absent" | "error";
   processor?: () => Promise<ProcessedImage>;
 }
 
@@ -66,6 +68,11 @@ function harness(options: HarnessOptions = {}) {
     async execute(query: string) {
       if (query.includes("set_config")) return [];
       if (query.includes("select status from tenants")) return [{ status }];
+      if (query.includes("select 1 as committed from image_assets")) {
+        if (options.afterFailure === "error")
+          throw new Error("database unreachable");
+        return options.afterFailure === "committed" ? [{ committed: 1 }] : [];
+      }
       if (query.includes("select id from image_assets"))
         return options.imageVisible === false ? [] : [{ id: ASSET_ID }];
       if (query.startsWith("insert into image_assets") && options.insertError)
@@ -253,6 +260,40 @@ describe("M2.5 image service authorization and compensation", () => {
     );
     assert.equal(app.storageCalls.write, 1);
     assert.equal(app.storageCalls.remove, 1);
+  });
+
+  it("keeps the files when a commit reported as failed did commit", async () => {
+    const commitError = new Error("connection lost during commit");
+    const app = harness({ commitError, afterFailure: "committed" });
+    await assert.rejects(
+      app.withActor(() =>
+        app.service.upload(Buffer.from("image"), "image/png", REQUEST_ID),
+      ),
+      (error: unknown) => error === commitError,
+    );
+    assert.equal(app.storageCalls.remove, 0);
+    const event = app.logLines.find(
+      (line) => line.event === "image_storage.compensation_skipped",
+    );
+    assert.equal(event?.reason, "committed");
+  });
+
+  it("keeps the files when it cannot tell whether the commit happened", async () => {
+    const commitError = new Error("connection lost during commit");
+    const app = harness({ commitError, afterFailure: "error" });
+    await assert.rejects(
+      app.withActor(() =>
+        app.service.upload(Buffer.from("image"), "image/png", REQUEST_ID),
+      ),
+      (error: unknown) => error === commitError,
+    );
+    assert.equal(app.storageCalls.remove, 0);
+    const event = app.logLines.find(
+      (line) => line.event === "image_storage.compensation_skipped",
+    );
+    assert.equal(event?.reason, "commit_unknown");
+    assert.equal(event?.errorType, "Error");
+    assert.equal(JSON.stringify(event).includes("unreachable"), false);
   });
 
   it("distinguishes a missing tenant asset from a missing physical variant", async () => {

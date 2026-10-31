@@ -29,9 +29,13 @@ const REAPPLY_SQL = readFileSync(
 );
 const PASSWORD = "backup-senha-forte-2026";
 
-/** Every table that points at a customer. A new one needs a line in the reapply file. */
+/**
+ * Every table that points at a customer. A new one needs a line in the reapply file, except the
+ * erasure registry itself, which holds only ids and the deletion time.
+ */
 const CUSTOMER_TABLES = [
   "customer_addresses",
+  "customer_erasures",
   "customer_push_devices",
   "customer_sessions",
   "orders",
@@ -234,6 +238,124 @@ describe(
       assert.ok(
         await deletedAt(customer.id, first),
         "a second run keeps the first time",
+      );
+    });
+
+    /** The registry as the restore checks it. */
+    const chain = async (source = "customer_erasures") => {
+      const [row] = await owner.em
+        .getConnection()
+        .execute<{ rows: string; head: string; broken: string }[]>(
+          `select row_count as rows, head_seq as head, broken
+           from whiteoven_verify_erasure_chain(?::regclass)`,
+          [source],
+        );
+      return {
+        rows: Number(row!.rows),
+        head: Number(row!.head),
+        broken: Number(row!.broken),
+      };
+    };
+    const registered = async (customerId: string) =>
+      (
+        await owner.em
+          .getConnection()
+          .execute<{ seq: string }[]>(
+            "select seq from customer_erasures where customer_id = ?",
+            [customerId],
+          )
+      ).length;
+
+    it("records every deletion in a gap-free hash chain, also for a reapplied one", async () => {
+      const before = await chain();
+      const deleted = await fullCustomer();
+      const response = await request("me", deleted.accessToken, "DELETE", {
+        password: PASSWORD,
+      });
+      assert.equal(response.status, 204);
+      assert.equal(await registered(deleted.id), 1);
+      const restored = await fullCustomer();
+      await reapply([
+        {
+          tenantId: store.id,
+          customerId: restored.id,
+          deletedAt: new Date("2026-10-30T09:00:00.000Z"),
+        },
+      ]);
+      assert.equal(await registered(restored.id), 1);
+      await reapply([
+        {
+          tenantId: store.id,
+          customerId: restored.id,
+          deletedAt: new Date("2026-10-30T09:00:00.000Z"),
+        },
+      ]);
+      assert.equal(
+        await registered(restored.id),
+        1,
+        "a second run adds nothing",
+      );
+      const after = await chain();
+      assert.equal(after.broken, 0);
+      assert.equal(after.rows, after.head);
+      assert.equal(after.head, before.head + 2);
+    });
+
+    it("detects a broken, truncated in the middle or edited copy of the chain", async () => {
+      for (const label of ["a", "b", "c"]) {
+        const customer = await fullCustomer();
+        assert.equal(
+          (
+            await request("me", customer.accessToken, "DELETE", {
+              password: PASSWORD,
+            })
+          ).status,
+          204,
+          label,
+        );
+      }
+      await owner.em.fork().transactional(async (em) => {
+        const check = async () => {
+          const [row] = await em.execute<{ broken: string }[]>(
+            "select broken from whiteoven_verify_erasure_chain('pg_temp.ledger')",
+          );
+          return Number(row!.broken);
+        };
+        await em.execute(
+          "create temp table ledger on commit drop as select * from customer_erasures",
+        );
+        assert.equal(await check(), 0);
+        await em.execute(
+          "update ledger set deleted_at = deleted_at + interval '1 second' where seq = 2",
+        );
+        assert.ok((await check()) > 0, "an edited row breaks the chain");
+        await em.execute("delete from ledger");
+        await em.execute(
+          "insert into ledger select * from customer_erasures where seq <> 2",
+        );
+        assert.ok((await check()) > 0, "a missing row breaks the chain");
+      });
+    });
+
+    it("keeps the registry append-only and the lineage single", async () => {
+      await assert.rejects(
+        owner.em
+          .getConnection()
+          .execute("update customer_erasures set deleted_at = now()"),
+        /append-only/,
+      );
+      await assert.rejects(
+        owner.em.getConnection().execute("delete from customer_erasures"),
+        /append-only/,
+      );
+      const lineage = await owner.em
+        .getConnection()
+        .execute<{ id: string }[]>("select id from database_lineage");
+      assert.equal(lineage.length, 1);
+      await assert.rejects(
+        owner.em
+          .getConnection()
+          .execute("insert into database_lineage (singleton) values (false)"),
       );
     });
 

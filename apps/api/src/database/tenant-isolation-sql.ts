@@ -35,6 +35,9 @@ export interface UnprotectedTenantTable {
 }
 
 /** The only expression a permissive tenant policy may use, as `pg_get_expr` prints it. */
+/** Global tables with a `tenant_id` column that the app role must not reach at all. */
+const GLOBAL_TABLES = new Set(["audit_events", "customer_erasures"]);
+
 export const TENANT_CHECK_EXPRESSION =
   "(tenant_id = public.whiteoven_current_tenant())";
 
@@ -101,7 +104,7 @@ export async function findUnprotectedTenantTables(
              c.relrowsecurity as "rowSecurity",
              c.relforcerowsecurity as "forceRowSecurity",
              a.attnotnull as "tenantIdNotNull",
-             (c.relname = 'audit_events' and (
+             (c.relname in ('audit_events', 'customer_erasures') and (
                has_table_privilege('whiteoven_app', c.oid, 'SELECT') or
                has_table_privilege('whiteoven_app', c.oid, 'INSERT') or
                has_table_privilege('whiteoven_app', c.oid, 'UPDATE') or
@@ -130,15 +133,14 @@ export async function findUnprotectedTenantTables(
 
     const result: UnprotectedTenantTable[] = [];
     for (const table of tables) {
-      // Platform AuditEvent uses nullable tenant_id by contract. It is global and intentionally
-      // has no direct app-role grants; narrowly scoped SECURITY DEFINER operations append rows.
-      if (table.table === "audit_events") {
+      // Platform AuditEvent uses nullable tenant_id by contract, and the customer erasure registry
+      // (M7.1, ADR 0029) is read only by backup and restore. Both are global and intentionally
+      // have no direct app-role grants; narrowly scoped SECURITY DEFINER operations append rows.
+      if (GLOBAL_TABLES.has(table.table)) {
         if (table.appAuditPrivilege)
           result.push({
             table: table.table,
-            problems: [
-              "whiteoven_app has direct privileges on global audit table",
-            ],
+            problems: ["whiteoven_app has direct privileges on global table"],
           });
         continue;
       }

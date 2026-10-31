@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { Inject, Injectable } from "@nestjs/common";
 import sharp from "sharp";
@@ -128,6 +128,9 @@ export class LocalImageStorage implements ImageStorage {
           variants[variant],
         );
       }
+      // The caller commits the metadata after this returns; the names must survive a crash.
+      await syncDirectory(directory);
+      await syncDirectory(parent);
     } catch (error) {
       if (createdAssetDirectory) {
         try {
@@ -184,8 +187,25 @@ export class LocalImageStorage implements ImageStorage {
       directory,
       `${basename(target)}.${randomUUID()}.tmp`,
     );
-    await writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
+    // Published under its final name only complete and on disk: a reader or a backup sees the
+    // whole variant or none of it (temporary names end in .tmp and are not backed up).
+    const handle = await open(temporary, "wx", 0o600);
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(temporary, target);
+  }
+}
+
+async function syncDirectory(path: string) {
+  const handle = await open(path, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 

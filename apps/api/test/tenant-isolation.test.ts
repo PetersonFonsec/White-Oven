@@ -1076,7 +1076,7 @@ describe("tenant isolation", databaseSuite, () => {
            from pg_class c join pg_attribute a on a.attrelid = c.oid and a.attname = 'tenant_id'
           where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
             and c.relname not like 'isolation_probe_%'
-            and c.relname <> 'audit_events'
+            and c.relname not in ('audit_events', 'customer_erasures')
           order by 1`,
         );
       assert.deepEqual(rows, [
@@ -1118,19 +1118,20 @@ describe("tenant isolation", databaseSuite, () => {
       ]);
     });
 
-    it("keeps the global append-only audit table inaccessible to the app role", async () => {
-      for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE"])
-        assert.equal(
-          await owner.em
-            .getConnection()
-            .execute<{ allowed: boolean }[]>(
-              "select has_table_privilege('whiteoven_app', 'audit_events', ?) as allowed",
-              [privilege],
-            )
-            .then(([row]) => row!.allowed),
-          false,
-          privilege,
-        );
+    it("keeps the global append-only audit and erasure tables inaccessible to the app role", async () => {
+      for (const table of ["audit_events", "customer_erasures"])
+        for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE"])
+          assert.equal(
+            await owner.em
+              .getConnection()
+              .execute<{ allowed: boolean }[]>(
+                "select has_table_privilege('whiteoven_app', ?, ?) as allowed",
+                [table, privilege],
+              )
+              .then(([row]) => row!.allowed),
+            false,
+            `${table} ${privilege}`,
+          );
       assert.deepEqual(await findUnprotectedTenantTables(owner), []);
     });
 

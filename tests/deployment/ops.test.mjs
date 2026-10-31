@@ -348,42 +348,41 @@ test("GHCR: interrupted or unconfirmed push fails; wrong revision is refused", (
     h.cleanup();
   }
 });
-test("API restore refuses before touching Docker without confirmation, with a bad ID or a malformed ledger", () => {
+const T1 = "11111111-1111-4111-8111-111111111111";
+const C1 = "22222222-2222-4222-8222-222222222222";
+const LINEAGE = "33333333-3333-4333-8333-333333333333";
+const HASH = "ab".repeat(32);
+const ledgerText = ({ head = 1, rows } = {}) =>
+  `# whiteoven-customer-erasures-2 lineage=${LINEAGE} head=${head} head_hash=${HASH} exported_at=20261031T120000Z\n` +
+  "seq,tenant_id,customer_id,deleted_at,hash\n" +
+  (rows ?? `1,${T1},${C1},2026-10-31T12:00:00.500000Z,${HASH}\n`);
+
+function apiHarness() {
   const h = harness();
+  const api = (...args) => h.run("ops/api-backup.sh", args);
+  const noDocker = () =>
+    !existsSync(join(h.state, "log")) ||
+    !readFileSync(join(h.state, "log"), "utf8").includes("docker");
+  const ledger = (text) => {
+    const path = join(h.state, `ledger-${Math.random()}.csv`);
+    writeFileSync(path, text);
+    return path;
+  };
+  const lockReleased = () =>
+    !existsSync(join(h.state, "ops-state", "api-backup.lock"));
+  return { ...h, api, noDocker, ledger, lockReleased };
+}
+
+test("API restore refuses before touching Docker without confirmation or with a bad ID", () => {
+  const h = apiHarness();
   try {
-    const api = (...args) => h.run("ops/api-backup.sh", args);
-    const noDocker = () =>
-      !existsSync(join(h.state, "log")) ||
-      !readFileSync(join(h.state, "log"), "utf8").includes("docker");
-    const unconfirmed = api("restore", "copia-1");
+    const unconfirmed = h.api("restore", "copia-1");
     assert.equal(unconfirmed.status, 1);
     assert.match(unconfirmed.stderr, /--confirm-offline/);
-    assert.equal(api("backup", "../fora").status, 1);
-    assert.equal(api("restore", "copia;rm", "--confirm-offline").status, 1);
-    const ledger = join(h.state, "erasures.csv");
-    writeFileSync(
-      ledger,
-      "tenant_id,customer_id,deleted_at\n" +
-        "11111111-1111-4111-8111-111111111111,22222222-2222-4222-8222-222222222222,2026-10-31 12:00:00.5+00\n" +
-        "\\.\n",
-    );
-    const malformed = api(
-      "restore",
-      "copia-1",
-      "--confirm-offline",
-      "--erasures",
-      ledger,
-    );
-    assert.equal(malformed.status, 1);
-    assert.match(malformed.stderr, /fora do formato/);
-    writeFileSync(ledger, "id,customer\n");
-    assert.match(
-      api("restore", "copia-1", "--confirm-offline", "--erasures", ledger)
-        .stderr,
-      /cabeçalho/,
-    );
+    assert.equal(h.api("backup", "../fora").status, 1);
+    assert.equal(h.api("restore", "copia;rm", "--confirm-offline").status, 1);
     assert.equal(
-      api(
+      h.api(
         "restore",
         "copia-1",
         "--confirm-offline",
@@ -392,12 +391,121 @@ test("API restore refuses before touching Docker without confirmation, with a ba
       ).status,
       1,
     );
-    assert.ok(noDocker(), "nothing reached Docker");
-    assert.equal(
-      existsSync(join(h.state, "ops-state", "api-backup.lock")),
-      false,
-      "the lock is released on refusal",
+    assert.ok(h.noDocker(), "nothing reached Docker");
+    assert.ok(h.lockReleased(), "the lock is released on refusal");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("API restore refuses a ledger that is not a complete, well-formed export", () => {
+  const h = apiHarness();
+  try {
+    const cases = [
+      [
+        ledgerText().replace("whiteoven-customer-erasures-2", "outro"),
+        /cabeçalho/,
+      ],
+      [ledgerText().replace("seq,tenant_id", "id,tenant_id"), /colunas/],
+      [
+        ledgerText({
+          rows: `1,${T1},${C1},2026-10-31T12:00:00.500000Z,${HASH}\n\\.\n`,
+        }),
+        /fora do formato/,
+      ],
+      [
+        ledgerText({ rows: `1,${T1},${C1},2026-10-31 12:00:00+00,${HASH}\n` }),
+        /fora do formato/,
+      ],
+      [ledgerText({ head: 2 }), /incompleto/],
+      [
+        ledgerText({
+          rows: `1,${T1},${C1},2026-10-31T12:00:00.500000Z,${"cd".repeat(32)}\n`,
+        }),
+        /não confere com o cabeçalho/,
+      ],
+      // The old format (no lineage, no chain) proves nothing about completeness.
+      [
+        `tenant_id,customer_id,deleted_at\n${T1},${C1},2026-10-31 12:00:00+00\n`,
+        /cabeçalho/,
+      ],
+    ];
+    for (const [text, message] of cases) {
+      const refused = h.api(
+        "restore",
+        "copia-1",
+        "--confirm-offline",
+        "--erasures",
+        h.ledger(text),
+      );
+      assert.equal(refused.status, 1, String(message));
+      assert.match(refused.stderr, message);
+    }
+    assert.ok(h.noDocker(), "nothing reached Docker");
+    assert.ok(h.lockReleased());
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("API restore waits for an incomplete operation and a dead process's lock is taken over", () => {
+  const h = apiHarness();
+  try {
+    const op = join(
+      h.state,
+      "ops-state",
+      "api-restores",
+      "20261031120000_abcdef",
     );
+    mkdirSync(op, { recursive: true });
+    writeFileSync(join(op, "state"), "backup=copia-1\nphase=DB_SWAPPED\n");
+    const status = h.api("restore-status");
+    assert.equal(status.status, 0);
+    assert.match(
+      status.stdout,
+      /20261031120000_abcdef fase=DB_SWAPPED .*PENDENTE/,
+    );
+    const blocked = h.api(
+      "restore",
+      "copia-1",
+      "--confirm-offline",
+      "--erasures",
+      h.ledger(ledgerText()),
+    );
+    assert.equal(blocked.status, 1);
+    assert.match(
+      blocked.stderr,
+      /restauração incompleta: 20261031120000_abcdef/,
+    );
+    assert.equal(h.api("restore-rollback", "../x").status, 1);
+    assert.equal(
+      h.api("restore-cleanup", "20261031120000_abcdef").status,
+      1,
+      "only a COMPLETE operation is cleaned",
+    );
+    assert.ok(h.noDocker(), "nothing reached Docker");
+
+    const lock = join(h.state, "ops-state", "api-backup.lock");
+    mkdirSync(lock);
+    writeFileSync(join(lock, "pid"), "999999\n");
+    const taken = h.api("restore-status");
+    assert.equal(taken.status, 0);
+    writeFileSync(join(op, "state"), "backup=copia-1\nphase=ROLLED_BACK\n");
+    const again = h.api(
+      "restore",
+      "copia-1",
+      "--confirm-offline",
+      "--erasures",
+      h.ledger(ledgerText({ head: 3 })),
+    );
+    assert.match(again.stderr, /Lock deixado pelo processo 999999/);
+    assert.match(again.stderr, /incompleto/);
+    assert.ok(h.lockReleased());
+    mkdirSync(lock);
+    writeFileSync(join(lock, "pid"), `${process.pid}\n`);
+    const busy = h.api("restore", "copia-1", "--confirm-offline");
+    assert.match(busy.stderr, /Outra operação/);
+    rmSync(lock, { recursive: true });
   } finally {
     h.cleanup();
   }
