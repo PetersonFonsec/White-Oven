@@ -27,7 +27,40 @@ export async function insertTenant(
         [row!.id],
       );
     });
+  await publishTestLegalDocuments(owner, row!.id);
   return row!.id;
+}
+
+/** Version every test sign-up sends for both documents. */
+export const TEST_LEGAL_VERSION = "2026-10";
+
+/**
+ * Publishes a privacy policy and terms of use (ADR 0030), as an operator would before the store
+ * takes sign-ups; written as the owner, like the plan above.
+ */
+export async function publishTestLegalDocuments(
+  owner: MikroORM,
+  tenantId: string,
+  version = TEST_LEGAL_VERSION,
+): Promise<void> {
+  await owner.em.fork().transactional(async (em) => {
+    // Suites that migrate only up to an earlier schema have no legal documents yet.
+    const [table] = await em.execute<{ exists: boolean }[]>(
+      "select to_regclass('legal_documents') is not null as exists",
+    );
+    if (!table!.exists) return;
+    await em.execute("select set_config('app.tenant_id', ?, true)", [tenantId]);
+    await em.execute(
+      `insert into legal_documents (tenant_id, kind, version, revision, body, body_sha256)
+       select ?, k.kind, ?::text,
+              coalesce((select max(d.revision) from legal_documents d
+                         where d.tenant_id = ? and d.kind = k.kind), 0) + 1,
+              k.body, sha256(convert_to(k.body, 'UTF8'))
+         from (values ('PRIVACY_POLICY', 'Política de teste ' || ?::text),
+                      ('TERMS_OF_USE', 'Termos de teste ' || ?::text)) as k (kind, body)`,
+      [tenantId, version, tenantId, version, version],
+    );
+  });
 }
 
 export async function insertStaffUser(

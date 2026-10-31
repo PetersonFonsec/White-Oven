@@ -17,5 +17,6 @@ import { CustomerSessionGuard, CustomerTokenGuard } from "./customer.guard";
     CustomerTokenGuard,
     CustomerSessionGuard,
   ],
+  exports: [CustomerAuth],
 })
 export class CustomerModule {}

@@ -72,6 +72,22 @@ class BillingReversalBody {
     "COMPLETED_BY_MISTAKE" | "SALE_UNDONE";
 }
 
+class LegalDocumentBody {
+  @ApiProperty({ enum: ["PRIVACY_POLICY", "TERMS_OF_USE"] }) kind!:
+    "PRIVACY_POLICY" | "TERMS_OF_USE";
+  @ApiProperty({
+    pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$",
+    example: "2026-11",
+  })
+  version!: string;
+  @ApiProperty({
+    maxLength: 100000,
+    description:
+      "Plain text: blocks separated by a blank line, `## ` headings, `- ` list items.",
+  })
+  body!: string;
+}
+
 class RedeemInviteBody {
   @ApiProperty({ minLength: 43, maxLength: 43 }) token!: string;
   @ApiProperty({ minLength: 1, maxLength: 120 }) name!: string;
@@ -275,6 +291,57 @@ export class PlatformBillingController {
       tenantId,
       entryId,
       reasonCode!,
+      staff.access.staffUserId,
+      staff.access.sessionId,
+      requestIdOf(req),
+      req.ip ?? "",
+    );
+    res.status(result.changed ? HttpStatus.CREATED : HttpStatus.OK);
+    return result;
+  }
+}
+
+@ApiTags("platform legal")
+@Controller("platform/tenants/:tenantId/legal-documents")
+export class PlatformLegalController {
+  constructor(private readonly platform: PlatformService) {}
+
+  @Get()
+  @PlatformRoute()
+  @ApiOperation({
+    summary: "List every published version of a store's legal documents",
+  })
+  list(
+    @Param("tenantId") tenantId: string,
+    @CurrentStaff() staff: StaffPrincipal,
+  ) {
+    return this.platform.listLegalDocuments(
+      tenantId,
+      staff.access.staffUserId,
+      staff.access.sessionId,
+    );
+  }
+
+  @Post()
+  @PlatformRoute()
+  @ApiBody({ type: LegalDocumentBody })
+  @ApiOperation({
+    summary:
+      "Publish a new current version of the store's privacy policy or terms (ADR 0030)",
+    description:
+      "201 for a new version; 200 when the same version and text already exist; 409 LEGAL_VERSION_CONFLICT when the version exists with another text.",
+  })
+  async publish(
+    @Param("tenantId") tenantId: string,
+    @Body() body: unknown,
+    @CurrentStaff() staff: StaffPrincipal,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const [kind, version, text] = fields(body, ["kind", "version", "body"]);
+    const result = await this.platform.publishLegalDocument(
+      tenantId,
+      { kind, version, body: text },
       staff.access.staffUserId,
       staff.access.sessionId,
       requestIdOf(req),

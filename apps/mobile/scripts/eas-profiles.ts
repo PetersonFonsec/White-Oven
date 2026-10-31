@@ -223,5 +223,7 @@ export function easApiUrlProblem(
   if (!run.error && run.signal === null && run.status === 0) return null;
   if (!run.error && run.signal === null && run.status === 3)
     return `WHITEOVEN_API_URL is missing or invalid in the EAS "${environment}" environment (set an HTTPS address, plain text or sensitive)`;
+  if (!run.error && run.signal === null && run.status === 4)
+    return `The API of the EAS "${environment}" environment has no approved privacy policy and terms of use for this store (publish them, ADR 0030)`;
   return `Could not validate the EAS "${environment}" environment (check EXPO_TOKEN, access to the store's EAS project and the environment name)`;
 }

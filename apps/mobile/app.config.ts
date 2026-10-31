@@ -12,7 +12,7 @@ import {
  * `WHITEOVEN_API_URL` the API the app calls (HTTPS; plain HTTP only to the developer machine).
  *
  * On an EAS build worker (`EAS_BUILD`), a store profile (`WHITEOVEN_RELEASE`, ADR 0028) refuses
- * to build a binary that is not ready: no EAS project, a demonstration privacy text, a bad icon
+ * to build a binary that is not ready: no EAS project, a bad icon
  * or an API that is not HTTPS. The CLI evaluates this file before it fetches the variables
  * kept on EAS, so the check waits for the worker, where every variable is present.
  */

@@ -310,8 +310,27 @@ describe("release-check command line", () => {
       ...ready,
       easProjectId: "0f3c1a52-6d2e-4b8f-9a77-3f1e2d4c5b6a",
       expoOwner: "whiteoven",
-      privacyPolicy: { version: "2026-11-15", text: "Política aprovada." },
     }),
+  );
+  // Stands in for the store's API inside the fake EAS run: answers the legal documents
+  // (ADR 0030) as FAKE_LEGAL says, and records which store was asked.
+  const fakeFetch = join(copy, "fake-fetch.mjs");
+  writeFileSync(
+    fakeFetch,
+    `import { appendFileSync } from "node:fs";
+globalThis.fetch = async (url) => {
+  appendFileSync(process.env.FAKE_EAS_LOG, JSON.stringify({ fetched: String(url) }) + "\\n");
+  const doc = (version) => ({ version, body: "Texto" });
+  const mode = process.env.FAKE_LEGAL;
+  if (mode === "offline") throw new TypeError("fetch failed");
+  const body = mode === "demo"
+    ? { privacyPolicy: doc("demo-1"), termsOfUse: doc("demo-1") }
+    : mode === "missing"
+      ? { privacyPolicy: null, termsOfUse: null }
+      : { privacyPolicy: doc("2026-11"), termsOfUse: doc("2026-11") };
+  return new Response(JSON.stringify(body), { status: 200 });
+};
+`,
   );
   // An opaque 1024 px icon: RGB, one IDAT, valid CRCs.
   const opaque = spawnSync(
@@ -338,6 +357,7 @@ if (process.env.FAKE_EAS_MODE === "leak") { console.log("stdout: token " + proce
 if (process.env.FAKE_EAS_MODE === "signal") process.kill(process.pid, "SIGKILL");
 const env = { ...process.env };
 if (process.env.FAKE_EAS_URL) env.WHITEOVEN_API_URL = process.env.FAKE_EAS_URL;
+env.NODE_OPTIONS = "--import " + process.env.FAKE_FETCH;
 const run = spawnSync(inner, { shell: true, stdio: "inherit", env });
 process.exit(run.status ?? 1);
 `,
@@ -368,16 +388,22 @@ process.exit(run.status ?? 1);
           ...inherited,
           EAS_BIN: fake,
           FAKE_EAS_LOG: log,
+          FAKE_FETCH: fakeFetch,
           GITHUB_OUTPUT: output,
           ...env,
         },
       },
     );
-    const calls = readFileSync(log, "utf8")
+    const lines = readFileSync(log, "utf8")
       .split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line));
-    return { ...result, calls, output: readFileSync(output, "utf8") };
+    return {
+      ...result,
+      calls: lines.filter((line) => "command" in line),
+      fetched: lines.flatMap((line) => line.fetched ?? []),
+      output: readFileSync(output, "utf8"),
+    };
   };
   const store = [centro, "store", "--platform", "android", "--eas"];
 
@@ -401,6 +427,30 @@ process.exit(run.status ?? 1);
       `build_profile=${centro}-production\nsubmit_profile=production\neas_environment=production\n`,
     );
     assert.doesNotMatch(ok.stdout + ok.stderr, /api\.example\.com/);
+    // A store build also asks that API for the store's legal documents (ADR 0030).
+    assert.deepEqual(ok.fetched, [
+      `https://api.example.com/v1/public/stores/${centro}/legal`,
+    ]);
+  });
+
+  it("stops a store build whose API has no approved legal documents, never a preview", () => {
+    const legalMissing =
+      /- The API of the EAS "production" environment has no approved privacy policy and terms of use for this store/;
+    for (const mode of ["demo", "missing", "offline"])
+      assertRefused(
+        run(store, {
+          FAKE_EAS_URL: "https://api.example.com",
+          FAKE_LEGAL: mode,
+        }),
+        legalMissing,
+        ["api.example.com"],
+      );
+    const preview = run([centro, "preview", "--eas"], {
+      FAKE_EAS_URL: "https://api.example.com",
+      FAKE_LEGAL: "missing",
+    });
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.deepEqual(preview.fetched, []);
   });
 
   const missingOrInvalid =
@@ -562,6 +612,7 @@ process.exit(run.status ?? 1);
     );
     assert.equal(result.status, 1);
     assert.match(result.stderr, /- easProjectId \(EAS project\)/);
-    assert.match(result.stderr, /- privacyPolicy \(demonstration text/);
+    // The texts are checked on the API (`--eas`), not in the manifest (ADR 0030).
+    assert.doesNotMatch(result.stderr, /privacyPolicy/);
   });
 });

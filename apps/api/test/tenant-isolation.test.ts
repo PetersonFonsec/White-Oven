@@ -32,6 +32,7 @@ import {
 import {
   insertMembership,
   insertStaffUser,
+  publishTestLegalDocuments,
   setMembershipStatus,
   staffLogin,
   switchTenant,
@@ -98,6 +99,7 @@ describe("tenant isolation", databaseSuite, () => {
 
   const fixture = async (slug: string, flavor: string): Promise<Fixture> => {
     const id = await tenantRow(slug);
+    await publishTestLegalDocuments(owner, id);
     // FORCE RLS applies to the table owner too: even fixtures need the tenant context.
     const [row] = await runInTenant(owner, id, (em) =>
       em.execute<{ id: string }[]>(
@@ -407,6 +409,7 @@ describe("tenant isolation", databaseSuite, () => {
           email: `atacante-${randomUUID()}@isolamento.test`,
           password: STAFF_PASSWORD,
           privacyPolicyVersion: "2026-10",
+          termsOfUseVersion: "2026-10",
         }),
       },
     );
@@ -741,6 +744,13 @@ describe("tenant isolation", databaseSuite, () => {
         "GET /public/stores/:storeSlug/status",
         // The store in the URL only, no id; covered in brand.test.ts.
         "GET /public/stores/:storeSlug",
+        // The store's current legal documents and their web pages, no id; covered in legal.test.ts,
+        // which also proves that B's credentials at A's deletion page delete nothing.
+        "GET /public/stores/:storeSlug/legal",
+        "GET /lojas/:storeSlug/privacidade",
+        "GET /lojas/:storeSlug/termos",
+        "GET /lojas/:storeSlug/excluir-conta",
+        "POST /lojas/:storeSlug/excluir-conta",
         "GET /admin/me",
         "GET /admin/catalog/items",
         "GET /admin/orders",
@@ -780,6 +790,7 @@ describe("tenant isolation", databaseSuite, () => {
         "DELETE /customer/stores/:storeSlug/me",
         "GET /customer/stores/:storeSlug/me/addresses",
         "POST /customer/stores/:storeSlug/me/addresses",
+        "POST /customer/stores/:storeSlug/me/legal-acceptances",
         // Other stores' ids can only travel in the body (catalog items, address); covered in
         // order.test.ts, where they are unavailable and a token of A at B is a 404.
         "POST /customer/stores/:storeSlug/me/orders/quote",
@@ -1095,10 +1106,12 @@ describe("tenant isolation", databaseSuite, () => {
         { table: "catalog_simple_products", forced: true },
         { table: "catalog_versions", forced: true },
         { table: "customer_addresses", forced: true },
+        { table: "customer_legal_acceptances", forced: true },
         { table: "customer_push_devices", forced: true },
         { table: "customer_sessions", forced: true },
         { table: "customers", forced: true },
         { table: "image_assets", forced: true },
+        { table: "legal_documents", forced: true },
         { table: "memberships", forced: true },
         { table: "order_creation_keys", forced: true },
         { table: "order_incidents", forced: true },
