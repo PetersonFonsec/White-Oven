@@ -2,9 +2,9 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../brand/theme.tsx";
 import { Icon, type IconName } from "./Icon.tsx";
-import { MIN_BOTTOM_GAP, badgeText, tabAccessibilityLabel } from "./layout.ts";
+import { MIN_BOTTOM_GAP, tabAccessibilityLabel } from "./layout.ts";
 
-export type MainTab = "menu" | "cart" | "orders" | "profile";
+export type MainTab = "home" | "menu" | "orders" | "profile";
 
 const TABS: readonly {
   id: MainTab;
@@ -12,45 +12,38 @@ const TABS: readonly {
   icon: IconName;
   activeIcon: IconName;
 }[] = [
+  { id: "home", label: "Início", icon: "home-outline", activeIcon: "home" },
   {
     id: "menu",
     label: "Cardápio",
-    icon: "restaurant-outline",
-    activeIcon: "restaurant",
-  },
-  {
-    id: "cart",
-    label: "Sacola",
-    icon: "bag-handle-outline",
-    activeIcon: "bag-handle",
+    icon: "reader-outline",
+    activeIcon: "reader",
   },
   {
     id: "orders",
     label: "Pedidos",
-    icon: "receipt-outline",
-    activeIcon: "receipt",
+    icon: "bag-handle-outline",
+    activeIcon: "bag-handle",
   },
   {
     id: "profile",
     label: "Perfil",
-    icon: "person-circle-outline",
-    activeIcon: "person-circle",
+    icon: "person-outline",
+    activeIcon: "person",
   },
 ];
 
 /**
  * The main tabs. The active tab is marked by a filled icon, bold label and a pill behind it, not
- * by color alone; the bag shows its count in a badge and in the spoken label. The bar clears the
+ * by color alone. The bag lives in the top bar of the screens, with its count. The bar clears the
  * home indicator with the device's real inset.
  */
 export function BottomNavigation({
   selected,
-  cartCount,
   onSelect,
   onHeight,
 }: {
   selected: MainTab;
-  cartCount: number;
   onSelect: (tab: MainTab) => void;
   /** Height of the bar, so toasts can sit above it. */
   onHeight?: (height: number) => void;
@@ -74,8 +67,6 @@ export function BottomNavigation({
     >
       {TABS.map((tab, index) => {
         const active = selected === tab.id;
-        const count = tab.id === "cart" ? cartCount : 0;
-        const badge = badgeText(count);
         const color = active ? theme.colors.accentText : theme.colors.muted;
         return (
           <Pressable
@@ -83,7 +74,7 @@ export function BottomNavigation({
             accessibilityRole="tab"
             accessibilityLabel={tabAccessibilityLabel(
               tab.label,
-              count,
+              0,
               index + 1,
               TABS.length,
             )}
@@ -109,27 +100,6 @@ export function BottomNavigation({
                 size={24}
                 color={color}
               />
-              {badge ? (
-                <View
-                  style={[
-                    styles.badge,
-                    {
-                      backgroundColor: theme.colors.primary,
-                      borderColor: theme.colors.surface,
-                    },
-                  ]}
-                >
-                  <Text
-                    maxFontSizeMultiplier={1.2}
-                    style={[
-                      styles.badgeText,
-                      { color: theme.colors.onPrimary },
-                    ]}
-                  >
-                    {badge}
-                  </Text>
-                </View>
-              ) : null}
             </View>
             <Text
               numberOfLines={1}
@@ -170,17 +140,4 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  badge: {
-    position: "absolute",
-    top: -4,
-    right: 6,
-    minWidth: 20,
-    height: 20,
-    paddingHorizontal: 5,
-    borderRadius: 10,
-    borderWidth: 2,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  badgeText: { fontSize: 11, lineHeight: 14, fontWeight: "800" },
 });

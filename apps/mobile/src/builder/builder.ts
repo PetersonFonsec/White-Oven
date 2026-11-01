@@ -4,6 +4,7 @@ import {
   type HalfSide,
   type PizzaConfiguration,
   type PizzaError,
+  type PizzaErrorCode,
   type PizzaMode,
 } from "@whiteoven/contracts";
 import {
@@ -315,7 +316,12 @@ export type BuilderResult =
   | { kind: "incomplete"; message: string }
   /** The store has no pricing policy yet: pizzas are shown but cannot be priced. */
   | { kind: "unpriced"; message: string }
-  | { kind: "invalid"; messages: string[] }
+  /** `errors` keeps each domain code with its text, so a screen can tell which choice failed. */
+  | {
+      kind: "invalid";
+      messages: string[];
+      errors: { code: PizzaErrorCode; message: string }[];
+    }
   | (Extract<PizzaEvaluation, { ok: true }> & { kind: "priced" });
 
 /** Validation, normalization and price by `pizza-pricing`: the same pipeline as the API. */
@@ -337,15 +343,17 @@ export function evaluateBuilder(
         "A pizzaria ainda não configurou os preços de montagem. Tente mais tarde.",
     };
   const evaluation = evaluatePizza(configuration, builder.index, policy);
-  if (!evaluation.ok)
+  if (!evaluation.ok) {
+    const errors = evaluation.errors.map((error) => ({
+      code: error.code,
+      message: errorMessage(builder, state, error),
+    }));
     return {
       kind: "invalid",
-      messages: [
-        ...new Set(
-          evaluation.errors.map((error) => errorMessage(builder, state, error)),
-        ),
-      ],
+      messages: [...new Set(errors.map((error) => error.message))],
+      errors,
     };
+  }
   return { kind: "priced", ...evaluation };
 }
 

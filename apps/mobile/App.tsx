@@ -38,6 +38,7 @@ import {
 } from "./src/navigation/app-state.ts";
 import { BuilderScreen } from "./src/screens/BuilderScreen.tsx";
 import { type MenuLoad, MenuScreen } from "./src/screens/MenuScreen.tsx";
+import { HomeScreen } from "./src/screens/HomeScreen.tsx";
 import { StoreScreen } from "./src/screens/StoreScreen.tsx";
 import { menuNotices, storeMessage } from "./src/screens/store-messages.ts";
 
@@ -63,6 +64,8 @@ import {
   parseCheckoutSettings,
 } from "./src/cart/summary.ts";
 import { AccountScreen } from "./src/screens/AccountScreen.tsx";
+import { AuthFlow } from "./src/screens/AuthScreens.tsx";
+import { welcomeDecision } from "./src/customer/auth-flow.ts";
 import { type LegalState, loadStoreLegal } from "./src/customer/legal.ts";
 import {
   type CheckoutDraft,
@@ -153,9 +156,15 @@ export default function App() {
   const profileId = commerce?.profile?.id ?? null;
   // A sign-in from the bag or the orders goes back there (UX audit P1-3).
   const signedInBefore = useRef(profileId);
+  // The welcome covers the menu once per launch, for a customer without a saved session.
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  const [welcomeShown, setWelcomeShown] = useState(false);
+  /** The open builder's back action, so Android's button never skips its confirmation. */
+  const builderBackRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const wasSignedIn = signedInBefore.current;
     signedInBefore.current = profileId;
+    if (profileId) setWelcomeDismissed(true);
     if (wasSignedIn || !profileId) return;
     const back = destinationAfterSignIn(destinationRef.current);
     if (back) setDestination(back);
@@ -237,6 +246,9 @@ export default function App() {
   const [menu, setMenu] = useState<MenuState>({ kind: "loading" });
   /** The pizza open in the builder; null shows the menu. */
   const [building, setBuilding] = useState<string | null>(null);
+  /** Which of the two store tabs shows the menu: the home or the full list. */
+  const [storeTab, setStoreTab] = useState<"home" | "menu">("home");
+  const [menuCategory, setMenuCategory] = useState("all");
   const menuLoader = useRef<MenuLoader | null>(null);
 
   /**
@@ -336,18 +348,54 @@ export default function App() {
     destination,
     commerce ? recoveryOf(commerce) : null,
   );
+  const welcomeNow = commerce
+    ? welcomeDecision({
+        ready: commerce.ready,
+        session: commerce.session,
+        signedIn: profileId !== null,
+        dismissed: welcomeDismissed,
+        screen: screen.kind,
+        availability: view?.availability.kind ?? null,
+        menu: menu.kind,
+        shown: welcomeShown,
+      })
+    : "wait";
+  const welcome = welcomeNow === "show";
+  // Decided once per launch: shown until the customer leaves it, or skipped for good.
+  useEffect(() => {
+    if (welcomeNow === "skip" && !welcomeDismissed) setWelcomeDismissed(true);
+    if (welcomeNow === "show" && !welcomeShown) setWelcomeShown(true);
+  }, [welcomeNow, welcomeDismissed, welcomeShown]);
   const inBuilder = screen.kind === "builder";
-  // Android's back button goes up one level: builder to menu, an order to where it was opened,
-  // an account opened from the bag back to the bag, any tab back to the menu.
+  const inMenuTab = screen.kind === "menu" && storeTab === "menu";
+  // The Cardápio tab goes back to Início on Android, like its back arrow.
+  useEffect(() => {
+    if (!inMenuTab) return;
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        setStoreTab("home");
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [inMenuTab]);
+  // Android's back button goes up one level: the builder does what its own back arrow does
+  // (previous step, or leave asking first; `builderBackRef`), an order goes to where it was
+  // opened, an account opened from the bag back to the bag, any tab back to the menu.
   useEffect(() => {
     if (!inBuilder && !destination) return;
     const subscription = BackHandler.addEventListener(
       "hardwareBackPress",
       () => {
         if (commerceRef.current?.getSnapshot().busy) return true;
+        if (inBuilder) {
+          // Never discard a pizza in silence: without the builder's action, stay put.
+          builderBackRef.current?.();
+          return true;
+        }
         commerceRef.current?.invalidateQuote();
-        if (inBuilder) setBuilding(null);
-        else setDestination(destinationOnBack(destination, orderReturn));
+        setDestination(destinationOnBack(destination, orderReturn));
         return true;
       },
     );
@@ -368,16 +416,15 @@ export default function App() {
   const menuLoad: MenuLoad = sections
     ? { kind: "ok", sections }
     : { kind: menu.kind === "failed" ? "failed" : "loading" };
-  const activeTab: MainTab | null =
-    screen.kind === "menu"
-      ? "menu"
-      : screen.kind === "cart"
-        ? "cart"
-        : screen.kind === "history" || screen.kind === "order"
-          ? "orders"
-          : screen.kind === "account"
-            ? "profile"
-            : null;
+  const activeTab: MainTab | null = welcome
+    ? null
+    : screen.kind === "menu"
+      ? storeTab
+      : screen.kind === "history" || screen.kind === "order"
+        ? "orders"
+        : screen.kind === "account"
+          ? "profile"
+          : null;
 
   if (!runtime)
     return (
@@ -391,6 +438,52 @@ export default function App() {
   const logoUrl = view?.logoImageId
     ? imageUrl(runtime.apiUrl, runtime.storeSlug, view.logoImageId, "thumbnail")
     : null;
+  const heroImageId =
+    menuData?.flavors.find((flavor) => flavor.imageId)?.imageId ?? null;
+  const heroImageUrl = heroImageId
+    ? imageUrl(runtime.apiUrl, runtime.storeSlug, heroImageId, "menu")
+    : null;
+  const storeName = view?.name ?? cached?.name ?? runtime.storeName;
+  const cartCount = commerce ? cartUnits(commerce.cart) : 0;
+  // Problems of the app that belong on top of the home and the menu.
+  const storeBanner = (
+    <>
+      {bootError ? (
+        <InlineMessage
+          tone="error"
+          title="Sacola indisponível"
+          action={
+            <Button
+              label="Tentar de novo"
+              size="small"
+              onPress={() => setBootNonce((value) => value + 1)}
+            />
+          }
+        >
+          {bootError}
+        </InlineMessage>
+      ) : null}
+      {commerce?.error ? (
+        <InlineMessage tone="error">{commerce.error}</InlineMessage>
+      ) : null}
+      {commerce?.pending ? (
+        <InlineMessage
+          tone="warning"
+          title="Pedido aguardando confirmação"
+          action={
+            <Button
+              label="Ver na sacola"
+              size="small"
+              disabled={commerce.busy}
+              onPress={() => navigate({ kind: "cart" })}
+            />
+          }
+        >
+          Confira o resultado antes de fazer outro pedido.
+        </InlineMessage>
+      ) : null}
+    </>
+  );
   const theme = themeFor(
     view?.colors ?? cached?.colors ?? runtime.fallbackColors,
   );
@@ -401,9 +494,23 @@ export default function App() {
         <TabBarContext.Provider value={activeTab !== null}>
           <ToastProvider bottomOffset={activeTab ? tabBarHeight : 0}>
             <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-              {(screen.kind === "history" || screen.kind === "order") &&
-              model &&
-              commerce ? (
+              {welcome && model && commerce ? (
+                <AuthFlow
+                  model={model}
+                  state={commerce}
+                  initial="welcome"
+                  legal={legal}
+                  storeName={storeName}
+                  logoUrl={logoUrl}
+                  heroImageUrl={heroImageUrl}
+                  backTo={null}
+                  problems={null}
+                  onReloadLegal={reloadLegal}
+                  onSkip={() => setWelcomeDismissed(true)}
+                />
+              ) : (screen.kind === "history" || screen.kind === "order") &&
+                model &&
+                commerce ? (
                 <OrdersScreen
                   model={model}
                   state={commerce}
@@ -426,6 +533,12 @@ export default function App() {
                   }}
                   onOpenCart={() => navigate({ kind: "cart" })}
                   onOpenMenu={() => navigate(null)}
+                  storeName={storeName}
+                  logoUrl={logoUrl}
+                  cartCount={cartCount}
+                  imageUrl={(id) =>
+                    imageUrl(runtime.apiUrl, runtime.storeSlug, id, "thumbnail")
+                  }
                 />
               ) : screen.kind === "account" && model && commerce && push ? (
                 <AccountScreen
@@ -435,8 +548,9 @@ export default function App() {
                   push={push}
                   notice={commerce.profile ? null : notificationNotice}
                   legal={legal}
-                  storeName={view?.name ?? cached?.name ?? runtime.storeName}
+                  storeName={storeName}
                   logoUrl={logoUrl}
+                  heroImageUrl={heroImageUrl}
                   backTo={returnLabel(destination)}
                   startWithAddress={opensAddressForm(destination)}
                   onReloadLegal={reloadLegal}
@@ -477,6 +591,7 @@ export default function App() {
               ) : view && screen.kind === "builder" && builder ? (
                 <BuilderScreen
                   key={screen.flavorId}
+                  backRef={builderBackRef}
                   builder={builder}
                   flavorId={screen.flavorId}
                   flavorImageUrl={(id) =>
@@ -513,6 +628,34 @@ export default function App() {
                       });
                   }}
                 />
+              ) : view && screen.kind === "menu" && storeTab === "home" ? (
+                <HomeScreen
+                  storeName={view.name}
+                  logoUrl={logoUrl}
+                  openStatus={
+                    view.availability.kind === "open"
+                      ? "open"
+                      : view.availability.kind === "closed"
+                        ? "closed"
+                        : null
+                  }
+                  banner={storeBanner}
+                  notices={menuNotices(view, menuStale)}
+                  menuStale={menuStale}
+                  menu={menuLoad}
+                  refreshing={refreshing}
+                  cartCount={cartCount}
+                  imageUrl={(id) =>
+                    imageUrl(runtime.apiUrl, runtime.storeSlug, id, "menu")
+                  }
+                  onRetry={() => void refresh()}
+                  onOpenCart={() => navigate({ kind: "cart" })}
+                  onOpenPizza={setBuilding}
+                  onOpenMenu={(category) => {
+                    setMenuCategory(category);
+                    setStoreTab("menu");
+                  }}
+                />
               ) : view && screen.kind === "menu" ? (
                 <MenuScreen
                   addingDisabled={
@@ -533,56 +676,9 @@ export default function App() {
                     return saved ? product.name : null;
                   }}
                   onOpenCart={() => navigate({ kind: "cart" })}
-                  banner={
-                    <>
-                      {bootError ? (
-                        <InlineMessage
-                          tone="error"
-                          title="Sacola indisponível"
-                          action={
-                            <Button
-                              label="Tentar de novo"
-                              size="small"
-                              onPress={() => setBootNonce((value) => value + 1)}
-                            />
-                          }
-                        >
-                          {bootError}
-                        </InlineMessage>
-                      ) : null}
-                      {commerce?.error ? (
-                        <InlineMessage tone="error">
-                          {commerce.error}
-                        </InlineMessage>
-                      ) : null}
-                      {commerce?.pending ? (
-                        <InlineMessage
-                          tone="warning"
-                          title="Pedido aguardando confirmação"
-                          action={
-                            <Button
-                              label="Ver na sacola"
-                              size="small"
-                              disabled={commerce.busy}
-                              onPress={() => navigate({ kind: "cart" })}
-                            />
-                          }
-                        >
-                          Confira o resultado antes de fazer outro pedido.
-                        </InlineMessage>
-                      ) : null}
-                    </>
-                  }
-                  openStatus={
-                    view.availability.kind === "open"
-                      ? "open"
-                      : view.availability.kind === "closed"
-                        ? "closed"
-                        : null
-                  }
-                  storeName={view.name}
+                  cartCount={cartCount}
+                  banner={storeBanner}
                   notices={menuNotices(view, menuStale)}
-                  logoUrl={logoUrl}
                   menu={menuLoad}
                   menuStale={menuStale}
                   refreshing={refreshing}
@@ -591,6 +687,9 @@ export default function App() {
                   }
                   onRetry={() => void refresh()}
                   onOpenPizza={setBuilding}
+                  category={menuCategory}
+                  onCategory={setMenuCategory}
+                  onBack={() => setStoreTab("home")}
                 />
               ) : view ? (
                 <StoreScreen
@@ -641,12 +740,14 @@ export default function App() {
               {activeTab ? (
                 <BottomNavigation
                   selected={activeTab}
-                  cartCount={commerce ? cartUnits(commerce.cart) : 0}
                   onHeight={setTabBarHeight}
                   onSelect={(tab) => {
-                    if (tab === "menu") navigate(null);
-                    else if (tab === "cart") navigate({ kind: "cart" });
-                    else if (tab === "orders") navigate({ kind: "history" });
+                    if (tab === "home" || tab === "menu") {
+                      if (tab === "menu" && storeTab !== "menu")
+                        setMenuCategory("all");
+                      setStoreTab(tab);
+                      navigate(null);
+                    } else if (tab === "orders") navigate({ kind: "history" });
                     else navigate({ kind: "account" });
                   }}
                 />

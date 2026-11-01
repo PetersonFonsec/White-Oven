@@ -64,3 +64,34 @@ export function statusTone(
       ? "error"
       : "progress";
 }
+
+/**
+ * The name of a step on the tracking screen. A received order the pizzaria already accepted
+ * reads "Pedido confirmado"; every other step keeps its status name.
+ */
+export function trackingLabel(step: ProgressStep): string {
+  return step.status === "PLACED" && step.state === "done"
+    ? "Pedido confirmado"
+    : step.label;
+}
+
+/** One line under the current step, saying what happens now. Null when there is nothing to add. */
+export function stepDescription(
+  status: CustomerOrderStatus,
+  fulfillment: Fulfillment,
+): string | null {
+  switch (status) {
+    case "PLACED":
+      return "A pizzaria vai confirmar seu pedido em instantes.";
+    case "PREPARING":
+      return "Sua pizza já está sendo preparada.";
+    case "READY":
+      return fulfillment === "PICKUP"
+        ? "Pode vir buscar na pizzaria."
+        : "Pronta, esperando o entregador.";
+    case "OUT_FOR_DELIVERY":
+      return "O entregador está a caminho.";
+    default:
+      return null;
+  }
+}

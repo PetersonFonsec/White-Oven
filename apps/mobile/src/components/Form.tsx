@@ -86,7 +86,15 @@ export function Heading({
   );
 }
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive";
+export type ButtonVariant =
+  | "primary"
+  | "secondary"
+  /** A surface with the brand color as border: the second choice next to a primary button. */
+  | "outline"
+  /** A plain surface with a gray border and body text, such as "Continuar com Google". */
+  | "neutral"
+  | "ghost"
+  | "destructive";
 
 export function Button({
   label,
@@ -119,7 +127,9 @@ export function Button({
       ? colors.primary
       : variant === "destructive"
         ? colors.error
-        : variant === "secondary"
+        : variant === "secondary" ||
+            variant === "outline" ||
+            variant === "neutral"
           ? colors.surface
           : "transparent";
   const foreground =
@@ -127,7 +137,9 @@ export function Button({
       ? colors.onPrimary
       : variant === "destructive"
         ? colors.surface
-        : colors.accentText;
+        : variant === "outline" || variant === "neutral"
+          ? colors.text
+          : colors.accentText;
   const height = size === "small" ? 44 : size === "medium" ? 48 : 52;
   return (
     <Pressable
@@ -148,12 +160,17 @@ export function Button({
           gap: 8,
           alignItems: "center",
           justifyContent: "center",
-          borderWidth: variant === "secondary" ? 1 : 0,
-          borderColor: colors.border,
+          borderWidth:
+            variant === "secondary" ||
+            variant === "outline" ||
+            variant === "neutral"
+              ? 1
+              : 0,
+          borderColor: variant === "outline" ? colors.primary : colors.border,
           backgroundColor:
             pressed && variant === "primary"
               ? colors.primaryPressed
-              : pressed && variant === "secondary"
+              : pressed && variant !== "ghost" && variant !== "destructive"
                 ? colors.primaryLight
                 : background,
           opacity: inactive ? 0.55 : 1,
@@ -193,10 +210,19 @@ export function Field({
   helper,
   password = false,
   doneBar = false,
+  icon,
+  inlineLabel = false,
   ref,
   ...props
 }: TextInputProps & {
   label: string;
+  /** A decorative icon inside the field, before the text. */
+  icon?: IconName;
+  /**
+   * The label is written inside the empty field instead of above it (the sign-in screens). It is
+   * still the field's spoken label, and the icon keeps the field recognizable once typed in.
+   */
+  inlineLabel?: boolean;
   error?: string | null;
   helper?: string;
   password?: boolean;
@@ -217,20 +243,23 @@ export function Field({
       : theme.colors.inputBorder;
   return (
     <View style={{ gap: 6 }}>
-      <Text
-        style={{
-          color: theme.colors.text,
-          fontSize: theme.typography.bodySmall.fontSize,
-          lineHeight: theme.typography.bodySmall.lineHeight,
-          fontWeight: "600",
-        }}
-      >
-        {label}
-      </Text>
+      {inlineLabel ? null : (
+        <Text
+          style={{
+            color: theme.colors.text,
+            fontSize: theme.typography.bodySmall.fontSize,
+            lineHeight: theme.typography.bodySmall.lineHeight,
+            fontWeight: "600",
+          }}
+        >
+          {label}
+        </Text>
+      )}
       <View
         style={{
           flexDirection: "row",
           alignItems: "center",
+          paddingLeft: icon ? 14 : 0,
           backgroundColor:
             props.editable === false
               ? theme.colors.surfaceSecondary
@@ -240,8 +269,22 @@ export function Field({
           borderRadius: theme.radius.medium,
         }}
       >
+        {icon ? (
+          <Icon
+            name={icon}
+            size={20}
+            color={
+              error
+                ? theme.colors.errorText
+                : focused
+                  ? theme.colors.accentText
+                  : theme.colors.textSecondary
+            }
+          />
+        ) : null}
         <TextInput
           {...props}
+          placeholder={props.placeholder ?? (inlineLabel ? label : undefined)}
           ref={ref}
           inputAccessoryViewID={accessoryId}
           accessibilityLabel={label}
@@ -264,7 +307,8 @@ export function Field({
             {
               flex: 1,
               color: theme.colors.text,
-              paddingHorizontal: 14,
+              paddingLeft: icon ? 10 : 14,
+              paddingRight: 14,
               paddingVertical: 12,
               minHeight: 50,
               fontSize: theme.typography.body.fontSize,
