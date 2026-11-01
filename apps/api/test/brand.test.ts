@@ -145,7 +145,7 @@ describe("M3.5 brand theme", databaseSuite, () => {
     assert.deepEqual(body.defaults, DEFAULT_BRAND_COLORS);
     assert.deepEqual(body.fixedColors, {
       surface: "#FFFFFF",
-      cream: "#FFF8F0",
+      cream: "#FFFAF6",
     });
     assert.equal(body.contrastRules.length, 5);
     assert.deepEqual(body.imageRules, { logoMinSide: 256, iconMinSide: 512 });
