@@ -5,6 +5,13 @@ import { useTheme } from "../brand/theme.tsx";
 /** The icon names the app uses, so a typo fails the typecheck instead of drawing a "?". */
 export type IconName =
   | "add"
+  | "add-circle-outline"
+  | "chevron-down"
+  | "create-outline"
+  | "home-outline"
+  | "lock-closed-outline"
+  | "mail-outline"
+  | "shield-checkmark-outline"
   | "alert-circle"
   | "bag-handle"
   | "bag-handle-outline"

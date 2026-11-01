@@ -28,6 +28,9 @@ import {
   type Destination,
   buildingAfterRefresh,
   createMenuLoader,
+  destinationAfterSignIn,
+  destinationOnBack,
+  returnLabel,
   destinationAfterRefresh,
   destinationKind,
   screenFor,
@@ -37,7 +40,7 @@ import { type MenuLoad, MenuScreen } from "./src/screens/MenuScreen.tsx";
 import { StoreScreen } from "./src/screens/StoreScreen.tsx";
 import { menuNotices, storeMessage } from "./src/screens/store-messages.ts";
 
-import { addPizza, addProduct } from "./src/cart/cart.ts";
+import { addPizza, addProduct, cartUnits } from "./src/cart/cart.ts";
 
 import {
   nativeCommerce,
@@ -62,9 +65,9 @@ import { AccountScreen } from "./src/screens/AccountScreen.tsx";
 import { type LegalState, loadStoreLegal } from "./src/customer/legal.ts";
 import { CheckoutScreen } from "./src/screens/CheckoutScreen.tsx";
 import { OrdersScreen } from "./src/screens/OrdersScreen.tsx";
-import { Body, Button } from "./src/components/Form.tsx";
+import { Button } from "./src/components/Form.tsx";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { ToastProvider } from "./src/components/Feedback.tsx";
+import { InlineMessage, ToastProvider } from "./src/components/Feedback.tsx";
 import { TabBarContext } from "./src/components/Screen.tsx";
 import {
   BottomNavigation,
@@ -96,6 +99,8 @@ export default function App() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootNonce, setBootNonce] = useState(0);
   const [destination, setDestination] = useState<Destination>(null);
+  const destinationRef = useRef<Destination>(null);
+  destinationRef.current = destination;
   const [orderReturn, setOrderReturn] = useState<"history" | "cart">("history");
   const navigate = (next: Destination) => {
     commerceRef.current?.invalidateQuote();
@@ -134,6 +139,15 @@ export default function App() {
     if (accountOpen) void reloadLegal();
   }, [accountOpen, reloadLegal]);
   const profileId = commerce?.profile?.id ?? null;
+  // A sign-in from the bag or the orders goes back there (UX audit P1-3).
+  const signedInBefore = useRef(profileId);
+  useEffect(() => {
+    const wasSignedIn = signedInBefore.current;
+    signedInBefore.current = profileId;
+    if (wasSignedIn || !profileId) return;
+    const back = destinationAfterSignIn(destinationRef.current);
+    if (back) setDestination(back);
+  }, [profileId]);
   const sessionStatus = commerce?.session ?? "idle";
   // The device's opt-in belongs to the signed-in session; another account starts from its own.
   useEffect(() => {
@@ -311,7 +325,8 @@ export default function App() {
     commerce ? recoveryOf(commerce) : null,
   );
   const inBuilder = screen.kind === "builder";
-  // Android's back button leaves the builder for the menu.
+  // Android's back button goes up one level: builder to menu, an order to where it was opened,
+  // an account opened from the bag back to the bag, any tab back to the menu.
   useEffect(() => {
     if (!inBuilder && !destination) return;
     const subscription = BackHandler.addEventListener(
@@ -319,13 +334,13 @@ export default function App() {
       () => {
         if (commerceRef.current?.getSnapshot().busy) return true;
         commerceRef.current?.invalidateQuote();
-        setBuilding(null);
-        setDestination(null);
+        if (inBuilder) setBuilding(null);
+        else setDestination(destinationOnBack(destination, orderReturn));
         return true;
       },
     );
     return () => subscription.remove();
-  }, [inBuilder, destination]);
+  }, [inBuilder, destination, orderReturn]);
 
   // Keyed on the menu itself, so marking it stale does not rebuild the index or the sections.
   const menuData = menu.kind === "ok" ? menu.menu : null;
@@ -361,6 +376,9 @@ export default function App() {
       </View>
     );
 
+  const logoUrl = view?.logoImageId
+    ? imageUrl(runtime.apiUrl, runtime.storeSlug, view.logoImageId, "thumbnail")
+    : null;
   const theme = themeFor(
     view?.colors ?? cached?.colors ?? runtime.fallbackColors,
   );
@@ -393,7 +411,9 @@ export default function App() {
                         ? "Voltar aos pedidos"
                         : "Voltar"
                   }
-                  onAccount={() => navigate({ kind: "account" })}
+                  onAccount={() =>
+                    navigate({ kind: "account", returnTo: "history" })
+                  }
                   onOpenOrder={(orderId) => {
                     setOrderReturn("history");
                     navigate({ kind: "order", orderId });
@@ -408,9 +428,14 @@ export default function App() {
                   push={push}
                   notice={commerce.profile ? null : notificationNotice}
                   legal={legal}
+                  storeName={view?.name ?? cached?.name ?? runtime.storeName}
+                  logoUrl={logoUrl}
+                  backTo={returnLabel(destination)}
                   onReloadLegal={reloadLegal}
-                  onBack={() => navigate(null)}
-                  onOrders={() => navigate({ kind: "history" })}
+                  onBack={() => {
+                    const back = destinationAfterSignIn(destination);
+                    navigate(back);
+                  }}
                 />
               ) : screen.kind === "cart" && model && commerce ? (
                 <CheckoutScreen
@@ -423,7 +448,9 @@ export default function App() {
                   recoveryOnly={screen.recoveryOnly}
                   stale={menuStale}
                   onBack={() => navigate(null)}
-                  onAccount={() => navigate({ kind: "account" })}
+                  onAccount={() =>
+                    navigate({ kind: "account", returnTo: "cart" })
+                  }
                   onOrders={() => navigate({ kind: "history" })}
                   onTrackOrder={(orderId) => {
                     setOrderReturn("cart");
@@ -475,53 +502,71 @@ export default function App() {
                   addingDisabled={
                     !commerce?.ready || commerce.busy || !!commerce.pending
                   }
-                  onAddProduct={(id) => {
+                  onAddProduct={async (id) => {
                     const product = menuData?.simpleProducts.find(
                       (p) => p.id === id,
                     );
-                    if (product && model)
-                      void model.changeCart((lines) =>
-                        addProduct(lines, {
-                          id: randomUUID(),
-                          productId: id,
-                          name: product.name,
-                        }),
-                      );
+                    if (!product || !model) return null;
+                    const saved = await model.changeCart((lines) =>
+                      addProduct(lines, {
+                        id: randomUUID(),
+                        productId: id,
+                        name: product.name,
+                      }),
+                    );
+                    return saved ? product.name : null;
                   }}
-                  cart={
-                    <View style={{ gap: 12 }}>
+                  onOpenCart={() => navigate({ kind: "cart" })}
+                  banner={
+                    <>
                       {bootError ? (
-                        <>
-                          <Body alert>{bootError}</Body>
-                          <Button
-                            label="Tentar novamente"
-                            onPress={() => setBootNonce((value) => value + 1)}
-                          />
-                        </>
+                        <InlineMessage
+                          tone="error"
+                          title="Sacola indisponível"
+                          action={
+                            <Button
+                              label="Tentar de novo"
+                              size="small"
+                              onPress={() => setBootNonce((value) => value + 1)}
+                            />
+                          }
+                        >
+                          {bootError}
+                        </InlineMessage>
                       ) : null}
                       {commerce?.error ? (
-                        <Body alert>{commerce.error}</Body>
+                        <InlineMessage tone="error">
+                          {commerce.error}
+                        </InlineMessage>
                       ) : null}
-                      <Button
-                        label={`Carrinho (${commerce?.cart.length ?? 0})${commerce?.pending ? " · confirmação pendente" : ""}`}
-                        variant="secondary"
-                        disabled={!commerce || commerce.busy}
-                        onPress={() => navigate({ kind: "cart" })}
-                      />
-                    </View>
+                      {commerce?.pending ? (
+                        <InlineMessage
+                          tone="warning"
+                          title="Pedido aguardando confirmação"
+                          action={
+                            <Button
+                              label="Ver na sacola"
+                              size="small"
+                              disabled={commerce.busy}
+                              onPress={() => navigate({ kind: "cart" })}
+                            />
+                          }
+                        >
+                          Confira o resultado antes de fazer outro pedido.
+                        </InlineMessage>
+                      ) : null}
+                    </>
+                  }
+                  openStatus={
+                    view.availability.kind === "open"
+                      ? "open"
+                      : view.availability.kind === "closed"
+                        ? "closed"
+                        : null
                   }
                   storeName={view.name}
                   notices={menuNotices(view, menuStale)}
-                  logoUrl={
-                    view.logoImageId
-                      ? imageUrl(
-                          runtime.apiUrl,
-                          runtime.storeSlug,
-                          view.logoImageId,
-                          "thumbnail",
-                        )
-                      : null
-                  }
+                  logoUrl={logoUrl}
                   menu={menuLoad}
                   menuStale={menuStale}
                   refreshing={refreshing}
@@ -580,7 +625,7 @@ export default function App() {
               {activeTab ? (
                 <BottomNavigation
                   selected={activeTab}
-                  cartCount={commerce?.cart.length ?? 0}
+                  cartCount={commerce ? cartUnits(commerce.cart) : 0}
                   onHeight={setTabBarHeight}
                   onSelect={(tab) => {
                     if (tab === "menu") navigate(null);
