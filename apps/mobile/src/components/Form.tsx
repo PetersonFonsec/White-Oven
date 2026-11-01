@@ -1,6 +1,9 @@
 import { useState, type ComponentRef, type ReactNode, type Ref } from "react";
 import {
   ActivityIndicator,
+  InputAccessoryView,
+  Keyboard,
+  Platform,
   Pressable,
   Text,
   TextInput,
@@ -189,6 +192,7 @@ export function Field({
   error,
   helper,
   password = false,
+  doneBar = false,
   ref,
   ...props
 }: TextInputProps & {
@@ -196,12 +200,16 @@ export function Field({
   error?: string | null;
   helper?: string;
   password?: boolean;
+  /** iOS number pads have no return key: a bar with "OK" over the keyboard closes it. */
+  doneBar?: boolean;
   ref?: Ref<ComponentRef<typeof TextInput>>;
 }) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
   const [visible, setVisible] = useState(false);
   useAnnouncement(error ? `${label}: ${error}` : null);
+  const accessoryId =
+    doneBar && Platform.OS === "ios" ? `done-${label}` : undefined;
   const borderColor = error
     ? theme.colors.error
     : focused
@@ -235,6 +243,7 @@ export function Field({
         <TextInput
           {...props}
           ref={ref}
+          inputAccessoryViewID={accessoryId}
           accessibilityLabel={label}
           accessibilityHint={error ?? helper}
           secureTextEntry={password ? !visible : props.secureTextEntry}
@@ -272,6 +281,26 @@ export function Field({
           />
         ) : null}
       </View>
+      {accessoryId ? (
+        <InputAccessoryView nativeID={accessoryId}>
+          <View
+            style={{
+              alignItems: "flex-end",
+              paddingHorizontal: 8,
+              backgroundColor: theme.colors.surfaceSecondary,
+              borderTopWidth: 1,
+              borderTopColor: theme.colors.border,
+            }}
+          >
+            <Button
+              label="OK"
+              variant="ghost"
+              size="small"
+              onPress={() => Keyboard.dismiss()}
+            />
+          </View>
+        </InputAccessoryView>
+      ) : null}
       {error ? (
         <View style={{ flexDirection: "row", gap: 6 }}>
           <Icon name="alert-circle" size={18} color={theme.colors.errorText} />
