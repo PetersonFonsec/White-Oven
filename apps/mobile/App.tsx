@@ -63,6 +63,9 @@ import { type LegalState, loadStoreLegal } from "./src/customer/legal.ts";
 import { CheckoutScreen } from "./src/screens/CheckoutScreen.tsx";
 import { OrdersScreen } from "./src/screens/OrdersScreen.tsx";
 import { Body, Button } from "./src/components/Form.tsx";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { ToastProvider } from "./src/components/Feedback.tsx";
+import { TabBarContext } from "./src/components/Screen.tsx";
 import {
   BottomNavigation,
   type MainTab,
@@ -203,6 +206,7 @@ export default function App() {
     ReturnType<typeof cachedBrand>
   > | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [tabBarHeight, setTabBarHeight] = useState(0);
   const refresher = useRef<StoreRefresher | null>(null);
   const [menu, setMenu] = useState<MenuState>({ kind: "loading" });
   /** The pizza open in the builder; null shows the menu. */
@@ -361,218 +365,236 @@ export default function App() {
     view?.colors ?? cached?.colors ?? runtime.fallbackColors,
   );
   return (
-    <ThemeProvider value={theme}>
-      <StatusBar style="dark" />
-      <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-        {(screen.kind === "history" || screen.kind === "order") &&
-        model &&
-        commerce ? (
-          <OrdersScreen
-            model={model}
-            state={commerce}
-            menu={menuData}
-            menuStale={menuStale}
-            storeUnavailable={view?.availability.kind === "unavailable"}
-            orderId={screen.kind === "order" ? screen.orderId : null}
-            onBack={() =>
-              screen.kind === "order"
-                ? navigate({ kind: orderReturn })
-                : navigate(null)
-            }
-            backLabel={
-              screen.kind === "order" && orderReturn === "cart"
-                ? "Voltar ao checkout"
-                : screen.kind === "order"
-                  ? "Voltar aos pedidos"
-                  : "Voltar"
-            }
-            onAccount={() => navigate({ kind: "account" })}
-            onOpenOrder={(orderId) => {
-              setOrderReturn("history");
-              navigate({ kind: "order", orderId });
-            }}
-            onOpenCart={() => navigate({ kind: "cart" })}
-          />
-        ) : screen.kind === "account" && model && commerce && push ? (
-          <AccountScreen
-            key={commerce.profile?.id ?? "signed-out"}
-            model={model}
-            state={commerce}
-            push={push}
-            notice={commerce.profile ? null : notificationNotice}
-            legal={legal}
-            onReloadLegal={reloadLegal}
-            onBack={() => navigate(null)}
-            onOrders={() => navigate({ kind: "history" })}
-          />
-        ) : screen.kind === "cart" && model && commerce ? (
-          <CheckoutScreen
-            key={commerce.profile?.id ?? "signed-out"}
-            model={model}
-            state={commerce}
-            menu={menuData}
-            settings={checkoutSettings}
-            canOrder={view?.availability.kind === "open" && !refreshing}
-            recoveryOnly={screen.recoveryOnly}
-            stale={menuStale}
-            onBack={() => navigate(null)}
-            onAccount={() => navigate({ kind: "account" })}
-            onOrders={() => navigate({ kind: "history" })}
-            onTrackOrder={(orderId) => {
-              setOrderReturn("cart");
-              navigate({ kind: "order", orderId });
-            }}
-            onRefresh={() => void refresh()}
-          />
-        ) : view && screen.kind === "builder" && builder ? (
-          <BuilderScreen
-            key={screen.flavorId}
-            builder={builder}
-            flavorId={screen.flavorId}
-            flavorImageUrl={(id) =>
-              imageUrl(runtime.apiUrl, runtime.storeSlug, id, "thumbnail")
-            }
-            menuStale={menuStale}
-            onBack={() => setBuilding(null)}
-            addingDisabled={
-              !commerce?.ready || commerce.busy || !!commerce.pending
-            }
-            addError={commerce?.error ?? null}
-            onAdd={(pizza) => {
-              if (!model) return;
-              void model
-                .changeCart((lines) =>
-                  addPizza(lines, {
-                    id: randomUUID(),
-                    kind: "PIZZA",
-                    name: Object.values(pizza.flavors)
-                      .map(
-                        (id) =>
-                          builder.menu.flavors.find((f) => f.id === id)?.name ??
-                          "Pizza",
-                      )
-                      .join(" / "),
-                    pizza,
-                  }),
-                )
-                .then((saved) => {
-                  if (saved) {
-                    setBuilding(null);
-                    setDestination({ kind: "cart" });
+    <SafeAreaProvider>
+      <ThemeProvider value={theme}>
+        <StatusBar style="dark" />
+        <TabBarContext.Provider value={activeTab !== null}>
+          <ToastProvider bottomOffset={activeTab ? tabBarHeight : 0}>
+            <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+              {(screen.kind === "history" || screen.kind === "order") &&
+              model &&
+              commerce ? (
+                <OrdersScreen
+                  model={model}
+                  state={commerce}
+                  menu={menuData}
+                  menuStale={menuStale}
+                  storeUnavailable={view?.availability.kind === "unavailable"}
+                  orderId={screen.kind === "order" ? screen.orderId : null}
+                  onBack={() =>
+                    screen.kind === "order"
+                      ? navigate({ kind: orderReturn })
+                      : navigate(null)
                   }
-                });
-            }}
-          />
-        ) : view && screen.kind === "menu" ? (
-          <MenuScreen
-            addingDisabled={
-              !commerce?.ready || commerce.busy || !!commerce.pending
-            }
-            onAddProduct={(id) => {
-              const product = menuData?.simpleProducts.find((p) => p.id === id);
-              if (product && model)
-                void model.changeCart((lines) =>
-                  addProduct(lines, {
-                    id: randomUUID(),
-                    productId: id,
-                    name: product.name,
-                  }),
-                );
-            }}
-            cart={
-              <View style={{ gap: 12 }}>
-                {bootError ? (
-                  <>
-                    <Body alert>{bootError}</Body>
-                    <Button
-                      label="Tentar novamente"
-                      onPress={() => setBootNonce((value) => value + 1)}
-                    />
-                  </>
-                ) : null}
-                {commerce?.error ? <Body alert>{commerce.error}</Body> : null}
-                <Button
-                  label={`Carrinho (${commerce?.cart.length ?? 0})${commerce?.pending ? " · confirmação pendente" : ""}`}
-                  variant="secondary"
-                  disabled={!commerce || commerce.busy}
-                  onPress={() => navigate({ kind: "cart" })}
+                  backLabel={
+                    screen.kind === "order" && orderReturn === "cart"
+                      ? "Voltar ao checkout"
+                      : screen.kind === "order"
+                        ? "Voltar aos pedidos"
+                        : "Voltar"
+                  }
+                  onAccount={() => navigate({ kind: "account" })}
+                  onOpenOrder={(orderId) => {
+                    setOrderReturn("history");
+                    navigate({ kind: "order", orderId });
+                  }}
+                  onOpenCart={() => navigate({ kind: "cart" })}
                 />
-              </View>
-            }
-            storeName={view.name}
-            notices={menuNotices(view, menuStale)}
-            logoUrl={
-              view.logoImageId
-                ? imageUrl(
-                    runtime.apiUrl,
-                    runtime.storeSlug,
-                    view.logoImageId,
-                    "thumbnail",
-                  )
-                : null
-            }
-            menu={menuLoad}
-            menuStale={menuStale}
-            refreshing={refreshing}
-            imageUrl={(id) =>
-              imageUrl(runtime.apiUrl, runtime.storeSlug, id, "thumbnail")
-            }
-            onRetry={() => void refresh()}
-            onOpenPizza={setBuilding}
-          />
-        ) : view ? (
-          <View style={{ flex: 1 }}>
-            <Button
-              label="Minha conta"
-              variant="secondary"
-              disabled={!commerce || commerce.busy}
-              onPress={() => navigate({ kind: "account" })}
-            />
-            <Button
-              label="Meus pedidos"
-              variant="secondary"
-              disabled={!commerce || commerce.busy}
-              onPress={() => navigate({ kind: "history" })}
-            />
-            {commerce?.pending ? (
-              <Button
-                label="Recuperar pedido pendente"
-                variant="secondary"
-                disabled={commerce.busy}
-                onPress={() => navigate({ kind: "cart" })}
-              />
-            ) : null}
-            <StoreScreen
-              message={storeMessage(view)}
-              refreshing={refreshing}
-              onRetry={() => void refresh()}
-            />
-          </View>
-        ) : (
-          <View
-            style={[styles.center, { backgroundColor: theme.colors.cream }]}
-          >
-            <ActivityIndicator
-              accessibilityLabel={`Abrindo ${cached?.name ?? runtime.storeName}`}
-              color={theme.colors.accentText}
-              size="large"
-            />
-          </View>
-        )}
-        {activeTab ? (
-          <BottomNavigation
-            selected={activeTab}
-            cartCount={commerce?.cart.length ?? 0}
-            onSelect={(tab) => {
-              if (tab === "menu") navigate(null);
-              else if (tab === "cart") navigate({ kind: "cart" });
-              else if (tab === "orders") navigate({ kind: "history" });
-              else navigate({ kind: "account" });
-            }}
-          />
-        ) : null}
-      </View>
-    </ThemeProvider>
+              ) : screen.kind === "account" && model && commerce && push ? (
+                <AccountScreen
+                  key={commerce.profile?.id ?? "signed-out"}
+                  model={model}
+                  state={commerce}
+                  push={push}
+                  notice={commerce.profile ? null : notificationNotice}
+                  legal={legal}
+                  onReloadLegal={reloadLegal}
+                  onBack={() => navigate(null)}
+                  onOrders={() => navigate({ kind: "history" })}
+                />
+              ) : screen.kind === "cart" && model && commerce ? (
+                <CheckoutScreen
+                  key={commerce.profile?.id ?? "signed-out"}
+                  model={model}
+                  state={commerce}
+                  menu={menuData}
+                  settings={checkoutSettings}
+                  canOrder={view?.availability.kind === "open" && !refreshing}
+                  recoveryOnly={screen.recoveryOnly}
+                  stale={menuStale}
+                  onBack={() => navigate(null)}
+                  onAccount={() => navigate({ kind: "account" })}
+                  onOrders={() => navigate({ kind: "history" })}
+                  onTrackOrder={(orderId) => {
+                    setOrderReturn("cart");
+                    navigate({ kind: "order", orderId });
+                  }}
+                  onRefresh={() => void refresh()}
+                />
+              ) : view && screen.kind === "builder" && builder ? (
+                <BuilderScreen
+                  key={screen.flavorId}
+                  builder={builder}
+                  flavorId={screen.flavorId}
+                  flavorImageUrl={(id) =>
+                    imageUrl(runtime.apiUrl, runtime.storeSlug, id, "thumbnail")
+                  }
+                  menuStale={menuStale}
+                  onBack={() => setBuilding(null)}
+                  addingDisabled={
+                    !commerce?.ready || commerce.busy || !!commerce.pending
+                  }
+                  addError={commerce?.error ?? null}
+                  onAdd={(pizza) => {
+                    if (!model) return;
+                    void model
+                      .changeCart((lines) =>
+                        addPizza(lines, {
+                          id: randomUUID(),
+                          kind: "PIZZA",
+                          name: Object.values(pizza.flavors)
+                            .map(
+                              (id) =>
+                                builder.menu.flavors.find((f) => f.id === id)
+                                  ?.name ?? "Pizza",
+                            )
+                            .join(" / "),
+                          pizza,
+                        }),
+                      )
+                      .then((saved) => {
+                        if (saved) {
+                          setBuilding(null);
+                          setDestination({ kind: "cart" });
+                        }
+                      });
+                  }}
+                />
+              ) : view && screen.kind === "menu" ? (
+                <MenuScreen
+                  addingDisabled={
+                    !commerce?.ready || commerce.busy || !!commerce.pending
+                  }
+                  onAddProduct={(id) => {
+                    const product = menuData?.simpleProducts.find(
+                      (p) => p.id === id,
+                    );
+                    if (product && model)
+                      void model.changeCart((lines) =>
+                        addProduct(lines, {
+                          id: randomUUID(),
+                          productId: id,
+                          name: product.name,
+                        }),
+                      );
+                  }}
+                  cart={
+                    <View style={{ gap: 12 }}>
+                      {bootError ? (
+                        <>
+                          <Body alert>{bootError}</Body>
+                          <Button
+                            label="Tentar novamente"
+                            onPress={() => setBootNonce((value) => value + 1)}
+                          />
+                        </>
+                      ) : null}
+                      {commerce?.error ? (
+                        <Body alert>{commerce.error}</Body>
+                      ) : null}
+                      <Button
+                        label={`Carrinho (${commerce?.cart.length ?? 0})${commerce?.pending ? " · confirmação pendente" : ""}`}
+                        variant="secondary"
+                        disabled={!commerce || commerce.busy}
+                        onPress={() => navigate({ kind: "cart" })}
+                      />
+                    </View>
+                  }
+                  storeName={view.name}
+                  notices={menuNotices(view, menuStale)}
+                  logoUrl={
+                    view.logoImageId
+                      ? imageUrl(
+                          runtime.apiUrl,
+                          runtime.storeSlug,
+                          view.logoImageId,
+                          "thumbnail",
+                        )
+                      : null
+                  }
+                  menu={menuLoad}
+                  menuStale={menuStale}
+                  refreshing={refreshing}
+                  imageUrl={(id) =>
+                    imageUrl(runtime.apiUrl, runtime.storeSlug, id, "thumbnail")
+                  }
+                  onRetry={() => void refresh()}
+                  onOpenPizza={setBuilding}
+                />
+              ) : view ? (
+                <StoreScreen
+                  message={storeMessage(view)}
+                  refreshing={refreshing}
+                  onRetry={() => void refresh()}
+                  actions={
+                    <>
+                      {commerce?.pending ? (
+                        <Button
+                          label="Recuperar pedido pendente"
+                          variant="primary"
+                          disabled={commerce.busy}
+                          onPress={() => navigate({ kind: "cart" })}
+                        />
+                      ) : null}
+                      <Button
+                        label="Meus pedidos"
+                        icon="receipt-outline"
+                        variant="secondary"
+                        disabled={!commerce || commerce.busy}
+                        onPress={() => navigate({ kind: "history" })}
+                      />
+                      <Button
+                        label="Minha conta"
+                        icon="person-circle-outline"
+                        variant="secondary"
+                        disabled={!commerce || commerce.busy}
+                        onPress={() => navigate({ kind: "account" })}
+                      />
+                    </>
+                  }
+                />
+              ) : (
+                <View
+                  style={[
+                    styles.center,
+                    { backgroundColor: theme.colors.cream },
+                  ]}
+                >
+                  <ActivityIndicator
+                    accessibilityLabel={`Abrindo ${cached?.name ?? runtime.storeName}`}
+                    color={theme.colors.accentText}
+                    size="large"
+                  />
+                </View>
+              )}
+              {activeTab ? (
+                <BottomNavigation
+                  selected={activeTab}
+                  cartCount={commerce?.cart.length ?? 0}
+                  onHeight={setTabBarHeight}
+                  onSelect={(tab) => {
+                    if (tab === "menu") navigate(null);
+                    else if (tab === "cart") navigate({ kind: "cart" });
+                    else if (tab === "orders") navigate({ kind: "history" });
+                    else navigate({ kind: "account" });
+                  }}
+                />
+              ) : null}
+            </View>
+          </ToastProvider>
+        </TabBarContext.Provider>
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }
 

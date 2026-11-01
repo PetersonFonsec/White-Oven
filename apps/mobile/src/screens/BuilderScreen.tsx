@@ -32,6 +32,8 @@ import { Choice } from "../components/Choice.tsx";
 import { Body, Button } from "../components/Form.tsx";
 import { MENU_STALE_NOTICE } from "./store-messages.ts";
 import { PizzaVisual } from "../components/PizzaVisual.tsx";
+import { InlineMessage } from "../components/Feedback.tsx";
+import { Screen, ScreenHeader, StickyFooter } from "../components/Screen.tsx";
 
 interface Props {
   addingDisabled: boolean;
@@ -86,17 +88,21 @@ export function BuilderScreen({
   );
   if (!state || !result)
     return (
-      <View
-        style={[
-          styles.fill,
-          { backgroundColor: theme.colors.cream, padding: theme.spacing(4) },
-        ]}
+      <Screen
+        header={
+          <ScreenHeader
+            title="Monte sua pizza"
+            onBack={onBack}
+            backTo="Cardápio"
+          />
+        }
       >
-        {back}
-        <Text style={[styles.body, { color: theme.colors.text }]}>
-          Este sabor não está mais disponível.
-        </Text>
-      </View>
+        <InlineMessage tone="warning" title="Sabor indisponível">
+          Este sabor não está mais disponível. Volte ao cardápio e escolha
+          outro.
+        </InlineMessage>
+        <Button label="Ver o cardápio" variant="primary" onPress={onBack} />
+      </Screen>
     );
 
   const { menu, index } = builder;
@@ -532,42 +538,38 @@ export function BuilderScreen({
         ) : null}
       </ScrollView>
       {result.kind === "priced" ? (
-        <View
-          style={{
-            paddingHorizontal: theme.spacing(5),
-            paddingTop: theme.spacing(3),
-            paddingBottom: theme.spacing(3),
-            borderTopWidth: StyleSheet.hairlineWidth,
-            borderTopColor: theme.colors.border,
-            backgroundColor: theme.colors.surface,
-            flexDirection: "row",
-            alignItems: "center",
-            gap: theme.spacing(3),
-          }}
-        >
-          <View style={{ flex: 1 }}>
-            <Body small muted>
-              Total estimado
-            </Body>
-            <Text
-              style={{
-                color: theme.colors.accentText,
-                fontSize: theme.typography.price.fontSize,
-                lineHeight: theme.typography.price.lineHeight,
-                fontWeight: "700",
-              }}
-            >
-              {formatCents(result.price.totalCents)}
-            </Text>
+        <StickyFooter>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: theme.spacing(3),
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <Body small muted>
+                Total estimado
+              </Body>
+              <Text
+                style={{
+                  color: theme.colors.accentText,
+                  fontSize: theme.typography.price.fontSize,
+                  lineHeight: theme.typography.price.lineHeight,
+                  fontWeight: "700",
+                }}
+              >
+                {formatCents(result.price.totalCents)}
+              </Text>
+            </View>
+            <Button
+              label="Adicionar ao carrinho"
+              variant="primary"
+              disabled={addingDisabled}
+              style={{ flex: 1.6 }}
+              onPress={() => onAdd(result.configuration)}
+            />
           </View>
-          <Button
-            label="Adicionar ao carrinho"
-            variant="primary"
-            disabled={addingDisabled}
-            style={{ flex: 1.6 }}
-            onPress={() => onAdd(result.configuration)}
-          />
-        </View>
+        </StickyFooter>
       ) : null}
     </View>
   );

@@ -1,16 +1,17 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ComponentRef, type ReactNode, type Ref } from "react";
 import {
-  KeyboardAvoidingView,
-  Platform,
+  ActivityIndicator,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
   type TextInputProps,
   type ViewStyle,
 } from "react-native";
+import { useAnnouncement } from "../a11y/useAnnouncement.ts";
 import { useTheme } from "../brand/theme.tsx";
+import { Icon, IconButton, type IconName } from "./Icon.tsx";
+import { Screen } from "./Screen.tsx";
 
 export function Body({
   children,
@@ -27,13 +28,18 @@ export function Body({
 }) {
   const { colors, typography } = useTheme();
   const type = small ? typography.bodySmall : typography.body;
+  // iOS reads neither the live region nor the alert role by itself.
+  useAnnouncement(
+    alert && typeof children === "string" ? children : null,
+    alert,
+  );
   return (
     <Text
       accessibilityRole={alert ? "alert" : undefined}
       accessibilityLiveRegion={alert ? "polite" : undefined}
       style={{
         color: alert
-          ? colors.error
+          ? colors.errorText
           : muted
             ? colors.textSecondary
             : colors.text,
@@ -88,6 +94,8 @@ export function Button({
   size = "large",
   style,
   accessibilityHint,
+  accessibilityLabel,
+  icon,
 }: {
   label: string;
   onPress: () => void;
@@ -97,6 +105,9 @@ export function Button({
   size?: "small" | "medium" | "large";
   style?: ViewStyle;
   accessibilityHint?: string;
+  /** Read instead of the label when the label needs context (which item it changes). */
+  accessibilityLabel?: string;
+  icon?: IconName;
 }) {
   const { colors, typography, radius } = useTheme();
   const inactive = disabled || loading;
@@ -118,6 +129,7 @@ export function Button({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? label}
       accessibilityHint={accessibilityHint}
       accessibilityState={{ busy: loading, disabled: inactive }}
       disabled={inactive}
@@ -129,6 +141,8 @@ export function Button({
           paddingHorizontal: size === "small" ? 14 : 20,
           paddingVertical: 10,
           borderRadius: variant === "ghost" ? radius.medium : radius.large,
+          flexDirection: "row",
+          gap: 8,
           alignItems: "center",
           justifyContent: "center",
           borderWidth: variant === "secondary" ? 1 : 0,
@@ -144,6 +158,11 @@ export function Button({
         style,
       ]}
     >
+      {loading ? (
+        <ActivityIndicator color={foreground} />
+      ) : icon ? (
+        <Icon name={icon} size={20} color={foreground} />
+      ) : null}
       <Text
         style={{
           color: foreground,
@@ -151,22 +170,43 @@ export function Button({
           lineHeight: typography.button.lineHeight,
           fontWeight: typography.button.fontWeight,
           textAlign: "center",
+          flexShrink: 1,
         }}
       >
-        {loading ? `${label}…` : label}
+        {label}
       </Text>
     </Pressable>
   );
 }
 
+/**
+ * A labelled text field. The error replaces the helper under the field, is read with the field
+ * (as its hint) and announced when it appears. `password` adds a show/hide button inside the
+ * field. With `returnKeyType="next"`, the keyboard stays open while `onSubmitEditing` moves on.
+ */
 export function Field({
   label,
   error,
   helper,
+  password = false,
+  ref,
   ...props
-}: TextInputProps & { label: string; error?: string; helper?: string }) {
+}: TextInputProps & {
+  label: string;
+  error?: string | null;
+  helper?: string;
+  password?: boolean;
+  ref?: Ref<ComponentRef<typeof TextInput>>;
+}) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
+  const [visible, setVisible] = useState(false);
+  useAnnouncement(error ? `${label}: ${error}` : null);
+  const borderColor = error
+    ? theme.colors.error
+    : focused
+      ? theme.colors.primary
+      : theme.colors.inputBorder;
   return (
     <View style={{ gap: 6 }}>
       <Text
@@ -179,46 +219,85 @@ export function Field({
       >
         {label}
       </Text>
-      <TextInput
-        {...props}
-        accessibilityLabel={label}
-        accessibilityHint={helper}
-        onFocus={(event) => {
-          setFocused(true);
-          props.onFocus?.(event);
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          backgroundColor:
+            props.editable === false
+              ? theme.colors.surfaceSecondary
+              : theme.colors.surface,
+          borderColor,
+          borderWidth: focused || error ? 2 : 1,
+          borderRadius: theme.radius.medium,
         }}
-        onBlur={(event) => {
-          setFocused(false);
-          props.onBlur?.(event);
-        }}
-        placeholderTextColor={theme.colors.textMuted}
-        selectionColor={theme.colors.primary}
-        style={[
-          {
-            color: theme.colors.text,
-            backgroundColor: theme.colors.surface,
-            borderColor: error
-              ? theme.colors.error
-              : focused
-                ? theme.colors.primary
-                : theme.colors.inputBorder,
-            borderWidth: focused || error ? 1.5 : 1,
-            borderRadius: theme.radius.medium,
-            paddingHorizontal: 14,
-            minHeight: 52,
-            fontSize: theme.typography.body.fontSize,
-          },
-          props.style,
-        ]}
-      />
+      >
+        <TextInput
+          {...props}
+          ref={ref}
+          accessibilityLabel={label}
+          accessibilityHint={error ?? helper}
+          secureTextEntry={password ? !visible : props.secureTextEntry}
+          submitBehavior={
+            props.returnKeyType === "next" ? "submit" : props.submitBehavior
+          }
+          onFocus={(event) => {
+            setFocused(true);
+            props.onFocus?.(event);
+          }}
+          onBlur={(event) => {
+            setFocused(false);
+            props.onBlur?.(event);
+          }}
+          placeholderTextColor={theme.colors.placeholder}
+          selectionColor={theme.colors.primary}
+          style={[
+            {
+              flex: 1,
+              color: theme.colors.text,
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+              minHeight: 50,
+              fontSize: theme.typography.body.fontSize,
+            },
+            props.style,
+          ]}
+        />
+        {password ? (
+          <IconButton
+            name={visible ? "eye-off-outline" : "eye-outline"}
+            accessibilityLabel={visible ? "Ocultar senha" : "Mostrar senha"}
+            onPress={() => setVisible((current) => !current)}
+            style={{ marginRight: 4 }}
+          />
+        ) : null}
+      </View>
       {error ? (
-        <Body alert small>
-          {error}
-        </Body>
+        <View style={{ flexDirection: "row", gap: 6 }}>
+          <Icon name="alert-circle" size={18} color={theme.colors.errorText} />
+          <Text
+            accessible={false}
+            style={{
+              flex: 1,
+              color: theme.colors.errorText,
+              fontSize: theme.typography.bodySmall.fontSize,
+              lineHeight: theme.typography.bodySmall.lineHeight,
+            }}
+          >
+            {error}
+          </Text>
+        </View>
       ) : helper ? (
-        <Body small muted>
+        <Text
+          accessible={false}
+          style={{
+            color: theme.colors.textSecondary,
+            fontSize: theme.typography.bodySmall.fontSize,
+            lineHeight: theme.typography.bodySmall.lineHeight,
+          }}
+        >
           {helper}
-        </Body>
+        </Text>
       ) : null}
     </View>
   );
@@ -233,10 +312,11 @@ export function SurfaceCard({
   tone?: "surface" | "secondary" | "outlined";
   style?: ViewStyle;
 }) {
-  const { colors, radius, spacing } = useTheme();
+  const { colors, radius, spacing, shadow } = useTheme();
   return (
     <View
       style={[
+        tone === "surface" ? shadow : null,
         {
           padding: spacing(4),
           borderRadius: radius.large,
@@ -263,26 +343,20 @@ export function Divider() {
   return <View style={{ height: 1, backgroundColor: colors.border }} />;
 }
 
-export function FormPage({ children }: { children: ReactNode }) {
+/** A form screen: safe areas, keyboard handling and an optional header and footer. */
+export function FormPage({
+  children,
+  header,
+  footer,
+}: {
+  children: ReactNode;
+  header?: ReactNode;
+  footer?: ReactNode;
+}) {
   const theme = useTheme();
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: theme.colors.background }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{
-          paddingHorizontal: theme.spacing(5),
-          paddingTop: theme.spacing(4),
-          paddingBottom: theme.spacing(7),
-          gap: theme.spacing(4),
-        }}
-      >
-        {children}
-      </ScrollView>
-    </KeyboardAvoidingView>
+    <Screen keyboard header={header} footer={footer} gap={theme.spacing(4)}>
+      {children}
+    </Screen>
   );
 }

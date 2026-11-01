@@ -1,37 +1,33 @@
-import { ScrollView, View } from "react-native";
+import type { ReactNode } from "react";
+import { View } from "react-native";
 import { useTheme } from "../brand/theme.tsx";
 import { Body, Button, Heading, SurfaceCard } from "../components/Form.tsx";
+import { InlineMessage } from "../components/Feedback.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { Screen } from "../components/Screen.tsx";
 import type { StoreMessage } from "./store-messages.ts";
 
 interface Props {
   message: StoreMessage;
   refreshing: boolean;
   onRetry: () => void;
+  /** What stays reachable while the store is unavailable: account, orders, pending recovery. */
+  actions?: ReactNode;
 }
 
-/** A clear, branded notice when the API confirms this store is unavailable. */
-export function StoreScreen({ message, refreshing, onRetry }: Props) {
+/**
+ * A clear, branded notice when the API confirms this store is unavailable. The screen owns the
+ * safe areas, so the actions below the notice are never behind the status bar or Dynamic Island.
+ */
+export function StoreScreen({ message, refreshing, onRetry, actions }: Props) {
   const theme = useTheme();
-  const notice = message.screen !== "store";
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      style={{ backgroundColor: theme.colors.background }}
-      contentContainerStyle={{
-        flexGrow: 1,
-        justifyContent: "center",
-        padding: theme.spacing(5),
-        gap: theme.spacing(4),
-      }}
-    >
+    <Screen contentStyle={{ flexGrow: 1, justifyContent: "center" }}>
       {message.notice ? (
-        <SurfaceCard tone="secondary">
-          <Body>{message.notice}</Body>
-        </SurfaceCard>
+        <InlineMessage tone="warning">{message.notice}</InlineMessage>
       ) : null}
       <SurfaceCard>
         <View
-          accessible={false}
           style={{
             width: 56,
             height: 56,
@@ -41,18 +37,25 @@ export function StoreScreen({ message, refreshing, onRetry }: Props) {
             justifyContent: "center",
           }}
         >
-          <Body centered>🍕</Body>
+          <Icon
+            name="storefront-outline"
+            size={28}
+            color={theme.colors.accentText}
+          />
         </View>
         <Heading level="h1">{message.title}</Heading>
         <Body muted>{message.body}</Body>
         <Button
           label="Atualizar"
+          icon="refresh"
           loading={refreshing}
           variant="primary"
-          style={{ alignSelf: "flex-start" }}
           onPress={onRetry}
         />
       </SurfaceCard>
-    </ScrollView>
+      {actions ? (
+        <View style={{ gap: theme.spacing(3) }}>{actions}</View>
+      ) : null}
+    </Screen>
   );
 }
