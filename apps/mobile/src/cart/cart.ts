@@ -172,3 +172,12 @@ export function changeQuantity(
         : { ...line, pizza: { ...line.pizza, quantity } },
   );
 }
+
+/** Units in the bag (a line of 2 pizzas counts 2), for the tab badge and the bag title. */
+export function cartUnits(lines: CartLine[]): number {
+  return lines.reduce(
+    (sum, line) =>
+      sum + (line.kind === "PRODUCT" ? line.quantity : line.pizza.quantity),
+    0,
+  );
+}

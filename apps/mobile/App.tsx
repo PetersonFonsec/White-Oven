@@ -40,7 +40,7 @@ import { type MenuLoad, MenuScreen } from "./src/screens/MenuScreen.tsx";
 import { StoreScreen } from "./src/screens/StoreScreen.tsx";
 import { menuNotices, storeMessage } from "./src/screens/store-messages.ts";
 
-import { addPizza, addProduct } from "./src/cart/cart.ts";
+import { addPizza, addProduct, cartUnits } from "./src/cart/cart.ts";
 
 import {
   nativeCommerce,
@@ -65,9 +65,9 @@ import { AccountScreen } from "./src/screens/AccountScreen.tsx";
 import { type LegalState, loadStoreLegal } from "./src/customer/legal.ts";
 import { CheckoutScreen } from "./src/screens/CheckoutScreen.tsx";
 import { OrdersScreen } from "./src/screens/OrdersScreen.tsx";
-import { Body, Button } from "./src/components/Form.tsx";
+import { Button } from "./src/components/Form.tsx";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { ToastProvider } from "./src/components/Feedback.tsx";
+import { InlineMessage, ToastProvider } from "./src/components/Feedback.tsx";
 import { TabBarContext } from "./src/components/Screen.tsx";
 import {
   BottomNavigation,
@@ -502,40 +502,67 @@ export default function App() {
                   addingDisabled={
                     !commerce?.ready || commerce.busy || !!commerce.pending
                   }
-                  onAddProduct={(id) => {
+                  onAddProduct={async (id) => {
                     const product = menuData?.simpleProducts.find(
                       (p) => p.id === id,
                     );
-                    if (product && model)
-                      void model.changeCart((lines) =>
-                        addProduct(lines, {
-                          id: randomUUID(),
-                          productId: id,
-                          name: product.name,
-                        }),
-                      );
+                    if (!product || !model) return null;
+                    const saved = await model.changeCart((lines) =>
+                      addProduct(lines, {
+                        id: randomUUID(),
+                        productId: id,
+                        name: product.name,
+                      }),
+                    );
+                    return saved ? product.name : null;
                   }}
-                  cart={
-                    <View style={{ gap: 12 }}>
+                  onOpenCart={() => navigate({ kind: "cart" })}
+                  banner={
+                    <>
                       {bootError ? (
-                        <>
-                          <Body alert>{bootError}</Body>
-                          <Button
-                            label="Tentar novamente"
-                            onPress={() => setBootNonce((value) => value + 1)}
-                          />
-                        </>
+                        <InlineMessage
+                          tone="error"
+                          title="Sacola indisponível"
+                          action={
+                            <Button
+                              label="Tentar de novo"
+                              size="small"
+                              onPress={() => setBootNonce((value) => value + 1)}
+                            />
+                          }
+                        >
+                          {bootError}
+                        </InlineMessage>
                       ) : null}
                       {commerce?.error ? (
-                        <Body alert>{commerce.error}</Body>
+                        <InlineMessage tone="error">
+                          {commerce.error}
+                        </InlineMessage>
                       ) : null}
-                      <Button
-                        label={`Carrinho (${commerce?.cart.length ?? 0})${commerce?.pending ? " · confirmação pendente" : ""}`}
-                        variant="secondary"
-                        disabled={!commerce || commerce.busy}
-                        onPress={() => navigate({ kind: "cart" })}
-                      />
-                    </View>
+                      {commerce?.pending ? (
+                        <InlineMessage
+                          tone="warning"
+                          title="Pedido aguardando confirmação"
+                          action={
+                            <Button
+                              label="Ver na sacola"
+                              size="small"
+                              disabled={commerce.busy}
+                              onPress={() => navigate({ kind: "cart" })}
+                            />
+                          }
+                        >
+                          Confira o resultado antes de fazer outro pedido.
+                        </InlineMessage>
+                      ) : null}
+                    </>
+                  }
+                  openStatus={
+                    view.availability.kind === "open"
+                      ? "open"
+                      : view.availability.kind === "closed"
+                        ? "closed"
+                        : null
                   }
                   storeName={view.name}
                   notices={menuNotices(view, menuStale)}
@@ -598,7 +625,7 @@ export default function App() {
               {activeTab ? (
                 <BottomNavigation
                   selected={activeTab}
-                  cartCount={commerce?.cart.length ?? 0}
+                  cartCount={commerce ? cartUnits(commerce.cart) : 0}
                   onHeight={setTabBarHeight}
                   onSelect={(tab) => {
                     if (tab === "menu") navigate(null);
