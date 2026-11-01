@@ -19,10 +19,10 @@ export type BrandColorToken = (typeof BRAND_COLOR_TOKENS)[number];
 
 /** WhiteOven defaults, equal to `packages/design-tokens/tokens.json` (a test keeps them equal). */
 export const DEFAULT_BRAND_COLORS: Record<BrandColorToken, string> = {
-  primary: "#FF922B",
-  primaryHover: "#E87916",
-  primaryPressed: "#E8750C",
-  onPrimary: "#252525",
+  primary: "#FF6B00",
+  primaryHover: "#ED5F00",
+  primaryPressed: "#E85D00",
+  onPrimary: "#1A1512",
   accentText: "#9C4300",
 };
 
@@ -32,7 +32,7 @@ export const DEFAULT_BRAND_COLORS: Record<BrandColorToken, string> = {
  */
 export const FIXED_COLORS = {
   surface: "#FFFFFF",
-  cream: "#FFF8F0",
+  cream: "#FFFAF6",
 } as const;
 export type FixedColorToken = keyof typeof FIXED_COLORS;
 

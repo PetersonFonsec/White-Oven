@@ -292,13 +292,37 @@ const messages: Record<string, string> = {
     "Esta confirmação precisa ser conferida com a loja antes de tentar outro pedido.",
 };
 export function customerMessage(error: unknown): string {
-  if (error instanceof CustomerError)
+  if (error instanceof CustomerError) {
+    if (error.code === "VALIDATION_FAILED") {
+      const details = error.details as
+        { errors?: Array<{ path?: unknown }> } | undefined;
+      const labels: Record<string, string> = {
+        name: "nome",
+        email: "e-mail",
+        password: "senha (mínimo de 10 caracteres)",
+        phone: "telefone (use +55 e DDD, por exemplo +5511999999999)",
+        privacyPolicyVersion: "política de privacidade",
+        termsOfUseVersion: "termos de uso",
+      };
+      const fields = [
+        ...new Set(
+          (details?.errors ?? [])
+            .map((item) =>
+              typeof item.path === "string" ? labels[item.path] : undefined,
+            )
+            .filter((value): value is string => !!value),
+        ),
+      ];
+      if (fields.length)
+        return "Confira " + fields.join(", ") + " e tente novamente.";
+    }
     return (
       messages[error.code] ??
       (error.status === 401
         ? messages.LOGIN_REQUIRED!
         : "Não foi possível concluir. Atualize os dados e tente novamente.")
     );
+  }
   return error instanceof Error
     ? error.message
     : "Não foi possível concluir a operação.";

@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import { Alert, View } from "react-native";
-import { Body, Button, Field, FormPage, Heading } from "../components/Form.tsx";
+import {
+  Body,
+  Button,
+  Field,
+  FormPage,
+  Heading,
+  SurfaceCard,
+} from "../components/Form.tsx";
 import { Choice } from "../components/Choice.tsx";
 import {
   type CommerceModel,
@@ -126,7 +133,9 @@ export function CheckoutScreen({
       />
       <Heading>Carrinho e checkout</Heading>
       {state.error || inputError ? (
-        <Body alert>{inputError ?? state.error}</Body>
+        <SurfaceCard tone="secondary">
+          <Body alert>{inputError ?? state.error}</Body>
+        </SurfaceCard>
       ) : null}
       {state.busy ? <Body>Processando…</Body> : null}
       {!state.ready ? (
@@ -156,8 +165,8 @@ export function CheckoutScreen({
         <Button label="Meus pedidos" disabled={disabled} onPress={onOrders} />
       ) : null}
       {receipt ? (
-        <>
-          <Heading>Pedido #{receipt.number} recebido</Heading>
+        <SurfaceCard tone="secondary">
+          <Heading level="h2">Pedido #{receipt.number} recebido</Heading>
           <Body>
             Total: {formatCents(receipt.totalCents)}. Aguarde a confirmação da
             pizzaria. O pagamento será feito na entrega ou retirada.
@@ -167,11 +176,11 @@ export function CheckoutScreen({
             disabled={disabled}
             onPress={() => onTrackOrder(receipt.id)}
           />
-        </>
+        </SurfaceCard>
       ) : null}
       {state.pending ? (
-        <>
-          <Heading>Confirmação pendente</Heading>
+        <SurfaceCard tone="secondary">
+          <Heading level="h2">Confirmação pendente</Heading>
           <Body>
             A resposta ainda não foi confirmada. Recupere este pedido antes de
             montar outro.
@@ -219,7 +228,7 @@ export function CheckoutScreen({
               )
             }
           />
-        </>
+        </SurfaceCard>
       ) : recoveryOnly ? (
         <Body>
           A loja está indisponível no momento. Novos pedidos e alterações no
@@ -252,8 +261,8 @@ export function CheckoutScreen({
             <Body>Seu carrinho está vazio.</Body>
           ) : (
             summary.map((line) => (
-              <View key={line.id} style={{ gap: 8 }}>
-                <Heading>{line.name}</Heading>
+              <SurfaceCard key={line.id}>
+                <Heading level="h3">{line.name}</Heading>
                 {line.details.map((detail, index) => (
                   <Body key={index}>{detail}</Body>
                 ))}
@@ -286,6 +295,7 @@ export function CheckoutScreen({
                   />
                   <Button
                     label={`Remover ${line.name}`}
+                    variant="destructive"
                     disabled={locked}
                     onPress={() =>
                       void model.changeCart((lines) =>
@@ -294,7 +304,7 @@ export function CheckoutScreen({
                     }
                   />
                 </View>
-              </View>
+              </SurfaceCard>
             ))
           )}
           {summary.length > 0 && settings ? (
@@ -396,6 +406,7 @@ export function CheckoutScreen({
               />
               <Button
                 label="Calcular total na loja"
+                variant="primary"
                 disabled={!eligible}
                 onPress={quote}
               />
@@ -419,6 +430,7 @@ export function CheckoutScreen({
                   </Heading>
                   <Button
                     label={`Confirmar pedido de ${formatCents(state.quote.totals.totalCents)}`}
+                    variant="primary"
                     disabled={!eligible}
                     onPress={() => void model.confirm()}
                   />

@@ -1,6 +1,14 @@
 import { useState, useSyncExternalStore } from "react";
-import { Alert, Linking, View } from "react-native";
-import { Body, Button, Field, FormPage, Heading } from "../components/Form.tsx";
+import { Alert, Linking, Text, View } from "react-native";
+import {
+  Body,
+  Button,
+  Divider,
+  Field,
+  FormPage,
+  Heading,
+  SurfaceCard,
+} from "../components/Form.tsx";
 import { Choice } from "../components/Choice.tsx";
 import type { CommerceModel, CommerceState } from "../cart/model.ts";
 import type { Address } from "../customer/client.ts";
@@ -11,6 +19,8 @@ import {
   type StoreLegal,
 } from "../customer/legal.ts";
 import type { PushModel } from "../customer/push.ts";
+import { normalizeCustomerPhone } from "../customer/registration.ts";
+import { useTheme } from "../brand/theme.tsx";
 
 const emptyAddress: Omit<Address, "id"> = {
   label: "Casa",
@@ -177,11 +187,13 @@ export function AccountScreen({
   onBack: () => void;
   onOrders: () => void;
 }) {
+  const theme = useTheme();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [editing, setEditing] = useState<{
     id?: string;
@@ -198,7 +210,7 @@ export function AccountScreen({
             name: name.trim(),
             email: email.trim(),
             password,
-            phone: phone.trim() || null,
+            phone: normalizeCustomerPhone(phone),
             ...acceptedVersions((legal as { legal: StoreLegal }).legal),
           };
     setPassword("");
@@ -211,10 +223,24 @@ export function AccountScreen({
   };
   return (
     <FormPage>
-      <Button label="Voltar" onPress={onBack} disabled={state.busy} />
-      <Heading>Minha conta</Heading>
-      {notice ? <Body alert>{notice}</Body> : null}
-      {state.error ? <Body alert>{state.error}</Body> : null}
+      <Button
+        label="‹  Voltar"
+        variant="ghost"
+        size="medium"
+        onPress={onBack}
+        disabled={state.busy}
+        style={{ alignSelf: "flex-start", marginLeft: -12 }}
+      />
+      {notice ? (
+        <SurfaceCard tone="secondary">
+          <Body alert>{notice}</Body>
+        </SurfaceCard>
+      ) : null}
+      {state.error ? (
+        <SurfaceCard tone="secondary">
+          <Body alert>{state.error}</Body>
+        </SurfaceCard>
+      ) : null}
       {state.busy ? <Body>Processando…</Body> : null}
       {!state.ready ? (
         <Button
@@ -232,10 +258,18 @@ export function AccountScreen({
       ) : null}
       {state.profile ? (
         <>
-          <Button label="Meus pedidos" onPress={onOrders} disabled={disabled} />
-          <Body>
-            {state.profile.name} · {state.profile.email}
-          </Body>
+          <View style={{ gap: 8, paddingVertical: 8 }}>
+            <Heading level="h1">Minha conta</Heading>
+            <Body muted>
+              {state.profile.name} · {state.profile.email}
+            </Body>
+          </View>
+          <Button
+            label="Meus pedidos"
+            variant="secondary"
+            onPress={onOrders}
+            disabled={disabled}
+          />
           <Button
             label="Sair da conta"
             disabled={disabled}
@@ -384,6 +418,7 @@ export function AccountScreen({
           />
           <Button
             label="Excluir minha conta"
+            variant="destructive"
             disabled={disabled || !!state.pending || !deletePassword}
             onPress={() =>
               Alert.alert(
@@ -406,118 +441,201 @@ export function AccountScreen({
         </>
       ) : (
         <>
-          <Body>
-            Sua conta pertence a esta pizzaria. Entre para confirmar o pedido.
-          </Body>
-          <Choice
-            kind="radio"
-            label="Já tenho conta"
-            selected={mode === "login"}
-            disabled={disabled}
-            onPress={() => {
-              setMode("login");
-              setPassword("");
-            }}
-          />
-          <Choice
-            kind="radio"
-            label="Criar conta"
-            selected={mode === "register"}
-            disabled={disabled}
-            onPress={() => {
-              setMode("register");
-              setPassword("");
-            }}
-          />
-          {mode === "register" ? (
-            <>
-              <Field
-                label="Nome"
-                value={name}
-                onChangeText={setName}
-                maxLength={120}
-                editable={!disabled}
+          <View style={{ alignItems: "center", gap: 12, paddingTop: 8 }}>
+            <View
+              accessible={false}
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: 22,
+                backgroundColor: theme.colors.primaryLight,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text
+                style={{
+                  color: theme.colors.accentText,
+                  fontSize: 34,
+                  fontWeight: "800",
+                }}
+              >
+                W
+              </Text>
+            </View>
+            <Heading level="h1" centered>
+              {mode === "register" ? "Crie sua conta" : "Entre na sua conta"}
+            </Heading>
+            <Body muted centered>
+              {mode === "register"
+                ? "Acompanhe seus pedidos e monte sua pizza favorita."
+                : "Acesse seus pedidos e continue de onde parou."}
+            </Body>
+          </View>
+
+          <SurfaceCard>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Choice
+                kind="radio"
+                label="Entrar"
+                selected={mode === "login"}
+                disabled={disabled}
+                onPress={() => {
+                  setMode("login");
+                  setPassword("");
+                  setShowPassword(false);
+                }}
               />
-              <Field
-                label="Telefone com código do país (opcional)"
-                value={phone}
-                onChangeText={setPhone}
-                keyboardType="phone-pad"
-                maxLength={16}
-                editable={!disabled}
+              <Choice
+                kind="radio"
+                label="Criar conta"
+                selected={mode === "register"}
+                disabled={disabled}
+                onPress={() => {
+                  setMode("register");
+                  setPassword("");
+                  setShowPassword(false);
+                }}
               />
-            </>
-          ) : null}
-          <Field
-            label="E-mail"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="email-address"
-            maxLength={254}
-            editable={!disabled}
-          />
-          <Field
-            label={
-              mode === "register" ? "Senha (10 a 256 caracteres)" : "Senha"
-            }
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-            maxLength={256}
-            editable={!disabled}
-          />
-          {mode === "register" ? (
-            legal.status === "ready" ? (
+            </View>
+            {mode === "register" ? (
               <>
-                <Heading>Termos e privacidade</Heading>
-                <Body>
-                  Leia os termos de uso e a política de privacidade desta
-                  pizzaria antes de criar a conta.
-                </Body>
-                <LegalDocuments legal={legal.legal} />
-                <Choice
-                  kind="checkbox"
-                  label="Li e aceito os termos de uso e a política de privacidade"
-                  selected={accepted}
-                  disabled={disabled}
-                  onPress={() => setAccepted(!accepted)}
+                <Field
+                  label="Nome completo"
+                  value={name}
+                  onChangeText={setName}
+                  maxLength={120}
+                  autoComplete="name"
+                  textContentType="name"
+                  returnKeyType="next"
+                  editable={!disabled}
+                />
+                <Field
+                  label="Celular (opcional)"
+                  value={phone}
+                  onChangeText={setPhone}
+                  keyboardType="phone-pad"
+                  placeholder="DDD + número ou +55 DDD número"
+                  helper="Ex.: (11) 99999-9999. O código do Brasil será aplicado."
+                  maxLength={24}
+                  editable={!disabled}
                 />
               </>
-            ) : legal.status === "loading" ? (
-              <Body>Carregando os termos e a política de privacidade…</Body>
-            ) : (
-              <>
-                <Body alert>
-                  {legal.status === "unavailable"
-                    ? "O cadastro está indisponível até a loja publicar os termos de uso e a política de privacidade."
-                    : "Não foi possível carregar os termos de uso e a política de privacidade."}
-                </Body>
-                <Button
-                  label="Tentar carregar de novo"
-                  disabled={disabled}
-                  onPress={() => void onReloadLegal()}
-                />
-              </>
-            )
-          ) : null}
-          <Button
-            label={mode === "register" ? "Criar conta" : "Entrar"}
-            onPress={() => void signIn()}
-            disabled={
-              disabled ||
-              !email.trim() ||
-              !password ||
-              (mode === "register" &&
-                (!name.trim() ||
-                  password.length < 10 ||
-                  !accepted ||
-                  legal.status !== "ready"))
-            }
-          />
+            ) : null}
+            <Field
+              label="E-mail"
+              value={email}
+              onChangeText={setEmail}
+              placeholder="voce@exemplo.com"
+              autoComplete="email"
+              textContentType="emailAddress"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              maxLength={254}
+              returnKeyType="next"
+              editable={!disabled}
+            />
+            <Field
+              label="Senha"
+              value={password}
+              onChangeText={setPassword}
+              placeholder={
+                mode === "register" ? "Mínimo de 10 caracteres" : "Sua senha"
+              }
+              secureTextEntry={!showPassword}
+              textContentType={mode === "register" ? "newPassword" : "password"}
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={256}
+              editable={!disabled}
+            />
+            {mode === "register" ? (
+              <Body small muted>
+                Use pelo menos 10 caracteres. Senhas comuns não são aceitas.
+              </Body>
+            ) : null}
+            <Button
+              label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+              variant="ghost"
+              size="small"
+              style={{ alignSelf: "flex-start", marginLeft: -10 }}
+              onPress={() => setShowPassword((visible) => !visible)}
+            />
+
+            {mode === "register" ? (
+              legal.status === "ready" ? (
+                <SurfaceCard
+                  tone="secondary"
+                  style={{ padding: theme.spacing(3) }}
+                >
+                  <Heading level="h3">Termos e privacidade</Heading>
+                  <Body small>
+                    Leia os documentos da pizzaria e aceite para criar sua
+                    conta.
+                  </Body>
+                  <LegalDocuments legal={legal.legal} />
+                  <Divider />
+                  <Choice
+                    kind="checkbox"
+                    label="Li e aceito os termos de uso e a política de privacidade"
+                    selected={accepted}
+                    disabled={disabled}
+                    onPress={() => setAccepted((current) => !current)}
+                  />
+                </SurfaceCard>
+              ) : legal.status === "loading" ? (
+                <Body muted>Carregando termos e política de privacidade…</Body>
+              ) : (
+                <SurfaceCard tone="secondary">
+                  <Body alert>
+                    {legal.status === "unavailable"
+                      ? "O cadastro está indisponível até a loja publicar os termos de uso e a política de privacidade."
+                      : "Não foi possível carregar os termos de uso e a política de privacidade."}
+                  </Body>
+                  <Button
+                    label="Tentar carregar de novo"
+                    variant="secondary"
+                    disabled={disabled}
+                    onPress={() => void onReloadLegal()}
+                  />
+                </SurfaceCard>
+              )
+            ) : null}
+
+            <Button
+              label={mode === "register" ? "Criar conta" : "Entrar"}
+              variant="primary"
+              onPress={() => void signIn()}
+              disabled={
+                disabled ||
+                !email.trim() ||
+                !password ||
+                (mode === "register" &&
+                  (!name.trim() ||
+                    password.length < 10 ||
+                    !accepted ||
+                    legal.status !== "ready"))
+              }
+            />
+          </SurfaceCard>
+          <View style={{ alignItems: "center", paddingBottom: 8 }}>
+            <Button
+              label={
+                mode === "register"
+                  ? "Já tem uma conta? Entrar"
+                  : "Ainda não tem conta? Criar conta"
+              }
+              variant="ghost"
+              onPress={() => {
+                setMode((current) =>
+                  current === "register" ? "login" : "register",
+                );
+                setPassword("");
+                setShowPassword(false);
+              }}
+            />
+          </View>
         </>
       )}
     </FormPage>

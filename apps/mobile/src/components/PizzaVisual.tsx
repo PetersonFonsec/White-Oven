@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Animated, StyleSheet, Text, View } from "react-native";
+import { Animated, Image, StyleSheet, Text, View } from "react-native";
 import type { PizzaMode } from "@whiteoven/contracts";
 import { transitionMs } from "../a11y/motion.ts";
 import { useReducedMotion } from "../a11y/useReducedMotion.ts";
@@ -9,6 +9,8 @@ interface Props {
   mode: PizzaMode;
   /** The text of each half, read by screen readers as the image's description. */
   description: string;
+  leftImageUrl?: string | null;
+  rightImageUrl?: string | null;
   size?: number;
 }
 
@@ -17,7 +19,13 @@ interface Props {
  * written label, so they stay apart without color and in grayscale. The right half fades in when
  * the pizza is split, unless the system asks for reduced motion.
  */
-export function PizzaVisual({ mode, description, size = 200 }: Props) {
+export function PizzaVisual({
+  mode,
+  description,
+  leftImageUrl = null,
+  rightImageUrl = null,
+  size = 240,
+}: Props) {
   const theme = useTheme();
   const reduceMotion = useReducedMotion();
   const split = useRef(new Animated.Value(mode === "HALVES" ? 1 : 0)).current;
@@ -57,7 +65,25 @@ export function PizzaVisual({ mode, description, size = 200 }: Props) {
         },
       ]}
     >
+      {leftImageUrl ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.fullImage,
+            { width: inner, height: inner, borderRadius: inner / 2 },
+          ]}
+        >
+          <Image
+            source={{ uri: leftImageUrl }}
+            accessible={false}
+            accessibilityIgnoresInvertColors
+            resizeMode="cover"
+            style={{ width: inner, height: inner }}
+          />
+        </View>
+      ) : null}
       <Animated.View
+        pointerEvents="none"
         style={[
           styles.right,
           {
@@ -68,7 +94,17 @@ export function PizzaVisual({ mode, description, size = 200 }: Props) {
             opacity: split,
           },
         ]}
-      />
+      >
+        {rightImageUrl ? (
+          <Image
+            source={{ uri: rightImageUrl }}
+            accessible={false}
+            accessibilityIgnoresInvertColors
+            resizeMode="cover"
+            style={{ width: inner, height: inner, marginLeft: -half }}
+          />
+        ) : null}
+      </Animated.View>
       <Animated.View
         style={[
           styles.divider,
@@ -125,7 +161,8 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     justifyContent: "center",
   },
-  right: { position: "absolute", top: 0 },
+  fullImage: { position: "absolute", top: 0, left: 0, overflow: "hidden" },
+  right: { position: "absolute", top: 0, overflow: "hidden" },
   divider: { position: "absolute", top: 0, width: 6 },
   label: {
     position: "absolute",

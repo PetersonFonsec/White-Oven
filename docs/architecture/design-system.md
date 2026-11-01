@@ -1,10 +1,10 @@
 # Identidade visual WhiteOven
 
-## Implementado na M0.1-A
+## Implementação
 
-A landing usa `packages/design-tokens/tokens.json` como fonte dos tokens de cores, tipografia, espaçamentos, raios, sombra e interações. O layout Astro converte os valores em variáveis CSS durante o build. A identidade combina laranja #FF922B, superfícies #FFFFFF e #FFF8F0 e texto #252525, com cards arredondados e tipografia sans-serif do sistema, sem download de fontes.
+A landing e o app mobile usam `packages/design-tokens/tokens.json` como fonte dos tokens de cores, tipografia, espaçamentos, raios, sombra e interações. O layout Astro converte os valores em variáveis CSS durante o build; React Native adapta os tokens para componentes nativos. A identidade combina laranja #FF6B00, superfícies #FFFFFF e #FFFAF6 e texto #241C19, com cards arredondados e tipografia sans-serif do sistema, sem download de fontes.
 
-Botões laranja usam texto carvão. Textos de destaque usam o token `accentText`, mais escuro, para manter contraste sobre superfícies claras. Links têm alvo mínimo de 44px, foco visível e navegação por teclado; há atalho para o conteúdo e redução de movimento conforme preferência do sistema.
+Botões laranja usam texto carvão e os pares dos estados normal, hover e pressed passam a validação de contraste. Textos de destaque usam o token `accentText`, mais escuro, para manter contraste sobre superfícies claras. Links têm alvo mínimo de 44px, foco visível e navegação por teclado; há atalho para o conteúdo e redução de movimento conforme preferência do sistema.
 
 Loading, erro, vazio e desabilitado possuem tokens semânticos e estilos básicos (`skeleton`, `status`, `status--error`, `aria-busy` e `disabled`). A página estática não simula esses fluxos. Interfaces futuras deverão anunciar carregamento com `role="status"`, erros urgentes com `role="alert"` e manter mensagens compreensíveis sem depender somente de cor. Não declarar conformidade WCAG AA sem auditoria completa de teclado, leitor de tela e layout.
 
