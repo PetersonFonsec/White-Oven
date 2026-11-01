@@ -28,6 +28,9 @@ import {
   type Destination,
   buildingAfterRefresh,
   createMenuLoader,
+  destinationAfterSignIn,
+  destinationOnBack,
+  returnLabel,
   destinationAfterRefresh,
   destinationKind,
   screenFor,
@@ -96,6 +99,8 @@ export default function App() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootNonce, setBootNonce] = useState(0);
   const [destination, setDestination] = useState<Destination>(null);
+  const destinationRef = useRef<Destination>(null);
+  destinationRef.current = destination;
   const [orderReturn, setOrderReturn] = useState<"history" | "cart">("history");
   const navigate = (next: Destination) => {
     commerceRef.current?.invalidateQuote();
@@ -134,6 +139,15 @@ export default function App() {
     if (accountOpen) void reloadLegal();
   }, [accountOpen, reloadLegal]);
   const profileId = commerce?.profile?.id ?? null;
+  // A sign-in from the bag or the orders goes back there (UX audit P1-3).
+  const signedInBefore = useRef(profileId);
+  useEffect(() => {
+    const wasSignedIn = signedInBefore.current;
+    signedInBefore.current = profileId;
+    if (wasSignedIn || !profileId) return;
+    const back = destinationAfterSignIn(destinationRef.current);
+    if (back) setDestination(back);
+  }, [profileId]);
   const sessionStatus = commerce?.session ?? "idle";
   // The device's opt-in belongs to the signed-in session; another account starts from its own.
   useEffect(() => {
@@ -311,7 +325,8 @@ export default function App() {
     commerce ? recoveryOf(commerce) : null,
   );
   const inBuilder = screen.kind === "builder";
-  // Android's back button leaves the builder for the menu.
+  // Android's back button goes up one level: builder to menu, an order to where it was opened,
+  // an account opened from the bag back to the bag, any tab back to the menu.
   useEffect(() => {
     if (!inBuilder && !destination) return;
     const subscription = BackHandler.addEventListener(
@@ -319,13 +334,13 @@ export default function App() {
       () => {
         if (commerceRef.current?.getSnapshot().busy) return true;
         commerceRef.current?.invalidateQuote();
-        setBuilding(null);
-        setDestination(null);
+        if (inBuilder) setBuilding(null);
+        else setDestination(destinationOnBack(destination, orderReturn));
         return true;
       },
     );
     return () => subscription.remove();
-  }, [inBuilder, destination]);
+  }, [inBuilder, destination, orderReturn]);
 
   // Keyed on the menu itself, so marking it stale does not rebuild the index or the sections.
   const menuData = menu.kind === "ok" ? menu.menu : null;
@@ -361,6 +376,9 @@ export default function App() {
       </View>
     );
 
+  const logoUrl = view?.logoImageId
+    ? imageUrl(runtime.apiUrl, runtime.storeSlug, view.logoImageId, "thumbnail")
+    : null;
   const theme = themeFor(
     view?.colors ?? cached?.colors ?? runtime.fallbackColors,
   );
@@ -393,7 +411,9 @@ export default function App() {
                         ? "Voltar aos pedidos"
                         : "Voltar"
                   }
-                  onAccount={() => navigate({ kind: "account" })}
+                  onAccount={() =>
+                    navigate({ kind: "account", returnTo: "history" })
+                  }
                   onOpenOrder={(orderId) => {
                     setOrderReturn("history");
                     navigate({ kind: "order", orderId });
@@ -408,9 +428,14 @@ export default function App() {
                   push={push}
                   notice={commerce.profile ? null : notificationNotice}
                   legal={legal}
+                  storeName={view?.name ?? cached?.name ?? runtime.storeName}
+                  logoUrl={logoUrl}
+                  backTo={returnLabel(destination)}
                   onReloadLegal={reloadLegal}
-                  onBack={() => navigate(null)}
-                  onOrders={() => navigate({ kind: "history" })}
+                  onBack={() => {
+                    const back = destinationAfterSignIn(destination);
+                    navigate(back);
+                  }}
                 />
               ) : screen.kind === "cart" && model && commerce ? (
                 <CheckoutScreen
@@ -423,7 +448,9 @@ export default function App() {
                   recoveryOnly={screen.recoveryOnly}
                   stale={menuStale}
                   onBack={() => navigate(null)}
-                  onAccount={() => navigate({ kind: "account" })}
+                  onAccount={() =>
+                    navigate({ kind: "account", returnTo: "cart" })
+                  }
                   onOrders={() => navigate({ kind: "history" })}
                   onTrackOrder={(orderId) => {
                     setOrderReturn("cart");
@@ -512,16 +539,7 @@ export default function App() {
                   }
                   storeName={view.name}
                   notices={menuNotices(view, menuStale)}
-                  logoUrl={
-                    view.logoImageId
-                      ? imageUrl(
-                          runtime.apiUrl,
-                          runtime.storeSlug,
-                          view.logoImageId,
-                          "thumbnail",
-                        )
-                      : null
-                  }
+                  logoUrl={logoUrl}
                   menu={menuLoad}
                   menuStale={menuStale}
                   refreshing={refreshing}
