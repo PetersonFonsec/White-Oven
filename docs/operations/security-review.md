@@ -9,6 +9,8 @@ Legenda: `[x]` verificado no repositório, `[ ]` falta conferir no ambiente do p
 - [x] Toda rota declara acesso (`@PublicRoute`, `@StoreTenant`, `@CustomerRoute`, `@StaffRoute`, `@AdminRoute`, `@PlatformRoute`). `RouteAccessGuard` global recusa rota sem declaração com 403 e registra em log. Prova: `app.test.ts` ("refuses a route without an access declaration") e o teste de cobertura de rotas de `staff-auth.test.ts`.
 - [x] Rotas públicas revisadas: health, login (equipe e cliente), segundo fator, refresh e logout por cookie (com `Origin` conferido contra `API_ADMIN_ORIGINS`), cardápio, status, marca, imagens públicas, documentos legais e páginas `/lojas/...`. Nenhuma devolve dado de outra loja nem dado pessoal.
 - [x] OpenAPI desligado por padrão em produção (`API_OPENAPI_ENABLED`).
+- [x] `GET /metrics` (M7.4, [ADR 0032](../adr/0032-observability.md)): 404 sem `API_METRICS_TOKEN`, 401 sem o bearer certo, só rótulos sem dado pessoal (`observability.test.ts`).
+- [ ] **No ambiente:** o proxy público responde 404 em `/metrics`; o monitor lê pela rede interna ([runbook](observability.md#2-configurar-a-api)).
 
 ## 2. Isolamento entre lojas
 
@@ -50,7 +52,7 @@ Legenda: `[x]` verificado no repositório, `[ ]` falta conferir no ambiente do p
 
 ## 6. Dados pessoais e segredos
 
-- [x] Logs JSON sem dados pessoais, query string, cabeçalhos nem corpo (`logging.test.ts`, `sanitize.test.ts`).
+- [x] Logs JSON sem dados pessoais, query string, cabeçalhos nem corpo (`logging.test.ts`, `sanitize.test.ts`); métricas e mensagens do monitor também (`observability.test.ts`, `tests/deployment/api-monitor.test.mjs`).
 - [x] API conecta só como `whiteoven_app`, sem `BYPASSRLS` nem DDL, e recusa iniciar com credencial de dono (`database.test.ts`, `startup.test.ts`).
 - [x] Segredos obrigatórios em produção validados na partida (`AUTH_ACCESS_TOKEN_PRIVATE_KEY`, `AUTH_MFA_ENCRYPTION_KEY`, `OWNER_INVITE_SECRET`).
 - [ ] **No ambiente:** backups cifrados e guardados fora do servidor dependem da Q-13 (aberta); ver [runbook de backup](api-backup-restore.md).

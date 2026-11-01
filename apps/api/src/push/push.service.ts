@@ -1,3 +1,4 @@
+import { ApiMetrics } from "../observability/metrics";
 import {
   Inject,
   Injectable,
@@ -100,6 +101,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
     private readonly orm: MikroORM,
     private readonly logger: JsonLogger,
     @Inject(API_CONFIG) config: ApiConfig,
+    private readonly metrics: ApiMetrics,
   ) {
     this.sender =
       config.push.delivery === "expo"
@@ -218,6 +220,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
               await this.send(tenant.id, tenant.name, claim, sender, hooks);
             if (claim.deliveries.length < PUSH_BATCH_SIZE) break;
           } catch {
+            this.metrics.jobFailed("push_delivery");
             this.logger.write("error", "push delivery batch failed", {
               tenantId: tenant.id,
               batch,
@@ -226,6 +229,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
           }
         }
     } catch {
+      this.metrics.jobFailed("push_delivery");
       this.logger.write("error", "push delivery job failed");
     } finally {
       this.running = false;

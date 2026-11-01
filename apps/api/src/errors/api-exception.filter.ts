@@ -7,7 +7,8 @@ import {
 } from "@nestjs/common";
 import type { Request, Response } from "express";
 import type { JsonLogger } from "../logging/json-logger";
-import { requestIdOf } from "../logging/request-context";
+import { requestIdOf, requestTenantOf } from "../logging/request-context";
+import type { ApiMetrics } from "../observability/metrics";
 import { describeError } from "../logging/sanitize";
 import { ApiError, type ApiErrorBody } from "./api-error";
 
@@ -33,7 +34,10 @@ const MESSAGE_BY_CODE: Record<string, string> = {
 /** Turns every thrown value into the standard error body; unknown errors become a bare 500. */
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
-  constructor(private readonly logger: JsonLogger) {}
+  constructor(
+    private readonly logger: JsonLogger,
+    private readonly metrics?: ApiMetrics,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
@@ -67,6 +71,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
         message: MESSAGE_BY_CODE.INTERNAL_ERROR!,
         requestId,
       };
+      this.metrics?.unhandledError(requestTenantOf(req));
       // Only the error class and stack frames: messages may include values (SQL, input).
       this.logger.write("error", "unhandled exception", {
         requestId,

@@ -150,6 +150,7 @@ describe(
         },
         push: { delivery: "disabled", expoAccessToken: null },
         trustedProxies: [],
+        metricsToken: null,
       };
       platform = new PlatformService(app, config);
       server = await startTestServer({

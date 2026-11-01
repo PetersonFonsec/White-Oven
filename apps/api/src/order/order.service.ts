@@ -1,3 +1,4 @@
+import { ApiMetrics } from "../observability/metrics";
 import { createHash } from "node:crypto";
 import {
   HttpStatus,
@@ -185,6 +186,7 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
     private readonly transactions: TenantTransactions,
     private readonly orm: MikroORM,
     private readonly logger: JsonLogger,
+    private readonly metrics: ApiMetrics,
   ) {}
 
   onModuleInit(): void {
@@ -438,11 +440,15 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
         ]),
       )
       .digest();
-    return this.transactions.run(
+    const tenantId = currentTenantContext().tenantId;
+    // Set by the attempt that writes a change; `run` resolves only after that attempt committed.
+    let applied = false;
+    const result = await this.transactions.run(
       async (em) => {
+        applied = false;
         const [tenant] = await em.execute<{ status: string }[]>(
           "select whiteoven_lock_tenant_status(?) as status",
-          [currentTenantContext().tenantId],
+          [tenantId],
         );
         const suspendedOwnerClose =
           tenant?.status === "SUSPENDED" &&
@@ -566,6 +572,7 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
         );
         if (!persistedChange)
           throw new Error("Order transition history was not persisted.");
+        applied = true;
         return {
           order: await readTransitionOrder(
             em,
@@ -578,6 +585,8 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
       },
       actorType === "STAFF" ? { lockTenantStatusFirst: true } : undefined,
     );
+    if (applied) this.metrics.orderTransition(tenantId, input.to, actorType);
+    return result;
   }
 
   private async writeTransition(
@@ -650,10 +659,12 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
           batch++
         ) {
           try {
+            let rejected = 0;
             const processed = await runInTenant(
               this.orm,
               tenant.id,
               async (tx) => {
+                rejected = 0;
                 const [state] = await tx.execute<{ status: string }[]>(
                   "select whiteoven_lock_tenant_status(?) as status",
                   [tenant.id],
@@ -702,12 +713,16 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
                     keyHash,
                     commandHash,
                   });
+                  rejected++;
                 }
                 return due.length;
               },
             );
+            for (let i = 0; i < rejected; i++)
+              this.metrics.orderTransition(tenant.id, "REJECTED", "SYSTEM");
             if (processed === 0) break;
           } catch {
+            this.metrics.jobFailed("order_accept_timeout");
             this.logger.write(
               "error",
               "order acceptance timeout batch failed",
@@ -718,6 +733,7 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
         }
       }
     } catch {
+      this.metrics.jobFailed("order_accept_timeout");
       this.logger.write("error", "order acceptance timeout job failed");
     } finally {
       this.jobRunning = false;
@@ -736,7 +752,7 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  create(
+  async create(
     request: OrderRequest,
     idempotencyKey: string,
   ): Promise<{ created: boolean; order: OrderView }> {
@@ -744,7 +760,8 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
     const scope = `customer:${customerId}`;
     const keyHash = sha256(idempotencyKey);
     const requestHash = orderRequestHash(request);
-    return this.transactions.run(
+    const tenantId = currentTenantContext().tenantId;
+    const result = await this.transactions.run(
       async (em) => {
         const [prior] = await em.execute<
           { id: string; requestHash: Buffer; orderId: string; live: boolean }[]
@@ -843,6 +860,11 @@ export class OrderService implements OnModuleInit, OnModuleDestroy {
       },
       { lockCustomer: true },
     );
+    if (result.created) {
+      this.metrics.orderCreated(tenantId);
+      this.metrics.orderTransition(tenantId, "PLACED", "CUSTOMER");
+    }
+    return result;
   }
 }
 

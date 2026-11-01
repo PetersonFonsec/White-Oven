@@ -215,6 +215,7 @@ A infraestrutura (Docker, Compose, CI/CD, Caddy, VPS) é responsabilidade da M0.
 - Migrations versionadas executadas antes do start da nova versão, nunca pela aplicação em runtime.
 - Backups diários cifrados do PostgreSQL e do armazenamento de imagens, com teste de restauração antes do piloto.
 - Logs estruturados com `requestId` e `tenantId`, sem dados pessoais.
+- Métricas por tenant em `/metrics` (fechado por token) e alertas de indisponibilidade, erro e latência por webhook, sem fornecedor embutido. Implementado em M7.4 ([ADR 0032](../adr/0032-observability.md), [runbook](../operations/observability.md)).
 - Uma instância de API no MVP; rate limit e cache em memória precisam de revisão antes de escalar.
 
 ## Riscos

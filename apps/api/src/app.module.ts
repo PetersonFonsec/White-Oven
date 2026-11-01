@@ -18,6 +18,8 @@ import { OrderModule } from "./order/order.module";
 import { PushModule } from "./push/push.module";
 import { LegalModule } from "./legal/legal.module";
 import { RequestLimits } from "./security/request-limits";
+import { ApiMetrics } from "./observability/metrics";
+import { MetricsController } from "./observability/metrics.controller";
 
 @Module({})
 export class AppModule {
@@ -26,6 +28,7 @@ export class AppModule {
     orm: MikroORM,
     logger: JsonLogger,
     limits: RequestLimits = new RequestLimits(),
+    metrics: ApiMetrics = new ApiMetrics(),
   ): DynamicModule {
     return {
       module: AppModule,
@@ -44,15 +47,16 @@ export class AppModule {
         PushModule,
         LegalModule,
       ],
-      controllers: [HealthController],
+      controllers: [HealthController, MetricsController],
       providers: [
         { provide: API_CONFIG, useValue: config },
         { provide: JsonLogger, useValue: logger },
         { provide: RequestLimits, useValue: limits },
+        { provide: ApiMetrics, useValue: metrics },
         // Runs before every route guard: undeclared routes are refused.
         { provide: APP_GUARD, useClass: RouteAccessGuard },
       ],
-      exports: [API_CONFIG, JsonLogger, RequestLimits],
+      exports: [API_CONFIG, JsonLogger, RequestLimits, ApiMetrics],
     };
   }
 }

@@ -59,6 +59,7 @@ describe("M1.5 platform operations", databaseSuite, () => {
       },
       push: { delivery: "disabled", expoAccessToken: null },
       trustedProxies: [],
+      metricsToken: null,
     };
     platform = new PlatformService(app, testConfig);
   });
