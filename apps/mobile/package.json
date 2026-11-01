@@ -8,10 +8,26 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
+    "storybook": "EXPO_PUBLIC_STORYBOOK_ENABLED=true expo start --clear",
+    "storybook:web": "EXPO_PUBLIC_STORYBOOK_ENABLED=true expo start --web --clear",
+    "storybook:generate": "sb-rn-get-stories",
     "config": "expo config --type public --json",
     "typecheck": "tsc -p .",
     "test": "node --experimental-strip-types --no-warnings=ExperimentalWarning --test tests/*.test.ts",
     "release-check": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/release-check.ts"
+  },
+  "expo": {
+    "autolinking": {
+      "exclude": [
+        "@react-native-async-storage/async-storage",
+        "@react-native-community/datetimepicker",
+        "@react-native-community/slider",
+        "react-native-gesture-handler",
+        "react-native-reanimated",
+        "react-native-svg",
+        "react-native-worklets"
+      ]
+    }
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
@@ -30,7 +46,20 @@
   },
   "devDependencies": {
     "@expo/eas-json": "27.2.0",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/datetimepicker": "9.2.1",
+    "@react-native-community/slider": "5.2.1",
+    "@storybook/addon-ondevice-actions": "^10.7.1",
+    "@storybook/addon-ondevice-controls": "^10.7.1",
+    "@storybook/react-native": "^10.7.1",
+    "@storybook/react-native-ui-lite": "^10.7.1",
     "@types/react": "~19.3.0",
+    "react-dom": "19.3.0",
+    "react-native-gesture-handler": "~3.3.0",
+    "react-native-reanimated": "4.7.1",
+    "react-native-web": "~0.21.4",
+    "react-native-worklets": "0.13.0",
+    "storybook": "^10.6.5",
     "typescript": "^5.9.3"
   }
 }
