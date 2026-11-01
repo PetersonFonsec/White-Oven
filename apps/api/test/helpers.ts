@@ -76,3 +76,29 @@ export const nextTick = () => new Promise((resolve) => setImmediate(resolve));
 /** Response bodies in tests are asserted structurally, so loose typing is intended. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const json = (response: Response): Promise<any> => response.json();
+
+/**
+ * Value of one series in Prometheus text (ADR 0032), 0 when absent. `labels` must name every
+ * label of the series, in any order.
+ */
+export function metricValue(
+  text: string,
+  name: string,
+  labels: Record<string, string> = {},
+): number {
+  const wanted = Object.entries(labels)
+    .map(([key, value]) => `${key}="${value}"`)
+    .sort()
+    .join(",");
+  for (const line of text.split("\n")) {
+    const match = /^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})? (\S+)$/.exec(line);
+    if (!match || match[1] !== name) continue;
+    const found = (match[2] ?? "")
+      .split(/,(?=[a-zA-Z_]+=")/)
+      .filter(Boolean)
+      .sort()
+      .join(",");
+    if (found === wanted) return Number(match[3]);
+  }
+  return 0;
+}

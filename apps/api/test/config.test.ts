@@ -45,6 +45,7 @@ describe("loadConfig", () => {
       },
       push: { delivery: "disabled", expoAccessToken: null },
       trustedProxies: [],
+      metricsToken: null,
     });
   });
 

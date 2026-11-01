@@ -22,6 +22,8 @@ import { requestContext } from "./logging/request-context";
 import { LEGAL_PAGES_PREFIX } from "./legal/legal.controller";
 import { clientIpResolver, securityHeaders } from "./security/http-security";
 import type { RequestLimits } from "./security/request-limits";
+import { ApiMetrics } from "./observability/metrics";
+import { METRICS_PATH } from "./observability/metrics.controller";
 
 export const API_PREFIX = "v1";
 export const OPENAPI_PATH = `${API_PREFIX}/openapi.json`;
@@ -34,6 +36,8 @@ export interface CreateAppOptions {
   entities?: EntitySchema[];
   /** Request rate limits; tests pass small policies (ADR 0031). */
   requestLimits?: RequestLimits;
+  /** Metrics registry; tests pass their own to read it (ADR 0032). */
+  metrics?: ApiMetrics;
 }
 
 export async function createApp(
@@ -41,6 +45,7 @@ export async function createApp(
   options: CreateAppOptions = {},
 ): Promise<NestExpressApplication> {
   const logger = options.logger ?? new JsonLogger(config.logLevel);
+  const metrics = options.metrics ?? new ApiMetrics();
   // Lazy pool: building the app never touches the database; main.ts verifies the role.
   const orm = await createOrm(
     config.database,
@@ -53,6 +58,7 @@ export async function createApp(
     orm,
     logger,
     options.requestLimits,
+    metrics,
   );
   const root = options.imports?.length
     ? {
@@ -78,16 +84,18 @@ export async function createApp(
     extended: false,
     parameterLimit: 10,
   });
-  app.use(requestContext(logger));
+  app.use(requestContext(logger, metrics));
   app.setGlobalPrefix(API_PREFIX, {
     exclude: [
       "health",
       "health/ready",
+      // Prometheus text for the monitor, behind API_METRICS_TOKEN (ADR 0032).
+      METRICS_PATH,
       // The store's legal pages (ADR 0030): URLs for people and app store listings.
       { path: `${LEGAL_PAGES_PREFIX}/*path`, method: RequestMethod.ALL },
     ],
   });
-  app.useGlobalFilters(new ApiExceptionFilter(logger));
+  app.useGlobalFilters(new ApiExceptionFilter(logger, metrics));
   app.enableShutdownHooks();
 
   if (config.openApiEnabled) {

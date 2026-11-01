@@ -151,6 +151,7 @@ describe("M6.3 monthly billing report", databaseSuite, () => {
       },
       push: { delivery: "disabled", expoAccessToken: null },
       trustedProxies: [],
+      metricsToken: null,
     };
     platform = new PlatformService(app, config);
     server = await startTestServer({

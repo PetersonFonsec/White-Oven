@@ -1,3 +1,4 @@
+import { ApiMetrics } from "../src/observability/metrics";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, beforeEach, describe, it } from "node:test";
@@ -1004,6 +1005,7 @@ describe("M5.5 order push notifications", databaseSuite, () => {
         server.app.get(MikroORM),
         server.app.get(JsonLogger),
         server.app.get(API_CONFIG),
+        server.app.get(ApiMetrics),
       );
       const claimed = barrier();
       const release = barrier();
@@ -1067,6 +1069,7 @@ describe("M5.5 order push notifications", databaseSuite, () => {
         server.app.get(MikroORM),
         server.app.get(JsonLogger),
         server.app.get(API_CONFIG),
+        server.app.get(ApiMetrics),
       );
       const late = new FakeSender();
       const other = new FakeSender();

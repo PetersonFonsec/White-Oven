@@ -1,0 +1,22 @@
+# Exemplo: uma verificação do monitor da API (ADR 0032). Copie para /etc/systemd/system/ junto
+# com o .timer, ajuste os caminhos e rode `systemctl enable --now whiteoven-api-monitor.timer`.
+# Runbook: docs/operations/observability.md.
+[Unit]
+Description=WhiteOven API monitor (one check)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=whiteoven-monitor
+WorkingDirectory=/opt/whiteoven
+# Arquivo 0600 com MONITOR_* (modelo em ops/monitor/monitor.env.example).
+EnvironmentFile=/etc/whiteoven/monitor.env
+Environment=MONITOR_STATE_FILE=/var/lib/whiteoven-monitor/state.json
+StateDirectory=whiteoven-monitor
+ExecStart=/usr/bin/node /opt/whiteoven/ops/api-monitor.mjs check
+TimeoutStartSec=50
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

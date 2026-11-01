@@ -23,6 +23,10 @@ export interface ApiConfig {
    * the client IP is always the TCP peer.
    */
   trustedProxies: readonly string[];
+  /**
+   * Bearer token for `GET /metrics` (ADR 0032). `null`: the route answers 404. Secret.
+   */
+  metricsToken: string | null;
 }
 
 export const PUSH_DELIVERIES = ["disabled", "expo"] as const;
@@ -181,6 +185,15 @@ export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
       "API_TRUSTED_PROXIES must be a comma-separated list of IP addresses",
     );
 
+  const metricsToken = env.API_METRICS_TOKEN || null;
+  if (
+    metricsToken !== null &&
+    !/^[A-Za-z0-9._~+/=-]{32,512}$/.test(metricsToken)
+  )
+    problems.push(
+      "API_METRICS_TOKEN must be at least 32 characters (letters, digits, ._~+/=-)",
+    );
+
   if (problems.length > 0) throw new ConfigError(problems);
   return Object.freeze({
     nodeEnv,
@@ -193,6 +206,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
     auth: Object.freeze(auth),
     push: Object.freeze({ delivery: pushDelivery, expoAccessToken }),
     trustedProxies: Object.freeze(trustedProxies),
+    metricsToken,
   });
 }
 

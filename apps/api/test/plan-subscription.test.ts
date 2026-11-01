@@ -84,6 +84,7 @@ describe("M6.1 plan subscriptions", databaseSuite, () => {
       },
       push: { delivery: "disabled", expoAccessToken: null },
       trustedProxies: [],
+      metricsToken: null,
     };
     platform = new PlatformService(app, config);
   });

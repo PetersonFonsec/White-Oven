@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
-import { json, startTestServer, type TestServer } from "./helpers";
+import { json, metricValue, startTestServer, type TestServer } from "./helpers";
 import {
   createTestDatabase,
   databaseSuite,
@@ -21,6 +21,7 @@ import { runInTenant } from "../src/tenancy/tenant-transaction";
 import { TenantTransactions } from "../src/tenancy/tenant-transaction";
 import { MikroORM } from "@mikro-orm/postgresql";
 import { JsonLogger } from "../src/logging/json-logger";
+import { ApiMetrics } from "../src/observability/metrics";
 import {
   ORDER_TIMEOUT_BATCH_SIZE,
   OrderService,
@@ -459,6 +460,12 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
 
   it("creates once per key: the same key and body return the same order, another body is a 409", async () => {
     const { token, addressId } = await customer(stores.a.slug);
+    const metrics = server.app.get(ApiMetrics);
+    const created = () =>
+      metricValue(metrics.render(), "whiteoven_orders_created_total", {
+        tenant: stores.a.id,
+      });
+    const createdBefore = created();
     const c = stores.a.catalog;
     const key = randomUUID();
     const body = {
@@ -493,6 +500,8 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     );
     assert.equal(changed.status, 409);
     assert.equal((await json(changed)).code, "IDEMPOTENCY_CONFLICT");
+    // M7.4: the replay and the conflict are not new orders.
+    assert.equal(created() - createdBefore, 1);
 
     const [keys] = await sql<{ count: number }>(
       stores.a.id,
@@ -1053,6 +1062,16 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     const acceptedBody = await json(accepted);
     assert.equal(acceptedBody.order.status, "PREPARING");
 
+    // M7.4: one committed change counts once, whatever the retries.
+    const preparing = () =>
+      metricValue(
+        server.app.get(ApiMetrics).render(),
+        "whiteoven_order_transitions_total",
+        { tenant: stores.a.id, to: "PREPARING", actor: "STAFF" },
+      );
+    const preparingAfterAccept = preparing();
+    assert.ok(preparingAfterAccept >= 1);
+
     // I2: retry returns the original transition without appending history.
     const retry = await staffTransition(staffToken, firstOrder.id, accept, k1);
     assert.equal(retry.status, 200);
@@ -1060,6 +1079,7 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
     assert.deepEqual(immediateRetry.change, acceptedBody.change);
     assert.deepEqual(immediateRetry.order, acceptedBody.order);
     assert.equal(await historyCount(firstOrder.id), 2); // initial PLACED + I1
+    assert.equal(preparing(), preparingAfterAccept);
 
     // I3: an old successful retry returns its original change and current order state.
     const advanced = await staffTransition(staffToken, firstOrder.id, {
@@ -1179,6 +1199,7 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
       server.app.get(TenantTransactions),
       server.app.get(MikroORM),
       server.app.get(JsonLogger),
+      server.app.get(ApiMetrics),
     ) as unknown as { rejectExpiredOrders(): Promise<void> };
     await Promise.all([
       serviceA.rejectExpiredOrders(),
@@ -1200,6 +1221,20 @@ describe("M4.3 order quote and creation", databaseSuite, () => {
          from order_status_changes`,
     );
     assert.deepEqual(history, { timeouts: count, duplicates: 0 });
+    // M7.4: two instances share one registry here; only committed rejections count.
+    const text = server.app.get(ApiMetrics).render();
+    assert.equal(
+      metricValue(text, "whiteoven_order_transitions_total", {
+        tenant: tenantId,
+        to: "REJECTED",
+        actor: "SYSTEM",
+      }),
+      count,
+    );
+    assert.equal(
+      metricValue(text, "whiteoven_orders_created_total", { tenant: tenantId }),
+      count,
+    );
   });
 
   it("skips an order being accepted while the timeout batch runs", async () => {
