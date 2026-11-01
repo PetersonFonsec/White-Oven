@@ -6,7 +6,13 @@ import {
   filterOrders,
   orderDateTime,
   orderItemView,
+  orderWhen,
 } from "../src/customer/order-view.ts";
+import {
+  orderProgress,
+  stepDescription,
+  trackingLabel,
+} from "../src/customer/order-progress.ts";
 import type {
   CustomerOrderItem,
   CustomerOrderStatus,
@@ -118,5 +124,34 @@ describe("order view", () => {
       lines: [],
       imageIds: [],
     });
+  });
+});
+
+describe("tracking texts", () => {
+  it("says today and yesterday in the device's time zone", () => {
+    const now = new Date(2026, 9, 24, 21, 0);
+    assert.equal(
+      orderWhen(new Date(2026, 9, 24, 19, 24).toISOString(), now),
+      "hoje às 19:24",
+    );
+    assert.equal(
+      orderWhen(new Date(2026, 9, 23, 23, 5).toISOString(), now),
+      "ontem às 23:05",
+    );
+    assert.equal(
+      orderWhen(new Date(2026, 9, 20, 8, 0).toISOString(), now),
+      "20 de out. de 2026 às 08:00",
+    );
+  });
+
+  it("names a confirmed order and describes the current step", () => {
+    const steps = orderProgress("PREPARING", "DELIVERY")!;
+    assert.equal(trackingLabel(steps[0]!), "Pedido confirmado");
+    assert.equal(trackingLabel(steps[1]!), "Em preparo");
+    const placed = orderProgress("PLACED", "PICKUP")!;
+    assert.equal(trackingLabel(placed[0]!), "Aguardando confirmação");
+    assert.match(stepDescription("PREPARING", "DELIVERY")!, /preparada/);
+    assert.match(stepDescription("READY", "PICKUP")!, /buscar/);
+    assert.equal(stepDescription("COMPLETED", "DELIVERY"), null);
   });
 });

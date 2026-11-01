@@ -14,7 +14,6 @@ import {
   Linking,
   Pressable,
   RefreshControl,
-  ScrollView,
   Text,
   View,
 } from "react-native";
@@ -25,8 +24,8 @@ import type { CommerceModel, CommerceState } from "../cart/model.ts";
 import { InlineMessage } from "../components/Feedback.tsx";
 import { Body, Button } from "../components/Form.tsx";
 import { Icon, IconButton, type IconName } from "../components/Icon.tsx";
-import { PAGE_GUTTER, badgeText, plural } from "../components/layout.ts";
-import { brandNameParts } from "../customer/auth-flow.ts";
+import { PAGE_GUTTER } from "../components/layout.ts";
+import { AppBar, CartButton, FilterChips } from "../components/AppBar.tsx";
 import {
   ORDER_FILTERS,
   type OrderFilter,
@@ -34,6 +33,7 @@ import {
   filterOrders,
   orderDateTime,
   orderItemView,
+  orderWhen,
 } from "../customer/order-view.ts";
 import { ListRow, Section } from "../components/ListRow.tsx";
 import { Screen } from "../components/Screen.tsx";
@@ -44,6 +44,8 @@ import {
   orderProgress,
   progressSummary,
   statusTone,
+  stepDescription,
+  trackingLabel,
 } from "../customer/order-progress.ts";
 import { customerMessage } from "../customer/client.ts";
 import {
@@ -463,18 +465,20 @@ export function OrdersScreen({
     />
   ) : undefined;
 
-  const header = orderId ? (
+  const tracking = !!orderId && !!detail && !terminal(detail.status);
+  const header = tracking ? (
+    <TrackingHeader onBack={onBack} backTo={backTo} />
+  ) : orderId ? (
     <DetailHeader
       title={detail ? `Pedido #${detail.number}` : "Pedido"}
       onBack={onBack}
       backTo={backTo}
     />
   ) : (
-    <OrdersTopBar
+    <AppBar
       storeName={storeName}
       logoUrl={logoUrl}
-      cartCount={cartCount}
-      onOpenCart={onOpenCart}
+      right={<CartButton count={cartCount} onPress={onOpenCart} />}
     />
   );
 
@@ -536,16 +540,34 @@ export function OrdersScreen({
         ) : null}
         {detail ? (
           <>
-            <StatusHero order={detail} />
-
-            {progress && !terminal(detail.status) ? (
+            {progress && tracking ? (
               <Card>
+                <View style={{ gap: 2 }}>
+                  <Text
+                    accessibilityRole="header"
+                    style={{ color: theme.colors.text, ...theme.typography.h3 }}
+                  >
+                    Pedido #{detail.number}
+                  </Text>
+                  <Text
+                    style={{
+                      color: theme.colors.textSecondary,
+                      ...theme.typography.bodySmall,
+                    }}
+                  >
+                    {detail.fulfillment === "DELIVERY" ? "Entrega" : "Retirada"}{" "}
+                    · realizado {orderWhen(detail.placedAt)}
+                  </Text>
+                </View>
                 {detail.estimate ? (
                   <View
                     style={{
                       flexDirection: "row",
                       gap: theme.spacing(2),
                       alignItems: "center",
+                      padding: theme.spacing(3),
+                      borderRadius: theme.radius.medium,
+                      backgroundColor: theme.colors.orangeSoft,
                     }}
                   >
                     <Icon
@@ -567,21 +589,23 @@ export function OrdersScreen({
                 ) : null}
                 <ProgressSteps
                   steps={progress}
+                  fulfillment={detail.fulfillment}
                   summary={progressSummary(detail.status, detail.fulfillment)}
                 />
-                {!terminal(detail.status) ? (
-                  <Text
-                    style={{
-                      color: theme.colors.textSecondary,
-                      ...theme.typography.bodySmall,
-                    }}
-                  >
-                    A previsão é aproximada, não é rastreamento em tempo real.
-                    Esta tela se atualiza sozinha a cada 20 segundos.
-                  </Text>
-                ) : null}
+                <TrackingArt fulfillment={detail.fulfillment} />
+                <Text
+                  style={{
+                    color: theme.colors.textSecondary,
+                    ...theme.typography.bodySmall,
+                  }}
+                >
+                  A previsão é aproximada, não é rastreamento em tempo real.
+                  Esta tela se atualiza sozinha a cada 20 segundos.
+                </Text>
               </Card>
-            ) : null}
+            ) : (
+              <StatusHero order={detail} />
+            )}
 
             {detail.contactPhone || !terminal(detail.status) ? (
               <Section
@@ -746,57 +770,62 @@ export function OrdersScreen({
               ) : null}
             </Card>
 
-            <View
-              style={{
-                backgroundColor: theme.colors.orangeSoft,
-                borderRadius: theme.radius.xl,
-                padding: theme.spacing(4),
-                gap: theme.spacing(4),
-              }}
-            >
-              <View style={{ flexDirection: "row", gap: theme.spacing(3) }}>
-                <Icon
-                  name="refresh"
-                  size={30}
-                  color={theme.colors.accentText}
-                />
-                <View style={{ flex: 1, gap: 4 }}>
-                  <Text
-                    accessibilityRole="header"
-                    style={{ color: theme.colors.text, ...theme.typography.h3 }}
-                  >
-                    Pedir novamente
-                  </Text>
-                  <Body small muted>
-                    Coloca os itens deste pedido na sacola, com os preços de
-                    agora do cardápio.
-                  </Body>
+            {tracking ? null : (
+              <View
+                style={{
+                  backgroundColor: theme.colors.orangeSoft,
+                  borderRadius: theme.radius.xl,
+                  padding: theme.spacing(4),
+                  gap: theme.spacing(4),
+                }}
+              >
+                <View style={{ flexDirection: "row", gap: theme.spacing(3) }}>
+                  <Icon
+                    name="refresh"
+                    size={30}
+                    color={theme.colors.accentText}
+                  />
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <Text
+                      accessibilityRole="header"
+                      style={{
+                        color: theme.colors.text,
+                        ...theme.typography.h3,
+                      }}
+                    >
+                      Pedir novamente
+                    </Text>
+                    <Body small muted>
+                      Coloca os itens deste pedido na sacola, com os preços de
+                      agora do cardápio.
+                    </Body>
+                  </View>
                 </View>
+                {storeUnavailable ? (
+                  <InlineMessage tone="info">
+                    A pizzaria está indisponível agora. Peça de novo quando ela
+                    voltar a atender.
+                  </InlineMessage>
+                ) : menuStale ? (
+                  <InlineMessage tone="warning">
+                    Atualize o cardápio antes de pedir de novo: preços e
+                    disponibilidade podem ter mudado.
+                  </InlineMessage>
+                ) : state.pending ? (
+                  <InlineMessage tone="warning">
+                    Recupere o pedido pendente na sacola antes de montar outro.
+                  </InlineMessage>
+                ) : null}
+                <Button
+                  label="Pedir novamente"
+                  icon="bag-handle-outline"
+                  variant="primary"
+                  disabled={reorderBlocked}
+                  onPress={reorder}
+                  style={pill}
+                />
               </View>
-              {storeUnavailable ? (
-                <InlineMessage tone="info">
-                  A pizzaria está indisponível agora. Peça de novo quando ela
-                  voltar a atender.
-                </InlineMessage>
-              ) : menuStale ? (
-                <InlineMessage tone="warning">
-                  Atualize o cardápio antes de pedir de novo: preços e
-                  disponibilidade podem ter mudado.
-                </InlineMessage>
-              ) : state.pending ? (
-                <InlineMessage tone="warning">
-                  Recupere o pedido pendente na sacola antes de montar outro.
-                </InlineMessage>
-              ) : null}
-              <Button
-                label="Pedir novamente"
-                icon="bag-handle-outline"
-                variant="primary"
-                disabled={reorderBlocked}
-                onPress={reorder}
-                style={pill}
-              />
-            </View>
+            )}
 
             {detail.status === "PLACED" ? (
               <Button
@@ -858,7 +887,11 @@ export function OrdersScreen({
   return (
     <Screen refreshControl={refreshControl} header={header}>
       <PageTitle />
-      <FilterChips value={filter} onChange={setFilter} />
+      <FilterChips
+        options={ORDER_FILTERS}
+        value={filter}
+        onChange={setFilter}
+      />
       {state.error ? (
         <InlineMessage tone="error">{state.error}</InlineMessage>
       ) : null}
@@ -927,121 +960,6 @@ export function OrdersScreen({
 
 const pill = { borderRadius: 999 };
 
-/** The store's mark and the bag, on top of the orders tab. */
-function OrdersTopBar({
-  storeName,
-  logoUrl,
-  cartCount,
-  onOpenCart,
-}: {
-  storeName: string;
-  logoUrl: string | null;
-  cartCount: number;
-  onOpenCart: () => void;
-}) {
-  const theme = useTheme();
-  const insets = useSafeAreaInsets();
-  const { lead, tail } = brandNameParts(storeName);
-  const badge = badgeText(cartCount);
-  return (
-    <View
-      style={{
-        paddingTop: insets.top + theme.spacing(1),
-        paddingLeft: theme.spacing(2) + insets.left,
-        paddingRight: theme.spacing(2) + insets.right,
-        minHeight: insets.top + 56,
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: theme.colors.background,
-      }}
-    >
-      <View style={{ width: 48 }} />
-      <View
-        style={{
-          flex: 1,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: theme.spacing(2),
-        }}
-      >
-        {logoUrl ? (
-          <Image
-            source={{ uri: logoUrl }}
-            accessible={false}
-            resizeMode="contain"
-            style={{ width: 34, height: 34, borderRadius: 8 }}
-          />
-        ) : (
-          <Icon
-            name="pizza-outline"
-            size={28}
-            color={theme.colors.accentText}
-          />
-        )}
-        <Text
-          accessibilityRole="header"
-          accessibilityLabel={storeName}
-          numberOfLines={1}
-          maxFontSizeMultiplier={1.4}
-          style={{
-            flexShrink: 1,
-            color: theme.colors.text,
-            fontSize: 22,
-            lineHeight: 28,
-            fontWeight: "800",
-            letterSpacing: -0.3,
-          }}
-        >
-          {lead}
-          {tail ? (
-            <Text style={{ color: theme.colors.accentText }}>{tail}</Text>
-          ) : null}
-        </Text>
-      </View>
-      <View style={{ width: 48, alignItems: "flex-end" }}>
-        <IconButton
-          name="bag-handle-outline"
-          size={26}
-          accessibilityLabel={
-            cartCount
-              ? `Sacola, ${plural(cartCount, "item", "itens")}`
-              : "Sacola"
-          }
-          onPress={onOpenCart}
-        />
-        {badge ? (
-          <View
-            pointerEvents="none"
-            style={{
-              position: "absolute",
-              top: 2,
-              right: 0,
-              minWidth: 20,
-              height: 20,
-              borderRadius: 10,
-              paddingHorizontal: 5,
-              backgroundColor: theme.colors.primary,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Text
-              style={{
-                color: theme.colors.onPrimary,
-                fontSize: 12,
-                fontWeight: "800",
-              }}
-            >
-              {badge}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 function PageTitle() {
   const theme = useTheme();
   return (
@@ -1061,68 +979,6 @@ function PageTitle() {
         Acompanhe seu histórico e peça novamente seus favoritos.
       </Body>
     </View>
-  );
-}
-
-/** One pill per group of statuses; the selected one is filled and says so to VoiceOver. */
-function FilterChips({
-  value,
-  onChange,
-}: {
-  value: OrderFilter;
-  onChange: (next: OrderFilter) => void;
-}) {
-  const theme = useTheme();
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ gap: theme.spacing(2) }}
-      style={{ marginHorizontal: -PAGE_GUTTER }}
-      contentInset={{ left: 0, right: 0 }}
-    >
-      <View style={{ width: PAGE_GUTTER - theme.spacing(2) }} />
-      {ORDER_FILTERS.map((option) => {
-        const selected = option.value === value;
-        return (
-          <Pressable
-            key={option.value}
-            accessibilityRole="button"
-            accessibilityLabel={`Filtrar: ${option.label}`}
-            accessibilityState={{ selected }}
-            onPress={() => onChange(option.value)}
-            style={({ pressed }) => ({
-              minHeight: 44,
-              paddingHorizontal: theme.spacing(4),
-              borderRadius: theme.radius.pill,
-              justifyContent: "center",
-              borderWidth: 1,
-              borderColor: selected
-                ? theme.colors.primary
-                : theme.colors.border,
-              backgroundColor: selected
-                ? pressed
-                  ? theme.colors.primaryPressed
-                  : theme.colors.primary
-                : pressed
-                  ? theme.colors.primaryLight
-                  : theme.colors.surface,
-            })}
-          >
-            <Text
-              style={{
-                color: selected ? theme.colors.onPrimary : theme.colors.text,
-                ...theme.typography.bodySmall,
-                fontWeight: selected ? "700" : "500",
-              }}
-            >
-              {option.label}
-            </Text>
-          </Pressable>
-        );
-      })}
-      <View style={{ width: PAGE_GUTTER - theme.spacing(2) }} />
-    </ScrollView>
   );
 }
 
@@ -1472,12 +1328,17 @@ function OrderCard({
   );
 }
 
-/** The order's steps, top to bottom. Each one says in words whether it is done, current or next. */
+/**
+ * The order's steps, top to bottom: done ones carry a check, the current one a ring and a line
+ * saying what happens now, the next ones are gray. Each one also says its state in words.
+ */
 function ProgressSteps({
   steps,
+  fulfillment,
   summary,
 }: {
   steps: ProgressStep[];
+  fulfillment: CustomerOrderDetail["fulfillment"];
   summary: string;
 }) {
   const theme = useTheme();
@@ -1486,43 +1347,50 @@ function ProgressSteps({
       accessible
       accessibilityRole="progressbar"
       accessibilityLabel={summary}
-      style={{ gap: 0, paddingTop: theme.spacing(1) }}
+      style={{ paddingTop: theme.spacing(1) }}
     >
       {steps.map((step, index) => {
         const last = index === steps.length - 1;
         const done = step.state === "done";
         const current = step.state === "current";
+        const description = current
+          ? stepDescription(step.status, fulfillment)
+          : null;
         return (
           <View
             key={step.status}
             style={{ flexDirection: "row", gap: theme.spacing(3) }}
           >
-            <View style={{ alignItems: "center", width: 24 }}>
+            <View style={{ alignItems: "center", width: 28 }}>
               <View
                 style={{
-                  width: 24,
-                  height: 24,
-                  borderRadius: 12,
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
                   alignItems: "center",
                   justifyContent: "center",
                   backgroundColor: done
-                    ? theme.colors.success
-                    : current
-                      ? theme.colors.primary
-                      : theme.colors.surface,
-                  borderWidth: done || current ? 0 : 2,
-                  borderColor: theme.colors.inputBorder,
+                    ? theme.colors.primary
+                    : theme.colors.surface,
+                  borderWidth: done ? 0 : current ? 3 : 2,
+                  borderColor: current
+                    ? theme.colors.primary
+                    : theme.colors.inputBorder,
                 }}
               >
                 {done ? (
-                  <Icon name="checkmark" size={16} color="#FFFFFF" />
+                  <Icon
+                    name="checkmark"
+                    size={18}
+                    color={theme.colors.onPrimary}
+                  />
                 ) : current ? (
                   <View
                     style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: 4,
-                      backgroundColor: theme.colors.onPrimary,
+                      width: 12,
+                      height: 12,
+                      borderRadius: 6,
+                      backgroundColor: theme.colors.primary,
                     }}
                   />
                 ) : null}
@@ -1532,16 +1400,21 @@ function ProgressSteps({
                   style={{
                     width: 2,
                     flex: 1,
-                    minHeight: 16,
+                    minHeight: 20,
                     backgroundColor: done
-                      ? theme.colors.success
+                      ? theme.colors.primary
                       : theme.colors.border,
                   }}
                 />
               ) : null}
             </View>
             <View
-              style={{ flex: 1, paddingBottom: last ? 0 : theme.spacing(3) }}
+              style={{
+                flex: 1,
+                paddingTop: 3,
+                paddingBottom: last ? 0 : theme.spacing(4),
+                gap: 2,
+              }}
             >
               <Text
                 style={{
@@ -1550,26 +1423,119 @@ function ProgressSteps({
                       ? theme.colors.textSecondary
                       : theme.colors.text,
                   ...theme.typography.body,
-                  fontWeight: current ? "700" : "400",
+                  fontWeight: done || current ? "700" : "400",
                 }}
               >
-                {step.label}
+                {trackingLabel(step)}
               </Text>
-              {current ? (
+              {description ? (
                 <Text
                   style={{
-                    color: theme.colors.accentText,
-                    ...theme.typography.caption,
-                    fontWeight: "700",
+                    color: theme.colors.textSecondary,
+                    ...theme.typography.bodySmall,
                   }}
                 >
-                  AGORA
+                  {description}
                 </Text>
               ) : null}
             </View>
           </View>
         );
       })}
+    </View>
+  );
+}
+
+/** The orange bar of the tracking screen. */
+function TrackingHeader({
+  onBack,
+  backTo,
+}: {
+  onBack: () => void;
+  backTo: string;
+}) {
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={{
+        paddingTop: insets.top + theme.spacing(2),
+        paddingBottom: theme.spacing(4),
+        paddingLeft: theme.spacing(2) + insets.left,
+        paddingRight: PAGE_GUTTER + insets.right,
+        backgroundColor: theme.colors.primary,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: theme.spacing(1),
+      }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Voltar para ${backTo}`}
+        onPress={onBack}
+        hitSlop={4}
+        style={({ pressed }) => ({
+          width: 44,
+          height: 44,
+          alignItems: "center",
+          justifyContent: "center",
+          opacity: pressed ? 0.6 : 1,
+        })}
+      >
+        <Icon name="arrow-back" size={26} color={theme.colors.onPrimary} />
+      </Pressable>
+      <Text
+        accessibilityRole="header"
+        style={{
+          flex: 1,
+          color: theme.colors.onPrimary,
+          ...theme.typography.h3,
+          fontWeight: "800",
+        }}
+      >
+        Acompanhar pedido
+      </Text>
+    </View>
+  );
+}
+
+/** A soft hill with a delivery bike or the store, under the steps. Decorative. */
+function TrackingArt({
+  fulfillment,
+}: {
+  fulfillment: CustomerOrderDetail["fulfillment"];
+}) {
+  const theme = useTheme();
+  return (
+    <View
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      style={{
+        height: 120,
+        borderRadius: theme.radius.large,
+        overflow: "hidden",
+        backgroundColor: theme.colors.surfaceSecondary,
+        alignItems: "center",
+        justifyContent: "flex-end",
+      }}
+    >
+      <View
+        style={{
+          position: "absolute",
+          bottom: -140,
+          width: 420,
+          height: 200,
+          borderRadius: 210,
+          backgroundColor: theme.colors.primaryLight,
+        }}
+      />
+      <View style={{ marginBottom: theme.spacing(3) }}>
+        <Icon
+          name={fulfillment === "DELIVERY" ? "bicycle" : "storefront-outline"}
+          size={72}
+          color={theme.colors.primary}
+        />
+      </View>
     </View>
   );
 }

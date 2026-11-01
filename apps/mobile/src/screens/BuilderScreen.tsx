@@ -1,5 +1,20 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
-import { Alert, Image, Pressable, Text, View } from "react-native";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type ComponentRef,
+  type ReactNode,
+} from "react";
+import {
+  Alert,
+  Image,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   PIZZA_QUANTITY_MAX,
   PIZZA_QUANTITY_MIN,
@@ -29,11 +44,17 @@ import {
   toggleRemoval,
 } from "../builder/builder.ts";
 import {
+  type BuilderStep,
+  STEP_LABELS,
   builderChanged,
+  builderSteps,
+  canOpenStep,
   editedSide,
   footerState,
   sideAfterFlavor,
+  stepReady,
 } from "../builder/flow.ts";
+import { PAGE_GUTTER } from "../components/layout.ts";
 import { formatCents } from "../menu/menu.ts";
 import { Choice } from "../components/Choice.tsx";
 import { InlineMessage } from "../components/Feedback.tsx";
@@ -83,6 +104,18 @@ export function BuilderScreen({
     return initial.current;
   });
   const [active, setActive] = useState<HalfSide>("LEFT");
+  const [step, setStep] = useState<BuilderStep>("size");
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  const window = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const tileWidth = Math.floor(
+    (window.width -
+      2 * PAGE_GUTTER -
+      insets.left -
+      insets.right -
+      2 * theme.spacing(3)) /
+      3,
+  );
   /** The last size tap that was blocked or waits for confirmation; any other choice clears it. */
   const [sizeChange, setSizeChange] = useState<{
     sizeId: string;
@@ -172,9 +205,43 @@ export function BuilderScreen({
     }
   };
 
+  const steps = builderSteps(crusts.length > 0);
+  const stepIndex = Math.max(0, steps.indexOf(step));
+  const current = steps[stepIndex]!;
+  const last = stepIndex === steps.length - 1;
+  const missing = last ? null : stepReady(current, state);
+  const goTo = (next: BuilderStep) => {
+    setStep(next);
+    scroll.current?.scrollTo({ y: 0, animated: false });
+    announce(
+      `Etapa ${steps.indexOf(next) + 1} de ${steps.length}: ${STEP_LABELS[next]}`,
+    );
+  };
+  const priceText =
+    footer.totalCents === null ? null : formatCents(footer.totalCents);
+  const halfPicker = halves ? (
+    <HalfPicker
+      active={side}
+      names={{
+        LEFT: flavorOf(state.flavors.LEFT)?.name ?? null,
+        RIGHT: flavorOf(state.flavors.RIGHT)?.name ?? null,
+      }}
+      onPick={setActive}
+    />
+  ) : null;
+
   return (
     <Screen
-      header={header}
+      scrollRef={scroll}
+      header={
+        <ScreenHeader
+          title="Monte sua pizza"
+          onBack={stepIndex > 0 ? () => goTo(steps[stepIndex - 1]!) : leave}
+          backTo={
+            stepIndex > 0 ? STEP_LABELS[steps[stepIndex - 1]!] : "Cardápio"
+          }
+        />
+      }
       footer={
         <StickyFooter>
           {addError ? (
@@ -182,7 +249,7 @@ export function BuilderScreen({
               {addError}
             </Body>
           ) : null}
-          {!footer.ready && footer.reason ? (
+          {(last ? !footer.ready && footer.reason : missing) ? (
             <View
               style={{ flexDirection: "row", gap: 6, alignItems: "center" }}
             >
@@ -201,51 +268,44 @@ export function BuilderScreen({
                   fontWeight: "600",
                 }}
               >
-                {footer.reason}
+                {last ? footer.reason : missing}
               </Text>
             </View>
           ) : null}
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: theme.spacing(3),
-            }}
-          >
-            <View style={{ flexShrink: 1 }}>
-              <Body small muted>
-                Total estimado
-              </Body>
-              <Text
-                style={{
-                  color: theme.colors.text,
-                  fontSize: theme.typography.price.fontSize,
-                  lineHeight: theme.typography.price.lineHeight,
-                  fontWeight: "800",
-                }}
-              >
-                {footer.totalCents === null
-                  ? "—"
-                  : formatCents(footer.totalCents)}
-              </Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Button
-                label="Adicionar à sacola"
-                icon="bag-handle-outline"
-                variant="primary"
-                disabled={!footer.ready}
-                accessibilityHint={footer.reason ?? undefined}
-                onPress={() =>
-                  result.kind === "priced" && onAdd(result.configuration)
-                }
-              />
-            </View>
-          </View>
+          {last ? (
+            <Button
+              label={`Adicionar à sacola${priceText ? ` · ${priceText}` : ""}`}
+              icon="bag-handle-outline"
+              variant="primary"
+              disabled={!footer.ready}
+              accessibilityHint={footer.reason ?? undefined}
+              onPress={() =>
+                result.kind === "priced" && onAdd(result.configuration)
+              }
+              style={{ borderRadius: 999 }}
+            />
+          ) : (
+            <Button
+              label={`Continuar${priceText ? ` · ${priceText}` : ""}`}
+              icon="arrow-forward"
+              variant="primary"
+              disabled={!!missing}
+              accessibilityLabel={`Continuar para ${STEP_LABELS[steps[stepIndex + 1]!]}${priceText ? `, total estimado ${priceText}` : ""}`}
+              onPress={() => goTo(steps[stepIndex + 1]!)}
+              style={{ borderRadius: 999 }}
+            />
+          )}
         </StickyFooter>
       }
       gap={theme.spacing(5)}
     >
+      <Stepper
+        steps={steps}
+        current={stepIndex}
+        canOpen={(target) => canOpenStep(steps, target, state)}
+        onOpen={goTo}
+      />
+
       {menuStale ? (
         <InlineMessage tone="warning">{MENU_STALE_NOTICE}</InlineMessage>
       ) : null}
@@ -253,8 +313,8 @@ export function BuilderScreen({
       <View style={{ alignItems: "center", gap: theme.spacing(3) }}>
         <PizzaVisual
           mode={shown.mode}
-          size={220}
-          activeSide={halves ? side : null}
+          size={current === "flavors" || current === "size" ? 240 : 180}
+          activeSide={halves && current !== "size" ? side : null}
           description={described.map((half) => half.text).join(" ")}
           leftImageUrl={flavorImage(shown.flavors.LEFT)}
           rightImageUrl={flavorImage(shown.flavors.RIGHT)}
@@ -271,110 +331,115 @@ export function BuilderScreen({
         </Text>
       </View>
 
-      <Step number={1} title="Tamanho">
-        <View accessibilityRole="radiogroup" style={row}>
-          {menu.sizes.map((entry) => (
-            <Choice
-              key={entry.id}
-              kind="radio"
-              label={entry.name}
-              detail={`${entry.slices} fatias${entry.maxFlavors === 1 ? " · 1 sabor" : ""}`}
-              selected={entry.id === state.sizeId}
-              onPress={() => pickSize(entry.id)}
-            />
-          ))}
-        </View>
-        {sizeChange ? (
-          <InlineMessage
-            tone="warning"
-            action={
-              <View style={row}>
-                {sizeChange.change.kind === "confirm" ? (
+      {current === "size" ? (
+        <Step title="Escolha o tamanho">
+          <View accessibilityRole="radiogroup" style={row}>
+            {menu.sizes.map((entry) => (
+              <Choice
+                key={entry.id}
+                kind="radio"
+                label={entry.name}
+                detail={`${entry.slices} fatias${entry.maxFlavors === 1 ? " · 1 sabor" : ""}`}
+                selected={entry.id === state.sizeId}
+                onPress={() => pickSize(entry.id)}
+              />
+            ))}
+          </View>
+          {sizeChange ? (
+            <InlineMessage
+              tone="warning"
+              action={
+                <View style={row}>
+                  {sizeChange.change.kind === "confirm" ? (
+                    <Button
+                      label="Trocar e remover"
+                      variant="primary"
+                      size="small"
+                      onPress={() =>
+                        sizeChange.change.kind === "confirm" &&
+                        update(sizeChange.change.state)
+                      }
+                    />
+                  ) : null}
                   <Button
-                    label="Trocar e remover"
-                    variant="primary"
+                    label={`Manter ${size?.name ?? "o tamanho atual"}`}
                     size="small"
-                    onPress={() =>
-                      sizeChange.change.kind === "confirm" &&
-                      update(sizeChange.change.state)
-                    }
+                    onPress={() => setSizeChange(null)}
                   />
-                ) : null}
-                <Button
-                  label={`Manter ${size?.name ?? "o tamanho atual"}`}
-                  size="small"
-                  onPress={() => setSizeChange(null)}
-                />
-              </View>
+                </View>
+              }
+            >
+              {sizeChange.change.message}
+            </InlineMessage>
+          ) : null}
+        </Step>
+      ) : null}
+
+      {current === "flavors" ? (
+        <>
+          <SegmentedControl
+            options={[
+              { value: "WHOLE", label: "Inteira" },
+              { value: "HALVES", label: "Meio a meio" },
+            ]}
+            value={state.mode}
+            disabled={size?.maxFlavors === 1 && !halves}
+            onChange={(mode) => {
+              update(setMode(state, mode));
+              setActive(mode === "HALVES" ? "RIGHT" : "LEFT");
+              if (mode === "HALVES")
+                announce("Meio a meio. Escolha o sabor da metade direita.");
+            }}
+          />
+          {size?.maxFlavors === 1 ? (
+            <Body small muted>
+              O tamanho {size.name} é de um sabor só.
+            </Body>
+          ) : null}
+          {halfPicker}
+          <Step
+            title={
+              halves ? `Escolha o sabor da ${sideName}` : "Escolha o sabor"
             }
           >
-            {sizeChange.change.message}
-          </InlineMessage>
-        ) : null}
-      </Step>
+            <View
+              accessibilityRole="radiogroup"
+              style={{
+                flexDirection: "row",
+                flexWrap: "wrap",
+                gap: theme.spacing(3),
+              }}
+            >
+              {flavorsAt.map((flavor) => {
+                const price = formatCents(
+                  index.flavorPrice(flavor.id, state.sizeId)!,
+                );
+                const selected = state.flavors[side] === flavor.id;
+                const other =
+                  halves &&
+                  state.flavors[side === "LEFT" ? "RIGHT" : "LEFT"] ===
+                    flavor.id;
+                return (
+                  <FlavorTile
+                    key={flavor.id}
+                    width={tileWidth}
+                    name={flavor.name}
+                    price={price}
+                    imageUrl={flavorImage(flavor.id)}
+                    selected={selected}
+                    note={other ? "Na outra metade" : null}
+                    accessibilityLabel={`${flavor.name}${halves ? ` na ${sideName}` : ""}, ${price}${flavor.description ? `. ${flavor.description}` : ""}`}
+                    onPress={() => pickFlavor(flavor.id)}
+                  />
+                );
+              })}
+            </View>
+          </Step>
+        </>
+      ) : null}
 
-      <Step number={2} title="Sabores">
-        <SegmentedControl
-          options={[
-            { value: "WHOLE", label: "Um sabor" },
-            { value: "HALVES", label: "Meio a meio" },
-          ]}
-          value={state.mode}
-          disabled={size?.maxFlavors === 1 && !halves}
-          onChange={(mode) => {
-            update(setMode(state, mode));
-            setActive(mode === "HALVES" ? "RIGHT" : "LEFT");
-            if (mode === "HALVES")
-              announce("Meio a meio. Escolha o sabor da metade direita.");
-          }}
-        />
-        {size?.maxFlavors === 1 ? (
-          <Body small muted>
-            O tamanho {size.name} é de um sabor só.
-          </Body>
-        ) : null}
-        {halves ? (
-          <HalfPicker
-            active={side}
-            names={{
-              LEFT: flavorOf(state.flavors.LEFT)?.name ?? null,
-              RIGHT: flavorOf(state.flavors.RIGHT)?.name ?? null,
-            }}
-            onPick={setActive}
-          />
-        ) : null}
-        <View accessibilityRole="radiogroup" style={{ gap: theme.spacing(2) }}>
-          {flavorsAt.map((flavor) => {
-            const price = formatCents(
-              index.flavorPrice(flavor.id, state.sizeId)!,
-            );
-            const selected = state.flavors[side] === flavor.id;
-            const other =
-              halves &&
-              state.flavors[side === "LEFT" ? "RIGHT" : "LEFT"] === flavor.id;
-            return (
-              <FlavorRow
-                key={flavor.id}
-                name={flavor.name}
-                description={flavor.description}
-                price={price}
-                imageUrl={flavorImage(flavor.id)}
-                selected={selected}
-                note={
-                  other
-                    ? `Na ${SIDE_NAMES[side === "LEFT" ? "RIGHT" : "LEFT"].toLowerCase()}`
-                    : null
-                }
-                accessibilityLabel={`${flavor.name}${halves ? ` na ${sideName}` : ""}, ${price}`}
-                onPress={() => pickFlavor(flavor.id)}
-              />
-            );
-          })}
-        </View>
-      </Step>
-
-      {crusts.length ? (
-        <Step number={3} title="Borda" subtitle="Vale para a pizza inteira.">
+      {current === "crust" ? (
+        <Step title="Escolha a borda" subtitle="Vale para a pizza inteira.">
           <View accessibilityRole="radiogroup" style={row}>
             <Choice
               kind="radio"
@@ -396,136 +461,134 @@ export function BuilderScreen({
         </Step>
       ) : null}
 
-      {(extras.length && menu.pricingPolicy?.maxExtrasPerHalf) ||
-      removable.length ? (
-        <Step
-          number={crusts.length ? 4 : 3}
-          title={halves ? `Personalizar a ${sideName}` : "Personalizar"}
-          subtitle={
-            halves
-              ? "Um adicional nas duas metades é cobrado como pizza inteira."
-              : undefined
-          }
-        >
-          {halves ? (
-            <HalfPicker
-              active={side}
-              names={{
-                LEFT: flavorOf(state.flavors.LEFT)?.name ?? null,
-                RIGHT: flavorOf(state.flavors.RIGHT)?.name ?? null,
-              }}
-              onPick={setActive}
-            />
-          ) : null}
-          {extras.length && menu.pricingPolicy?.maxExtrasPerHalf ? (
-            <View style={{ gap: theme.spacing(2) }}>
-              <Text style={subheading(theme)}>
-                Adicionais · até {menu.pricingPolicy.maxExtrasPerHalf} por{" "}
-                {halves ? "metade" : "pizza"}
-              </Text>
-              <View style={row}>
-                {extras.map((extra) => {
-                  const price = index.extraPrice(extra.id, state.sizeId)!;
-                  const amount = `+ ${formatCents(halves ? price.halfPriceCents : price.wholePriceCents)}`;
-                  const selected = state.extras[side].includes(extra.id);
-                  return (
-                    <Choice
-                      key={extra.id}
-                      kind="checkbox"
-                      label={extra.name}
-                      detail={amount}
-                      accessibilityLabel={`${extra.name} na ${sideName}, ${amount}`}
-                      selected={selected}
-                      disabled={
-                        extraLimitReached(menu, state, side) && !selected
-                      }
-                      onPress={() => update(toggleExtra(state, side, extra.id))}
-                    />
-                  );
-                })}
-              </View>
-            </View>
-          ) : null}
-          {removable.length ? (
-            <View style={{ gap: theme.spacing(2) }}>
-              <Text style={subheading(theme)}>Retirar ingredientes</Text>
-              <View style={row}>
-                {removable.map((ingredient) => (
-                  <Choice
-                    key={ingredient.id}
-                    kind="checkbox"
-                    label={`Sem ${ingredient.name.toLowerCase()}`}
-                    accessibilityLabel={`Sem ${ingredient.name} na ${sideName}`}
-                    selected={state.removals[side].includes(ingredient.id)}
-                    onPress={() =>
-                      update(toggleRemoval(state, side, ingredient.id))
-                    }
-                  />
-                ))}
-              </View>
-            </View>
-          ) : null}
-        </Step>
-      ) : null}
-
-      <Step title="Quantidade">
-        <QuantityStepper
-          value={state.quantity}
-          min={PIZZA_QUANTITY_MIN}
-          max={PIZZA_QUANTITY_MAX}
-          itemName="pizzas"
-          onChange={(next) => update(setQuantity(state, next))}
-        />
-      </Step>
-
-      <View
-        style={[
-          {
-            backgroundColor: theme.colors.surface,
-            borderRadius: theme.radius.large,
-            padding: theme.spacing(4),
-            gap: theme.spacing(2),
-          },
-          theme.shadow,
-        ]}
-      >
-        <Heading level="h3">Resumo</Heading>
-        {described.map((half) => (
-          <View key={half.title} accessible accessibilityLabel={half.text}>
-            <Text style={subheading(theme)}>{half.title}</Text>
-            <Body>
-              {half.flavor}
-              {half.details.length ? ` · ${half.details.join(" · ")}` : ""}
-            </Body>
-          </View>
-        ))}
-        {result.kind === "priced" ? (
-          <View style={{ gap: theme.spacing(1), marginTop: theme.spacing(2) }}>
-            {priceLines(builder, result).map((line) => (
-              <View
-                key={line.label}
-                style={{ flexDirection: "row", gap: theme.spacing(3) }}
-              >
-                <View style={{ flex: 1 }}>
-                  <Body small>{line.label}</Body>
+      {current === "extras" ? (
+        <>
+          {(extras.length && menu.pricingPolicy?.maxExtrasPerHalf) ||
+          removable.length ? (
+            <Step
+              title={halves ? `Personalizar a ${sideName}` : "Personalizar"}
+              subtitle={
+                halves
+                  ? "Um adicional nas duas metades é cobrado como pizza inteira."
+                  : undefined
+              }
+            >
+              {halfPicker}
+              {extras.length && menu.pricingPolicy?.maxExtrasPerHalf ? (
+                <View style={{ gap: theme.spacing(2) }}>
+                  <Text style={subheading(theme)}>
+                    Adicionais · até {menu.pricingPolicy.maxExtrasPerHalf} por{" "}
+                    {halves ? "metade" : "pizza"}
+                  </Text>
+                  <View style={row}>
+                    {extras.map((extra) => {
+                      const price = index.extraPrice(extra.id, state.sizeId)!;
+                      const amount = `+ ${formatCents(halves ? price.halfPriceCents : price.wholePriceCents)}`;
+                      const selected = state.extras[side].includes(extra.id);
+                      return (
+                        <Choice
+                          key={extra.id}
+                          kind="checkbox"
+                          label={extra.name}
+                          detail={amount}
+                          accessibilityLabel={`${extra.name} na ${sideName}, ${amount}`}
+                          selected={selected}
+                          disabled={
+                            extraLimitReached(menu, state, side) && !selected
+                          }
+                          onPress={() =>
+                            update(toggleExtra(state, side, extra.id))
+                          }
+                        />
+                      );
+                    })}
+                  </View>
                 </View>
-                <Body small>{line.amount}</Body>
+              ) : null}
+              {removable.length ? (
+                <View style={{ gap: theme.spacing(2) }}>
+                  <Text style={subheading(theme)}>Retirar ingredientes</Text>
+                  <View style={row}>
+                    {removable.map((ingredient) => (
+                      <Choice
+                        key={ingredient.id}
+                        kind="checkbox"
+                        label={`Sem ${ingredient.name.toLowerCase()}`}
+                        accessibilityLabel={`Sem ${ingredient.name} na ${sideName}`}
+                        selected={state.removals[side].includes(ingredient.id)}
+                        onPress={() =>
+                          update(toggleRemoval(state, side, ingredient.id))
+                        }
+                      />
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+            </Step>
+          ) : null}
+
+          <Step title="Quantidade">
+            <QuantityStepper
+              value={state.quantity}
+              min={PIZZA_QUANTITY_MIN}
+              max={PIZZA_QUANTITY_MAX}
+              itemName="pizzas"
+              onChange={(next) => update(setQuantity(state, next))}
+            />
+          </Step>
+
+          <View
+            style={[
+              {
+                backgroundColor: theme.colors.surface,
+                borderRadius: theme.radius.xl,
+                padding: theme.spacing(4),
+                gap: theme.spacing(2),
+              },
+              theme.shadow,
+            ]}
+          >
+            <Heading level="h3">Resumo</Heading>
+            {described.map((half) => (
+              <View key={half.title} accessible accessibilityLabel={half.text}>
+                <Text style={subheading(theme)}>{half.title}</Text>
+                <Body>
+                  {half.flavor}
+                  {half.details.length ? ` · ${half.details.join(" · ")}` : ""}
+                </Body>
               </View>
             ))}
-            <Body small muted>
-              {menuStale
-                ? "Calculado com o último cardápio carregado, que pode estar desatualizado. A pizzaria confirma o valor ao receber o pedido."
-                : "Valor estimado. A pizzaria confirma ao receber o pedido."}
-            </Body>
+            {result.kind === "priced" ? (
+              <View
+                style={{ gap: theme.spacing(1), marginTop: theme.spacing(2) }}
+              >
+                {priceLines(builder, result).map((line) => (
+                  <View
+                    key={line.label}
+                    style={{ flexDirection: "row", gap: theme.spacing(3) }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Body small>{line.label}</Body>
+                    </View>
+                    <Body small>{line.amount}</Body>
+                  </View>
+                ))}
+                <Body small muted>
+                  {menuStale
+                    ? "Calculado com o último cardápio carregado, que pode estar desatualizado. A pizzaria confirma o valor ao receber o pedido."
+                    : "Valor estimado. A pizzaria confirma ao receber o pedido."}
+                </Body>
+              </View>
+            ) : result.kind === "invalid" ? (
+              result.messages.map((message) => (
+                <Body key={message} alert small>
+                  {message}
+                </Body>
+              ))
+            ) : null}
           </View>
-        ) : result.kind === "invalid" ? (
-          result.messages.map((message) => (
-            <Body key={message} alert small>
-              {message}
-            </Body>
-          ))
-        ) : null}
-      </View>
+        </>
+      ) : null}
     </Screen>
   );
 }
@@ -593,7 +656,7 @@ function HalfPicker({
   return (
     <View
       accessibilityRole="radiogroup"
-      style={{ flexDirection: "row", gap: theme.spacing(2) }}
+      style={{ flexDirection: "row", gap: theme.spacing(3) }}
     >
       {(["LEFT", "RIGHT"] as const).map((side) => {
         const selected = side === active;
@@ -607,41 +670,53 @@ function HalfPicker({
             onPress={() => onPick(side)}
             style={{
               flex: 1,
-              minHeight: 64,
-              padding: theme.spacing(3),
-              borderRadius: theme.radius.medium,
-              borderWidth: 2,
+              minHeight: 52,
+              paddingHorizontal: theme.spacing(4),
+              paddingVertical: theme.spacing(2),
+              borderRadius: theme.radius.pill,
+              borderWidth: selected ? 2 : 1,
               borderColor: selected
                 ? theme.colors.primary
                 : theme.colors.border,
               backgroundColor: selected
                 ? theme.colors.primaryLight
                 : theme.colors.surface,
-              gap: 2,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: theme.spacing(2),
             }}
           >
-            <Text
-              style={{
-                color: theme.colors.accentText,
-                fontSize: theme.typography.caption.fontSize,
-                lineHeight: theme.typography.caption.lineHeight,
-                fontWeight: "800",
-              }}
-            >
-              {selected ? "✎ EDITANDO · " : ""}
-              {SIDE_NAMES[side].toUpperCase()}
-            </Text>
-            <Text
-              numberOfLines={2}
-              style={{
-                color: flavor ? theme.colors.text : theme.colors.textSecondary,
-                fontSize: theme.typography.body.fontSize,
-                lineHeight: theme.typography.body.lineHeight,
-                fontWeight: "700",
-              }}
-            >
-              {flavor ? `✓ ${flavor}` : "Escolher sabor"}
-            </Text>
+            <View style={{ flex: 1 }}>
+              <Text
+                style={{
+                  color: theme.colors.accentText,
+                  fontSize: 11,
+                  lineHeight: 14,
+                  fontWeight: "800",
+                }}
+              >
+                {selected ? "EDITANDO · " : ""}
+                {side === "LEFT" ? "ESQUERDA" : "DIREITA"}
+              </Text>
+              <Text
+                numberOfLines={1}
+                style={{
+                  color: flavor
+                    ? theme.colors.text
+                    : theme.colors.textSecondary,
+                  fontSize: theme.typography.bodySmall.fontSize,
+                  lineHeight: theme.typography.bodySmall.lineHeight,
+                  fontWeight: "700",
+                }}
+              >
+                {flavor ?? "Escolher sabor"}
+              </Text>
+            </View>
+            <Icon
+              name={selected ? "create-outline" : "chevron-down"}
+              size={18}
+              color={theme.colors.accentText}
+            />
           </Pressable>
         );
       })}
@@ -649,10 +724,10 @@ function HalfPicker({
   );
 }
 
-/** One flavor of the list: photo, name, description, price and a radio mark. */
-function FlavorRow({
+/** One flavor in the grid: photo, name and price; a check badge marks the chosen one. */
+function FlavorTile({
+  width,
   name,
-  description,
   price,
   imageUrl,
   selected,
@@ -660,8 +735,8 @@ function FlavorRow({
   accessibilityLabel,
   onPress,
 }: {
+  width: number;
   name: string;
-  description: string | null;
   price: string;
   imageUrl: string | null;
   selected: boolean;
@@ -671,6 +746,7 @@ function FlavorRow({
   onPress: () => void;
 }) {
   const theme = useTheme();
+  const photo = width - 2 * theme.spacing(2);
   return (
     <Pressable
       accessibilityRole="radio"
@@ -679,36 +755,37 @@ function FlavorRow({
         note ? `${accessibilityLabel}. ${note}` : accessibilityLabel
       }
       onPress={onPress}
-      style={({ pressed }) => ({
-        minHeight: 72,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: theme.spacing(3),
-        padding: theme.spacing(2),
-        paddingRight: theme.spacing(3),
-        borderRadius: theme.radius.large,
-        borderWidth: 2,
-        borderColor: selected ? theme.colors.primary : "transparent",
-        backgroundColor: selected
-          ? theme.colors.primaryLight
-          : pressed
-            ? theme.colors.surfaceSecondary
-            : theme.colors.surface,
-      })}
+      style={({ pressed }) => [
+        {
+          width,
+          padding: theme.spacing(2),
+          gap: theme.spacing(1),
+          borderRadius: theme.radius.large,
+          borderWidth: 2,
+          borderColor: selected ? theme.colors.primary : "transparent",
+          backgroundColor: selected
+            ? theme.colors.primaryLight
+            : pressed
+              ? theme.colors.surfaceSecondary
+              : theme.colors.surface,
+          alignItems: "center",
+        },
+        selected ? null : theme.shadow,
+      ]}
     >
       {imageUrl ? (
         <Image
           source={{ uri: imageUrl }}
           accessible={false}
           accessibilityIgnoresInvertColors
-          style={{ width: 56, height: 56, borderRadius: 28 }}
+          style={{ width: photo, height: photo, borderRadius: photo / 2 }}
         />
       ) : (
         <View
           style={{
-            width: 56,
-            height: 56,
-            borderRadius: 28,
+            width: photo,
+            height: photo,
+            borderRadius: photo / 2,
             backgroundColor: theme.colors.primaryLight,
             alignItems: "center",
             justifyContent: "center",
@@ -716,66 +793,159 @@ function FlavorRow({
         >
           <Icon
             name="pizza-outline"
-            size={26}
+            size={photo * 0.42}
             color={theme.colors.accentText}
           />
         </View>
       )}
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text
-          style={{
-            color: theme.colors.text,
-            fontSize: theme.typography.body.fontSize,
-            lineHeight: theme.typography.body.lineHeight,
-            fontWeight: "700",
-          }}
-        >
-          {name}
-        </Text>
-        {description?.trim() ? (
-          <Text
-            numberOfLines={2}
-            style={{
-              color: theme.colors.textSecondary,
-              fontSize: theme.typography.bodySmall.fontSize,
-              lineHeight: theme.typography.bodySmall.lineHeight,
-            }}
-          >
-            {description}
-          </Text>
-        ) : null}
-        <Text
-          style={{
-            color: theme.colors.text,
-            fontSize: theme.typography.bodySmall.fontSize,
-            lineHeight: theme.typography.bodySmall.lineHeight,
-            fontWeight: "600",
-          }}
-        >
-          {price}
-          {note ? ` · ${note}` : ""}
-        </Text>
-      </View>
-      {/* Radio mark: filled with a check when chosen, so it does not rely on the border color. */}
-      <View
+      <Text
+        numberOfLines={2}
         style={{
-          width: 26,
-          height: 26,
-          borderRadius: 13,
-          borderWidth: 2,
-          borderColor: selected
-            ? theme.colors.primary
-            : theme.colors.inputBorder,
-          backgroundColor: selected ? theme.colors.primary : "transparent",
-          alignItems: "center",
-          justifyContent: "center",
+          textAlign: "center",
+          color: theme.colors.text,
+          fontSize: theme.typography.bodySmall.fontSize,
+          lineHeight: 18,
+          fontWeight: "700",
         }}
       >
-        {selected ? (
+        {name}
+      </Text>
+      <Text
+        style={{
+          textAlign: "center",
+          color: theme.colors.textSecondary,
+          fontSize: theme.typography.caption.fontSize,
+          lineHeight: theme.typography.caption.lineHeight,
+        }}
+      >
+        {note ?? price}
+      </Text>
+      {selected ? (
+        // Check badge: the choice does not rely on the border color alone.
+        <View
+          style={{
+            position: "absolute",
+            top: 6,
+            right: 6,
+            width: 24,
+            height: 24,
+            borderRadius: 12,
+            backgroundColor: theme.colors.primary,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
           <Icon name="checkmark" size={16} color={theme.colors.onPrimary} />
-        ) : null}
-      </View>
+        </View>
+      ) : null}
     </Pressable>
+  );
+}
+
+/**
+ * The steps on top of the builder: done ones carry a check, the current one is filled and
+ * numbered, the next ones are gray. A step opens with a tap once the ones before it are ready.
+ */
+function Stepper({
+  steps,
+  current,
+  canOpen,
+  onOpen,
+}: {
+  steps: BuilderStep[];
+  current: number;
+  canOpen: (step: BuilderStep) => boolean;
+  onOpen: (step: BuilderStep) => void;
+}) {
+  const theme = useTheme();
+  return (
+    <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
+      {steps.map((step, index) => {
+        const done = index < current;
+        const here = index === current;
+        const open = !here && canOpen(step);
+        return (
+          <View key={step} style={{ flex: 1, alignItems: "center" }}>
+            {index > 0 ? (
+              <View
+                style={{
+                  position: "absolute",
+                  top: 15,
+                  right: "50%",
+                  width: "100%",
+                  height: 2,
+                  backgroundColor:
+                    index <= current
+                      ? theme.colors.primary
+                      : theme.colors.border,
+                }}
+              />
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Etapa ${index + 1} de ${steps.length}: ${STEP_LABELS[step]}${done ? ", concluída" : here ? ", atual" : ""}`}
+              accessibilityState={{ selected: here, disabled: !open && !here }}
+              disabled={!open}
+              onPress={() => onOpen(step)}
+              // Above the connector line on every platform.
+              style={{
+                alignItems: "center",
+                minHeight: 44,
+                gap: 4,
+                position: "relative",
+                zIndex: 1,
+              }}
+            >
+              <View
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor:
+                    done || here ? theme.colors.primary : theme.colors.surface,
+                  borderWidth: done || here ? 0 : 2,
+                  borderColor: theme.colors.border,
+                }}
+              >
+                {done ? (
+                  <Icon
+                    name="checkmark"
+                    size={18}
+                    color={theme.colors.onPrimary}
+                  />
+                ) : (
+                  <Text
+                    style={{
+                      color: here
+                        ? theme.colors.onPrimary
+                        : theme.colors.textSecondary,
+                      fontSize: 14,
+                      fontWeight: "800",
+                    }}
+                  >
+                    {index + 1}
+                  </Text>
+                )}
+              </View>
+              <Text
+                style={{
+                  color:
+                    done || here
+                      ? theme.colors.accentText
+                      : theme.colors.textSecondary,
+                  ...theme.typography.caption,
+                  fontWeight: here ? "800" : "600",
+                }}
+              >
+                {STEP_LABELS[step]}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
+    </View>
   );
 }
 

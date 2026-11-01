@@ -9,10 +9,14 @@ import {
   toggleExtra,
 } from "../src/builder/builder.ts";
 import {
+  STEP_LABELS,
   builderChanged,
+  builderSteps,
+  canOpenStep,
   editedSide,
   footerState,
   sideAfterFlavor,
+  stepReady,
 } from "../src/builder/flow.ts";
 import { parseMenu } from "../src/menu/menu.ts";
 import { apiMenu } from "./menu-fixture.ts";
@@ -62,5 +66,51 @@ describe("builder flow", () => {
       true,
     );
     assert.equal(builderChanged(null, whole), false);
+  });
+});
+
+describe("builder steps", () => {
+  const whole = {
+    sizeId: "grande",
+    mode: "WHOLE" as const,
+    flavors: { LEFT: "calabresa", RIGHT: null },
+    crustId: null,
+    extras: { LEFT: [], RIGHT: [] },
+    removals: { LEFT: [], RIGHT: [] },
+    quantity: 1,
+  };
+  const halves = { ...whole, mode: "HALVES" as const };
+
+  it("skips the crust step when the menu has no crusts", () => {
+    assert.deepEqual(builderSteps(true), [
+      "size",
+      "flavors",
+      "crust",
+      "extras",
+    ]);
+    assert.deepEqual(builderSteps(false), ["size", "flavors", "extras"]);
+    assert.equal(STEP_LABELS.extras, "Extras");
+  });
+
+  it("asks for the second half before leaving the flavors", () => {
+    assert.equal(stepReady("flavors", whole), null);
+    assert.match(stepReady("flavors", halves)!, /metade direita/);
+    assert.equal(
+      stepReady("flavors", {
+        ...halves,
+        flavors: { LEFT: "calabresa", RIGHT: "marguerita" },
+      }),
+      null,
+    );
+    assert.equal(stepReady("size", halves), null);
+  });
+
+  it("opens a step from the stepper only after the steps before it", () => {
+    const steps = builderSteps(true);
+    assert.equal(canOpenStep(steps, "size", halves), true);
+    assert.equal(canOpenStep(steps, "flavors", halves), true);
+    assert.equal(canOpenStep(steps, "crust", halves), false);
+    assert.equal(canOpenStep(steps, "extras", whole), true);
+    assert.equal(canOpenStep(builderSteps(false), "crust", whole), false);
   });
 });

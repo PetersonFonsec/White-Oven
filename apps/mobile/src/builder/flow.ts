@@ -60,3 +60,43 @@ export function builderChanged(
   if (!initial || !current) return false;
   return JSON.stringify(initial) !== JSON.stringify(current);
 }
+
+/** The builder's steps, one screen each. Without crusts on the menu, the crust step is skipped. */
+export type BuilderStep = "size" | "flavors" | "crust" | "extras";
+
+export const STEP_LABELS: Record<BuilderStep, string> = {
+  size: "Tamanho",
+  flavors: "Sabores",
+  crust: "Borda",
+  extras: "Extras",
+};
+
+export function builderSteps(hasCrusts: boolean): BuilderStep[] {
+  return hasCrusts
+    ? ["size", "flavors", "crust", "extras"]
+    : ["size", "flavors", "extras"];
+}
+
+/**
+ * Whether "Continuar" may leave a step, and why not. Only what the step itself asks for: prices
+ * and every PB rule are still decided by `evaluateBuilder` before the pizza goes to the bag.
+ */
+export function stepReady(
+  step: BuilderStep,
+  state: BuilderState,
+): string | null {
+  if (step === "flavors" && state.mode === "HALVES" && !state.flavors.RIGHT)
+    return "Escolha o sabor da metade direita.";
+  return null;
+}
+
+/** A step can be opened from the stepper once every step before it is ready. */
+export function canOpenStep(
+  steps: readonly BuilderStep[],
+  target: BuilderStep,
+  state: BuilderState,
+): boolean {
+  const at = steps.indexOf(target);
+  if (at < 0) return false;
+  return steps.slice(0, at).every((step) => stepReady(step, state) === null);
+}

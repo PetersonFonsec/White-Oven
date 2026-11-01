@@ -38,6 +38,7 @@ import {
 } from "./src/navigation/app-state.ts";
 import { BuilderScreen } from "./src/screens/BuilderScreen.tsx";
 import { type MenuLoad, MenuScreen } from "./src/screens/MenuScreen.tsx";
+import { HomeScreen } from "./src/screens/HomeScreen.tsx";
 import { StoreScreen } from "./src/screens/StoreScreen.tsx";
 import { menuNotices, storeMessage } from "./src/screens/store-messages.ts";
 
@@ -242,6 +243,9 @@ export default function App() {
   const [menu, setMenu] = useState<MenuState>({ kind: "loading" });
   /** The pizza open in the builder; null shows the menu. */
   const [building, setBuilding] = useState<string | null>(null);
+  /** Which of the two store tabs shows the menu: the home or the full list. */
+  const [storeTab, setStoreTab] = useState<"home" | "menu">("home");
+  const [menuCategory, setMenuCategory] = useState("all");
   const menuLoader = useRef<MenuLoader | null>(null);
 
   /**
@@ -351,6 +355,19 @@ export default function App() {
       screen: screen.kind,
     });
   const inBuilder = screen.kind === "builder";
+  const inMenuTab = screen.kind === "menu" && storeTab === "menu";
+  // The Cardápio tab goes back to Início on Android, like its back arrow.
+  useEffect(() => {
+    if (!inMenuTab) return;
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        setStoreTab("home");
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [inMenuTab]);
   // Android's back button goes up one level: builder to menu, an order to where it was opened,
   // an account opened from the bag back to the bag, any tab back to the menu.
   useEffect(() => {
@@ -385,14 +402,12 @@ export default function App() {
   const activeTab: MainTab | null = welcome
     ? null
     : screen.kind === "menu"
-      ? "menu"
-      : screen.kind === "cart"
-        ? "cart"
-        : screen.kind === "history" || screen.kind === "order"
-          ? "orders"
-          : screen.kind === "account"
-            ? "profile"
-            : null;
+      ? storeTab
+      : screen.kind === "history" || screen.kind === "order"
+        ? "orders"
+        : screen.kind === "account"
+          ? "profile"
+          : null;
 
   if (!runtime)
     return (
@@ -412,6 +427,46 @@ export default function App() {
     ? imageUrl(runtime.apiUrl, runtime.storeSlug, heroImageId, "menu")
     : null;
   const storeName = view?.name ?? cached?.name ?? runtime.storeName;
+  const cartCount = commerce ? cartUnits(commerce.cart) : 0;
+  // Problems of the app that belong on top of the home and the menu.
+  const storeBanner = (
+    <>
+      {bootError ? (
+        <InlineMessage
+          tone="error"
+          title="Sacola indisponível"
+          action={
+            <Button
+              label="Tentar de novo"
+              size="small"
+              onPress={() => setBootNonce((value) => value + 1)}
+            />
+          }
+        >
+          {bootError}
+        </InlineMessage>
+      ) : null}
+      {commerce?.error ? (
+        <InlineMessage tone="error">{commerce.error}</InlineMessage>
+      ) : null}
+      {commerce?.pending ? (
+        <InlineMessage
+          tone="warning"
+          title="Pedido aguardando confirmação"
+          action={
+            <Button
+              label="Ver na sacola"
+              size="small"
+              disabled={commerce.busy}
+              onPress={() => navigate({ kind: "cart" })}
+            />
+          }
+        >
+          Confira o resultado antes de fazer outro pedido.
+        </InlineMessage>
+      ) : null}
+    </>
+  );
   const theme = themeFor(
     view?.colors ?? cached?.colors ?? runtime.fallbackColors,
   );
@@ -463,7 +518,7 @@ export default function App() {
                   onOpenMenu={() => navigate(null)}
                   storeName={storeName}
                   logoUrl={logoUrl}
-                  cartCount={commerce ? cartUnits(commerce.cart) : 0}
+                  cartCount={cartCount}
                   imageUrl={(id) =>
                     imageUrl(runtime.apiUrl, runtime.storeSlug, id, "thumbnail")
                   }
@@ -555,6 +610,34 @@ export default function App() {
                       });
                   }}
                 />
+              ) : view && screen.kind === "menu" && storeTab === "home" ? (
+                <HomeScreen
+                  storeName={view.name}
+                  logoUrl={logoUrl}
+                  openStatus={
+                    view.availability.kind === "open"
+                      ? "open"
+                      : view.availability.kind === "closed"
+                        ? "closed"
+                        : null
+                  }
+                  banner={storeBanner}
+                  notices={menuNotices(view, menuStale)}
+                  menuStale={menuStale}
+                  menu={menuLoad}
+                  refreshing={refreshing}
+                  cartCount={cartCount}
+                  imageUrl={(id) =>
+                    imageUrl(runtime.apiUrl, runtime.storeSlug, id, "menu")
+                  }
+                  onRetry={() => void refresh()}
+                  onOpenCart={() => navigate({ kind: "cart" })}
+                  onOpenPizza={setBuilding}
+                  onOpenMenu={(category) => {
+                    setMenuCategory(category);
+                    setStoreTab("menu");
+                  }}
+                />
               ) : view && screen.kind === "menu" ? (
                 <MenuScreen
                   addingDisabled={
@@ -575,56 +658,9 @@ export default function App() {
                     return saved ? product.name : null;
                   }}
                   onOpenCart={() => navigate({ kind: "cart" })}
-                  banner={
-                    <>
-                      {bootError ? (
-                        <InlineMessage
-                          tone="error"
-                          title="Sacola indisponível"
-                          action={
-                            <Button
-                              label="Tentar de novo"
-                              size="small"
-                              onPress={() => setBootNonce((value) => value + 1)}
-                            />
-                          }
-                        >
-                          {bootError}
-                        </InlineMessage>
-                      ) : null}
-                      {commerce?.error ? (
-                        <InlineMessage tone="error">
-                          {commerce.error}
-                        </InlineMessage>
-                      ) : null}
-                      {commerce?.pending ? (
-                        <InlineMessage
-                          tone="warning"
-                          title="Pedido aguardando confirmação"
-                          action={
-                            <Button
-                              label="Ver na sacola"
-                              size="small"
-                              disabled={commerce.busy}
-                              onPress={() => navigate({ kind: "cart" })}
-                            />
-                          }
-                        >
-                          Confira o resultado antes de fazer outro pedido.
-                        </InlineMessage>
-                      ) : null}
-                    </>
-                  }
-                  openStatus={
-                    view.availability.kind === "open"
-                      ? "open"
-                      : view.availability.kind === "closed"
-                        ? "closed"
-                        : null
-                  }
-                  storeName={view.name}
+                  cartCount={cartCount}
+                  banner={storeBanner}
                   notices={menuNotices(view, menuStale)}
-                  logoUrl={logoUrl}
                   menu={menuLoad}
                   menuStale={menuStale}
                   refreshing={refreshing}
@@ -633,6 +669,9 @@ export default function App() {
                   }
                   onRetry={() => void refresh()}
                   onOpenPizza={setBuilding}
+                  category={menuCategory}
+                  onCategory={setMenuCategory}
+                  onBack={() => setStoreTab("home")}
                 />
               ) : view ? (
                 <StoreScreen
@@ -683,12 +722,14 @@ export default function App() {
               {activeTab ? (
                 <BottomNavigation
                   selected={activeTab}
-                  cartCount={commerce ? cartUnits(commerce.cart) : 0}
                   onHeight={setTabBarHeight}
                   onSelect={(tab) => {
-                    if (tab === "menu") navigate(null);
-                    else if (tab === "cart") navigate({ kind: "cart" });
-                    else if (tab === "orders") navigate({ kind: "history" });
+                    if (tab === "home" || tab === "menu") {
+                      if (tab === "menu" && storeTab !== "menu")
+                        setMenuCategory("all");
+                      setStoreTab(tab);
+                      navigate(null);
+                    } else if (tab === "orders") navigate({ kind: "history" });
                     else navigate({ kind: "account" });
                   }}
                 />

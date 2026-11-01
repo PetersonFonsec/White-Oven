@@ -82,6 +82,20 @@ export function orderDateTime(value: string): string {
   return `${date.getDate()} de ${MONTHS[date.getMonth()]} de ${date.getFullYear()} às ${two(date.getHours())}:${two(date.getMinutes())}`;
 }
 
+/** "hoje às 19:24", "ontem às 19:24" or the full date, compared in the device's time zone. */
+export function orderWhen(value: string, now: Date = new Date()): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const day = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const two = (n: number) => String(n).padStart(2, "0");
+  const time = `${two(date.getHours())}:${two(date.getMinutes())}`;
+  const diff = Math.round((day(now) - day(date)) / 86_400_000);
+  if (diff === 0) return `hoje às ${time}`;
+  if (diff === 1) return `ontem às ${time}`;
+  return orderDateTime(value);
+}
+
 export interface OrderItemView {
   title: string;
   /** One line per detail: flavors of each half, crust, extras, removals. */

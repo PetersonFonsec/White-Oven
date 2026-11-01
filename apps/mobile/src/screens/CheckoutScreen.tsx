@@ -160,7 +160,7 @@ export function CheckoutScreen({
       );
     }
   };
-  const header = <ScreenHeader title="Sacola" large />;
+  const header = <ScreenHeader title="Sacola" large onBack={onBack} />;
   const problems = (
     <>
       {!state.ready ? (
