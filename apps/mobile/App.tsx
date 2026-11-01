@@ -63,6 +63,8 @@ import {
   parseCheckoutSettings,
 } from "./src/cart/summary.ts";
 import { AccountScreen } from "./src/screens/AccountScreen.tsx";
+import { AuthFlow } from "./src/screens/AuthScreens.tsx";
+import { showsWelcome } from "./src/customer/auth-flow.ts";
 import { type LegalState, loadStoreLegal } from "./src/customer/legal.ts";
 import {
   type CheckoutDraft,
@@ -153,9 +155,12 @@ export default function App() {
   const profileId = commerce?.profile?.id ?? null;
   // A sign-in from the bag or the orders goes back there (UX audit P1-3).
   const signedInBefore = useRef(profileId);
+  // The welcome covers the menu once per launch, for a customer without a saved session.
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
   useEffect(() => {
     const wasSignedIn = signedInBefore.current;
     signedInBefore.current = profileId;
+    if (profileId) setWelcomeDismissed(true);
     if (wasSignedIn || !profileId) return;
     const back = destinationAfterSignIn(destinationRef.current);
     if (back) setDestination(back);
@@ -336,6 +341,15 @@ export default function App() {
     destination,
     commerce ? recoveryOf(commerce) : null,
   );
+  const welcome =
+    !!commerce &&
+    showsWelcome({
+      ready: commerce.ready,
+      session: commerce.session,
+      signedIn: profileId !== null,
+      dismissed: welcomeDismissed,
+      screen: screen.kind,
+    });
   const inBuilder = screen.kind === "builder";
   // Android's back button goes up one level: builder to menu, an order to where it was opened,
   // an account opened from the bag back to the bag, any tab back to the menu.
@@ -368,8 +382,9 @@ export default function App() {
   const menuLoad: MenuLoad = sections
     ? { kind: "ok", sections }
     : { kind: menu.kind === "failed" ? "failed" : "loading" };
-  const activeTab: MainTab | null =
-    screen.kind === "menu"
+  const activeTab: MainTab | null = welcome
+    ? null
+    : screen.kind === "menu"
       ? "menu"
       : screen.kind === "cart"
         ? "cart"
@@ -391,6 +406,12 @@ export default function App() {
   const logoUrl = view?.logoImageId
     ? imageUrl(runtime.apiUrl, runtime.storeSlug, view.logoImageId, "thumbnail")
     : null;
+  const heroImageId =
+    menuData?.flavors.find((flavor) => flavor.imageId)?.imageId ?? null;
+  const heroImageUrl = heroImageId
+    ? imageUrl(runtime.apiUrl, runtime.storeSlug, heroImageId, "menu")
+    : null;
+  const storeName = view?.name ?? cached?.name ?? runtime.storeName;
   const theme = themeFor(
     view?.colors ?? cached?.colors ?? runtime.fallbackColors,
   );
@@ -401,9 +422,23 @@ export default function App() {
         <TabBarContext.Provider value={activeTab !== null}>
           <ToastProvider bottomOffset={activeTab ? tabBarHeight : 0}>
             <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-              {(screen.kind === "history" || screen.kind === "order") &&
-              model &&
-              commerce ? (
+              {welcome && model && commerce ? (
+                <AuthFlow
+                  model={model}
+                  state={commerce}
+                  initial="welcome"
+                  legal={legal}
+                  storeName={storeName}
+                  logoUrl={logoUrl}
+                  heroImageUrl={heroImageUrl}
+                  backTo={null}
+                  problems={null}
+                  onReloadLegal={reloadLegal}
+                  onSkip={() => setWelcomeDismissed(true)}
+                />
+              ) : (screen.kind === "history" || screen.kind === "order") &&
+                model &&
+                commerce ? (
                 <OrdersScreen
                   model={model}
                   state={commerce}
@@ -435,8 +470,9 @@ export default function App() {
                   push={push}
                   notice={commerce.profile ? null : notificationNotice}
                   legal={legal}
-                  storeName={view?.name ?? cached?.name ?? runtime.storeName}
+                  storeName={storeName}
                   logoUrl={logoUrl}
+                  heroImageUrl={heroImageUrl}
                   backTo={returnLabel(destination)}
                   startWithAddress={opensAddressForm(destination)}
                   onReloadLegal={reloadLegal}

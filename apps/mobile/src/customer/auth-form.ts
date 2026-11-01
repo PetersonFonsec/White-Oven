@@ -16,15 +16,45 @@ export interface AuthValues {
   accepted: boolean;
 }
 
+/** The API's minimum (`PASSWORD_MIN_LENGTH`), counted in characters like the API does. */
 export const PASSWORD_MIN = 10;
 /** Order of the fields on screen: the first error gets the focus. */
 export const AUTH_FIELD_ORDER: readonly AuthField[] = [
   "name",
-  "phone",
   "email",
+  "phone",
   "password",
   "legal",
 ];
+
+export type PasswordRuleId = "length" | "uppercase" | "number";
+export interface PasswordRule {
+  id: PasswordRuleId;
+  label: string;
+  met: boolean;
+}
+
+/**
+ * The rules listed under the new password while it is typed. The length is the API's rule; the
+ * capital letter and the number are asked by the app only, so a new password is harder to guess.
+ * The API still refuses common passwords on its own.
+ */
+export function passwordRules(password: string): PasswordRule[] {
+  return [
+    {
+      id: "length",
+      label: `Pelo menos ${PASSWORD_MIN} caracteres`,
+      met: [...password].length >= PASSWORD_MIN,
+    },
+    {
+      id: "uppercase",
+      label: "Uma letra maiúscula",
+      // Any letter with a lowercase form; plain JS, so Hermes needs no Unicode property escapes.
+      met: password.toLowerCase() !== password,
+    },
+    { id: "number", label: "Um número", met: /\d/.test(password) },
+  ];
+}
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -47,8 +77,13 @@ export function validateAuthForm(
     if (!phone || !/^\+\d{10,15}$/.test(phone))
       errors.phone = "Use DDD e número, por exemplo (11) 99999-9999.";
   }
-  if (values.password && values.password.length < PASSWORD_MIN)
-    errors.password = `A senha precisa ter pelo menos ${PASSWORD_MIN} caracteres.`;
+  if (values.password) {
+    const missing = passwordRules(values.password).filter((rule) => !rule.met);
+    if (missing.length)
+      errors.password = `A senha precisa ter: ${missing
+        .map((rule) => rule.label.toLowerCase())
+        .join(", ")}.`;
+  }
   if (!legalReady)
     errors.legal =
       "Os termos da pizzaria ainda não foram carregados. Tente carregar de novo.";

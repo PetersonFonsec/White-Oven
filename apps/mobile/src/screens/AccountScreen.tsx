@@ -4,28 +4,18 @@ import {
   useSyncExternalStore,
   type ComponentRef,
 } from "react";
-import { Alert, Image, Linking, Text, TextInput, View } from "react-native";
+import { Alert, Linking, Text, TextInput, View } from "react-native";
 import type { LegalDocument } from "@whiteoven/contracts";
 import { announce } from "../a11y/useAnnouncement.ts";
 import { useTheme } from "../brand/theme.tsx";
 import type { CommerceModel, CommerceState } from "../cart/model.ts";
-import { Choice } from "../components/Choice.tsx";
 import { InlineMessage } from "../components/Feedback.tsx";
 import { Body, Button, Field, FormPage } from "../components/Form.tsx";
 import { IconButton } from "../components/Icon.tsx";
 import { LegalSheet } from "../components/LegalSheet.tsx";
 import { ListRow, Section } from "../components/ListRow.tsx";
 import { ScreenHeader, StickyFooter } from "../components/Screen.tsx";
-import { SegmentedControl } from "../components/SegmentedControl.tsx";
-import {
-  type AuthErrors,
-  type AuthField,
-  type AuthMode,
-  PASSWORD_MIN,
-  errorSummary,
-  firstError,
-  validateAuthForm,
-} from "../customer/auth-form.ts";
+import { initialAuthStep } from "../customer/auth-flow.ts";
 import type { Address } from "../customer/client.ts";
 import {
   acceptedVersions,
@@ -33,7 +23,7 @@ import {
   type StoreLegal,
 } from "../customer/legal.ts";
 import type { PushModel } from "../customer/push.ts";
-import { normalizeCustomerPhone } from "../customer/registration.ts";
+import { AuthFlow } from "./AuthScreens.tsx";
 
 type InputRef = ComponentRef<typeof TextInput>;
 
@@ -191,12 +181,6 @@ function OrderNotifications({
   );
 }
 
-const sameVersions = (a: LegalState, b: LegalState) =>
-  a.status === "ready" &&
-  b.status === "ready" &&
-  a.legal.privacyPolicy.version === b.legal.privacyPolicy.version &&
-  a.legal.termsOfUse.version === b.legal.termsOfUse.version;
-
 type OpenDocument = { title: string; document: LegalDocument } | null;
 
 function LegalRows({
@@ -234,47 +218,6 @@ function LegalRows({
   );
 }
 
-/** The store's mark on the sign-in screen: its logo, or its initial; never WhiteOven's. */
-function StoreMark({
-  name,
-  logoUrl,
-}: {
-  name: string;
-  logoUrl: string | null;
-}) {
-  const theme = useTheme();
-  return logoUrl ? (
-    <Image
-      source={{ uri: logoUrl }}
-      accessibilityLabel={`Logotipo de ${name}`}
-      resizeMode="contain"
-      style={{ width: 64, height: 64, borderRadius: 20 }}
-    />
-  ) : (
-    <View
-      accessible={false}
-      style={{
-        width: 64,
-        height: 64,
-        borderRadius: 20,
-        backgroundColor: theme.colors.primaryLight,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <Text
-        style={{
-          color: theme.colors.accentText,
-          fontSize: 30,
-          fontWeight: "800",
-        }}
-      >
-        {name.trim().charAt(0).toUpperCase() || "?"}
-      </Text>
-    </View>
-  );
-}
-
 export function AccountScreen({
   model,
   state,
@@ -283,6 +226,7 @@ export function AccountScreen({
   legal,
   storeName,
   logoUrl,
+  heroImageUrl,
   backTo,
   startWithAddress = false,
   onReloadLegal,
@@ -297,6 +241,8 @@ export function AccountScreen({
   legal: LegalState;
   storeName: string;
   logoUrl: string | null;
+  /** A photo of one of the store's pizzas for the welcome, when the menu has one. */
+  heroImageUrl: string | null;
   /** The screen that sent the customer here (the bag, the orders), named on the back button. */
   backTo: string | null;
   /**
@@ -308,14 +254,6 @@ export function AccountScreen({
   onBack: () => void;
 }) {
   const theme = useTheme();
-  const [mode, setMode] = useState<AuthMode>("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [accepted, setAccepted] = useState(false);
-  const [errors, setErrors] = useState<AuthErrors>({});
-  const [submitted, setSubmitted] = useState(false);
   const [openDocument, setOpenDocument] = useState<OpenDocument>(null);
   const [view, setView] = useState<"home" | "address" | "delete">(
     startWithAddress ? "address" : "home",
@@ -330,56 +268,9 @@ export function AccountScreen({
     else setView("home");
   };
   const [deletePassword, setDeletePassword] = useState("");
-  const refs = {
-    name: useRef<InputRef>(null),
-    phone: useRef<InputRef>(null),
-    email: useRef<InputRef>(null),
-    password: useRef<InputRef>(null),
-  };
   const addressRefs = useRef<(InputRef | null)[]>([]);
   const disabled = state.busy || !state.ready;
   const legalReady = legal.status === "ready";
-  const values = { name, phone, email, password, accepted };
-  // After the first submit, errors follow the typing, so a fixed field loses its message.
-  const revalidate = (patch: Partial<typeof values>) => {
-    if (submitted)
-      setErrors(validateAuthForm(mode, { ...values, ...patch }, legalReady));
-  };
-  const switchMode = (next: AuthMode) => {
-    setMode(next);
-    setPassword("");
-    setErrors({});
-    setSubmitted(false);
-  };
-  const signIn = async () => {
-    setSubmitted(true);
-    const found = validateAuthForm(mode, values, legalReady);
-    setErrors(found);
-    const first = firstError(found);
-    if (first) {
-      announce(errorSummary(found)!);
-      if (first !== "legal")
-        refs[first as Exclude<AuthField, "legal">].current?.focus();
-      return;
-    }
-    const body =
-      mode === "login"
-        ? { email: email.trim(), password }
-        : {
-            name: name.trim(),
-            email: email.trim(),
-            password,
-            phone: normalizeCustomerPhone(phone),
-            ...acceptedVersions((legal as { legal: StoreLegal }).legal),
-          };
-    setPassword("");
-    const ok = await model.signIn(mode, body);
-    // A new version published meanwhile (409 LEGAL_VERSION_OUTDATED) must be read again.
-    if (!ok && mode === "register") {
-      const fresh = await onReloadLegal();
-      if (!sameVersions(fresh, legal)) setAccepted(false);
-    }
-  };
   const header = (title: string, large = true) => (
     <ScreenHeader
       title={title}
@@ -716,183 +607,24 @@ export function AccountScreen({
     );
   }
 
-  // ----- Signed out: sign in or sign up -----
-  const register = mode === "register";
+  // ----- Signed out: welcome, sign in or sign up -----
   return (
-    <FormPage
-      header={header(register ? "Criar conta" : "Entrar", !backTo)}
-      footer={
-        <StickyFooter>
-          {state.error ? (
-            <InlineMessage tone="error">{state.error}</InlineMessage>
-          ) : null}
-          <Button
-            label={register ? "Criar conta" : "Entrar"}
-            variant="primary"
-            loading={state.busy}
-            disabled={disabled}
-            onPress={() => void signIn()}
-          />
-        </StickyFooter>
-      }
-    >
-      {sheet}
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
-        <StoreMark name={storeName} logoUrl={logoUrl} />
-        <View style={{ flex: 1 }}>
-          <Body muted>
-            {register
-              ? `Crie sua conta em ${storeName} para pedir e acompanhar seus pedidos.`
-              : `Entre na sua conta de ${storeName} para pedir e acompanhar seus pedidos.`}
-          </Body>
-        </View>
-      </View>
-      {sessionProblems}
-      <SegmentedControl
-        options={[
-          { value: "login", label: "Entrar" },
-          { value: "register", label: "Criar conta" },
-        ]}
-        value={mode}
-        disabled={disabled}
-        onChange={switchMode}
-      />
-      {register ? (
-        <>
-          <Field
-            ref={refs.name}
-            label="Nome completo"
-            value={name}
-            error={errors.name}
-            onChangeText={(value) => {
-              setName(value);
-              revalidate({ name: value });
-            }}
-            maxLength={120}
-            autoComplete="name"
-            textContentType="name"
-            autoCapitalize="words"
-            returnKeyType="next"
-            onSubmitEditing={() => refs.phone.current?.focus()}
-            editable={!disabled}
-          />
-          <Field
-            ref={refs.phone}
-            label="Celular (opcional)"
-            value={phone}
-            error={errors.phone}
-            onChangeText={(value) => {
-              setPhone(value);
-              revalidate({ phone: value });
-            }}
-            keyboardType="phone-pad"
-            textContentType="telephoneNumber"
-            autoComplete="tel"
-            placeholder="(11) 99999-9999"
-            helper="Com DDD. A pizzaria usa para falar sobre o pedido."
-            maxLength={24}
-            returnKeyType="next"
-            onSubmitEditing={() => refs.email.current?.focus()}
-            editable={!disabled}
-          />
-        </>
-      ) : null}
-      <Field
-        ref={refs.email}
-        label="E-mail"
-        value={email}
-        error={errors.email}
-        onChangeText={(value) => {
-          setEmail(value);
-          revalidate({ email: value });
-        }}
-        placeholder="voce@exemplo.com"
-        autoComplete="email"
-        textContentType={register ? "emailAddress" : "username"}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="email-address"
-        maxLength={254}
-        returnKeyType="next"
-        onSubmitEditing={() => refs.password.current?.focus()}
-        editable={!disabled}
-      />
-      <Field
-        ref={refs.password}
-        label="Senha"
-        value={password}
-        error={errors.password}
-        onChangeText={(value) => {
-          setPassword(value);
-          revalidate({ password: value });
-        }}
-        helper={
-          register
-            ? `Pelo menos ${PASSWORD_MIN} caracteres. Senhas comuns não são aceitas.`
-            : undefined
-        }
-        password
-        textContentType={register ? "newPassword" : "password"}
-        autoComplete={register ? "new-password" : "current-password"}
-        autoCapitalize="none"
-        autoCorrect={false}
-        maxLength={256}
-        returnKeyType={register ? "next" : "go"}
-        onSubmitEditing={() => {
-          if (!register) void signIn();
-        }}
-        editable={!disabled}
-      />
-
-      {register ? (
-        legal.status === "ready" ? (
-          <Section title="Termos e privacidade">
-            <LegalRows legal={legal.legal} onOpen={setOpenDocument} />
-            <View style={{ padding: 12, gap: 8 }}>
-              <Choice
-                kind="checkbox"
-                label="Li e aceito os termos de uso e a política de privacidade"
-                selected={accepted}
-                disabled={disabled}
-                onPress={() => {
-                  setAccepted(!accepted);
-                  revalidate({ accepted: !accepted });
-                }}
-              />
-              {errors.legal ? (
-                <Body alert small>
-                  {errors.legal}
-                </Body>
-              ) : null}
-            </View>
-          </Section>
-        ) : legal.status === "loading" ? (
-          <InlineMessage tone="info">
-            Carregando os termos de uso e a política de privacidade…
-          </InlineMessage>
-        ) : (
-          <InlineMessage
-            tone="error"
-            title={
-              legal.status === "unavailable"
-                ? "Cadastro indisponível"
-                : "Termos não carregados"
-            }
-            action={
-              <Button
-                label="Tentar carregar de novo"
-                size="small"
-                disabled={disabled}
-                onPress={() => void onReloadLegal()}
-              />
-            }
-          >
-            {legal.status === "unavailable"
-              ? "O cadastro fica disponível quando a loja publicar os termos de uso e a política de privacidade."
-              : "Não foi possível carregar os termos de uso e a política de privacidade."}
-          </InlineMessage>
-        )
-      ) : null}
-    </FormPage>
+    <AuthFlow
+      model={model}
+      state={state}
+      initial={initialAuthStep({
+        returnsSomewhere: !!backTo,
+        hasNotice: !!notice,
+      })}
+      legal={legal}
+      storeName={storeName}
+      logoUrl={logoUrl}
+      heroImageUrl={heroImageUrl}
+      backTo={backTo}
+      notice={notice}
+      problems={sessionProblems}
+      onReloadLegal={onReloadLegal}
+      onExit={backTo ? onBack : undefined}
+    />
   );
 }
