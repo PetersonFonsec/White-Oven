@@ -7,6 +7,9 @@ import {
   type MenuState,
   buildingAfterRefresh,
   createMenuLoader,
+  destinationAfterSignIn,
+  destinationOnBack,
+  returnLabel,
   destinationAfterRefresh,
   menuAfterLoad,
   menuWhileLoading,
@@ -247,5 +250,69 @@ describe("menu reloads", () => {
     );
     await loader.reload();
     assert.deepEqual(state, { ...LOADED, stale: true });
+  });
+});
+
+describe("return after sign-in", () => {
+  it("goes back to the bag or the orders that sent the customer to sign in", () => {
+    assert.deepEqual(
+      destinationAfterSignIn({ kind: "account", returnTo: "cart" }),
+      { kind: "cart" },
+    );
+    assert.deepEqual(
+      destinationAfterSignIn({ kind: "account", returnTo: "history" }),
+      { kind: "history" },
+    );
+    assert.equal(returnLabel({ kind: "account", returnTo: "cart" }), "Sacola");
+  });
+
+  it("stays on the account opened from the tab", () => {
+    for (const destination of [
+      { kind: "account" } as const,
+      "account" as const,
+      null,
+    ])
+      assert.equal(destinationAfterSignIn(destination), null);
+    assert.equal(returnLabel({ kind: "account" }), null);
+    assert.equal(returnLabel({ kind: "cart" }), null);
+  });
+
+  it("keeps the screen rules: an account with a return is still the account", () => {
+    assert.deepEqual(
+      screenFor(OPEN, LOADED, null, { kind: "account", returnTo: "cart" }),
+      { kind: "account" },
+    );
+  });
+});
+
+describe("back navigation", () => {
+  it("goes up one level and never loops", () => {
+    assert.deepEqual(
+      destinationOnBack({ kind: "order", orderId: "o1" }, "history"),
+      { kind: "history" },
+    );
+    assert.deepEqual(
+      destinationOnBack({ kind: "order", orderId: "o1" }, "cart"),
+      { kind: "cart" },
+    );
+    assert.deepEqual(
+      destinationOnBack({ kind: "account", returnTo: "cart" }, "history"),
+      { kind: "cart" },
+    );
+    for (const tab of [
+      { kind: "cart" } as const,
+      { kind: "history" } as const,
+      { kind: "account" } as const,
+    ])
+      assert.equal(destinationOnBack(tab, "history"), null);
+    // From the bag back to the order that was opened from it, and from there back to the bag:
+    // each step is one level up, the menu ends it.
+    assert.equal(
+      destinationOnBack(
+        destinationOnBack({ kind: "order", orderId: "o1" }, "cart"),
+        "cart",
+      ),
+      null,
+    );
   });
 });
