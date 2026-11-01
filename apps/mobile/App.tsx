@@ -30,6 +30,7 @@ import {
   createMenuLoader,
   destinationAfterSignIn,
   destinationOnBack,
+  opensAddressForm,
   returnLabel,
   destinationAfterRefresh,
   destinationKind,
@@ -63,7 +64,11 @@ import {
 } from "./src/cart/summary.ts";
 import { AccountScreen } from "./src/screens/AccountScreen.tsx";
 import { type LegalState, loadStoreLegal } from "./src/customer/legal.ts";
-import { CheckoutScreen } from "./src/screens/CheckoutScreen.tsx";
+import {
+  type CheckoutDraft,
+  CheckoutScreen,
+  EMPTY_DRAFT,
+} from "./src/screens/CheckoutScreen.tsx";
 import { OrdersScreen } from "./src/screens/OrdersScreen.tsx";
 import { Button } from "./src/components/Form.tsx";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -102,6 +107,13 @@ export default function App() {
   const destinationRef = useRef<Destination>(null);
   destinationRef.current = destination;
   const [orderReturn, setOrderReturn] = useState<"history" | "cart">("history");
+  // The bag's form outlives the bag screen (sign-in, new address); a new order starts it over.
+  const [checkoutDraft, setCheckoutDraft] =
+    useState<CheckoutDraft>(EMPTY_DRAFT);
+  const receiptId = commerce?.receipt?.id ?? null;
+  useEffect(() => {
+    if (receiptId) setCheckoutDraft(EMPTY_DRAFT);
+  }, [receiptId]);
   const navigate = (next: Destination) => {
     commerceRef.current?.invalidateQuote();
     setDestination(next);
@@ -404,13 +416,7 @@ export default function App() {
                       ? navigate({ kind: orderReturn })
                       : navigate(null)
                   }
-                  backLabel={
-                    screen.kind === "order" && orderReturn === "cart"
-                      ? "Voltar ao checkout"
-                      : screen.kind === "order"
-                        ? "Voltar aos pedidos"
-                        : "Voltar"
-                  }
+                  backTo={orderReturn === "cart" ? "Sacola" : "Pedidos"}
                   onAccount={() =>
                     navigate({ kind: "account", returnTo: "history" })
                   }
@@ -419,10 +425,11 @@ export default function App() {
                     navigate({ kind: "order", orderId });
                   }}
                   onOpenCart={() => navigate({ kind: "cart" })}
+                  onOpenMenu={() => navigate(null)}
                 />
               ) : screen.kind === "account" && model && commerce && push ? (
                 <AccountScreen
-                  key={commerce.profile?.id ?? "signed-out"}
+                  key={`${commerce.profile?.id ?? "signed-out"}:${opensAddressForm(destination)}`}
                   model={model}
                   state={commerce}
                   push={push}
@@ -431,6 +438,7 @@ export default function App() {
                   storeName={view?.name ?? cached?.name ?? runtime.storeName}
                   logoUrl={logoUrl}
                   backTo={returnLabel(destination)}
+                  startWithAddress={opensAddressForm(destination)}
                   onReloadLegal={reloadLegal}
                   onBack={() => {
                     const back = destinationAfterSignIn(destination);
@@ -447,11 +455,19 @@ export default function App() {
                   canOrder={view?.availability.kind === "open" && !refreshing}
                   recoveryOnly={screen.recoveryOnly}
                   stale={menuStale}
+                  draft={checkoutDraft}
+                  onDraft={setCheckoutDraft}
                   onBack={() => navigate(null)}
                   onAccount={() =>
                     navigate({ kind: "account", returnTo: "cart" })
                   }
-                  onOrders={() => navigate({ kind: "history" })}
+                  onAddAddress={() =>
+                    navigate({
+                      kind: "account",
+                      returnTo: "cart",
+                      startWith: "address",
+                    })
+                  }
                   onTrackOrder={(orderId) => {
                     setOrderReturn("cart");
                     navigate({ kind: "order", orderId });

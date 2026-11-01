@@ -284,6 +284,7 @@ export function AccountScreen({
   storeName,
   logoUrl,
   backTo,
+  startWithAddress = false,
   onReloadLegal,
   onBack,
 }: {
@@ -298,6 +299,11 @@ export function AccountScreen({
   logoUrl: string | null;
   /** The screen that sent the customer here (the bag, the orders), named on the back button. */
   backTo: string | null;
+  /**
+   * Opens straight on a new address, as the bag asks when delivery has none. Saving or going back
+   * returns to the screen that asked (`onBack`) instead of the account.
+   */
+  startWithAddress?: boolean;
   onReloadLegal: () => Promise<LegalState>;
   onBack: () => void;
 }) {
@@ -311,11 +317,18 @@ export function AccountScreen({
   const [errors, setErrors] = useState<AuthErrors>({});
   const [submitted, setSubmitted] = useState(false);
   const [openDocument, setOpenDocument] = useState<OpenDocument>(null);
-  const [view, setView] = useState<"home" | "address" | "delete">("home");
+  const [view, setView] = useState<"home" | "address" | "delete">(
+    startWithAddress ? "address" : "home",
+  );
   const [editing, setEditing] = useState<{
     id?: string;
     address: Omit<Address, "id">;
-  } | null>(null);
+  } | null>(startWithAddress ? { address: { ...emptyAddress } } : null);
+  const closeAddress = () => {
+    setEditing(null);
+    if (startWithAddress) onBack();
+    else setView("home");
+  };
   const [deletePassword, setDeletePassword] = useState("");
   const refs = {
     name: useRef<InputRef>(null),
@@ -423,8 +436,7 @@ export function AccountScreen({
       void model.saveAddress(editing.address, editing.id).then((saved) => {
         if (saved) {
           announce("Endereço salvo.");
-          setEditing(null);
-          setView("home");
+          closeAddress();
         }
       });
     return (
@@ -432,11 +444,8 @@ export function AccountScreen({
         header={
           <ScreenHeader
             title={editing.id ? "Editar endereço" : "Novo endereço"}
-            onBack={() => {
-              setEditing(null);
-              setView("home");
-            }}
-            backTo="Conta"
+            onBack={closeAddress}
+            backTo={startWithAddress ? (backTo ?? "Conta") : "Conta"}
             backDisabled={state.busy}
           />
         }

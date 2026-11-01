@@ -9,6 +9,7 @@ import {
   createMenuLoader,
   destinationAfterSignIn,
   destinationOnBack,
+  opensAddressForm,
   returnLabel,
   destinationAfterRefresh,
   menuAfterLoad,
@@ -282,6 +283,25 @@ describe("return after sign-in", () => {
       screenFor(OPEN, LOADED, null, { kind: "account", returnTo: "cart" }),
       { kind: "account" },
     );
+  });
+});
+
+describe("adding an address from the bag", () => {
+  it("opens the address form and goes back to the bag", () => {
+    const fromBag = {
+      kind: "account",
+      returnTo: "cart",
+      startWith: "address",
+    } as const;
+    assert.equal(opensAddressForm(fromBag), true);
+    assert.equal(
+      opensAddressForm({ kind: "account", returnTo: "cart" }),
+      false,
+    );
+    assert.equal(opensAddressForm("account"), false);
+    assert.equal(opensAddressForm(null), false);
+    assert.deepEqual(destinationOnBack(fromBag, "history"), { kind: "cart" });
+    assert.equal(returnLabel(fromBag), "Sacola");
   });
 });
 

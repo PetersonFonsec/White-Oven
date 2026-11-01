@@ -37,6 +37,7 @@ export const FIXED_COLORS = {
   /** Error text: `error` reaches only 4.1:1 on `errorSurface`; this one passes 4.5:1 on every surface. */
   errorText: "#B42318",
   success: "#27834A",
+  successSurface: "#EAF6EE",
   orangeSoft: "#FFF0E5",
   surfaceSecondary: "#FFF3E9",
   warning: "#E89A17",

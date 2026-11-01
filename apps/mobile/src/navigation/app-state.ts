@@ -86,7 +86,8 @@ export type Screen =
 export type AccountReturn = "cart" | "history";
 
 export type Destination =
-  | { kind: "account"; returnTo?: AccountReturn }
+  /** `startWith: "address"`: the bag asked for a new delivery address; saving returns there. */
+  | { kind: "account"; returnTo?: AccountReturn; startWith?: "address" }
   | { kind: "cart" }
   | { kind: "history" }
   | { kind: "order"; orderId: string }
@@ -182,6 +183,15 @@ export function returnLabel(destination: Destination): string | null {
     : destination.returnTo === "history"
       ? "Pedidos"
       : null;
+}
+
+/** The account was opened by the bag to add a delivery address. */
+export function opensAddressForm(destination: Destination): boolean {
+  return (
+    typeof destination === "object" &&
+    destination?.kind === "account" &&
+    destination.startWith === "address"
+  );
 }
 
 /** One level up from `destination` (Android back, header back): never a loop. */

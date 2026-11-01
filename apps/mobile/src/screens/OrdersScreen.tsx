@@ -1,14 +1,36 @@
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
-import { Alert, AppState, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  AppState,
+  Linking,
+  Pressable,
+  RefreshControl,
+  Text,
+  View,
+} from "react-native";
+import { announce } from "../a11y/useAnnouncement.ts";
 import { useTheme } from "../brand/theme.tsx";
 import type { CommerceModel, CommerceState } from "../cart/model.ts";
-import { Button, Body, FormPage, Heading } from "../components/Form.tsx";
+import { InlineMessage } from "../components/Feedback.tsx";
+import { Body, Button } from "../components/Form.tsx";
+import { Icon, type IconName } from "../components/Icon.tsx";
+import { ListRow, Section } from "../components/ListRow.tsx";
+import { Screen, ScreenHeader } from "../components/Screen.tsx";
+import { StatusBadge } from "../components/StatusBadge.tsx";
+import { TotalRow } from "../components/TotalRow.tsx";
+import {
+  type ProgressStep,
+  orderProgress,
+  progressSummary,
+} from "../customer/order-progress.ts";
 import { customerMessage } from "../customer/client.ts";
 import {
   createCustomerOrderListLoader,
@@ -40,11 +62,12 @@ export function OrdersScreen({
   menuStale,
   storeUnavailable,
   orderId,
-  backLabel,
+  backTo,
   onBack,
   onAccount,
   onOpenOrder,
   onOpenCart,
+  onOpenMenu,
 }: {
   model: CommerceModel;
   state: CommerceState;
@@ -52,11 +75,13 @@ export function OrdersScreen({
   menuStale: boolean;
   storeUnavailable: boolean;
   orderId: string | null;
-  backLabel: string;
+  /** The screen an open order returns to ("Pedidos", "Sacola"), named on its back button. */
+  backTo: string;
   onBack: () => void;
   onAccount: () => void;
   onOpenOrder: (orderId: string) => void;
   onOpenCart: () => void;
+  onOpenMenu: () => void;
 }) {
   const theme = useTheme();
   const [orders, setOrders] = useState<CustomerOrderSummary[]>([]);
@@ -287,6 +312,25 @@ export function OrdersScreen({
     return () => clearInterval(timer);
   }, [appActive, detail?.status, loadDetail, orderId, state.profile]);
 
+  // A status the 20-second refresh brings is spoken: the customer may be looking away.
+  const spokenStatus = useRef<string | null>(null);
+  useEffect(() => {
+    if (!detail) {
+      spokenStatus.current = null;
+      return;
+    }
+    const key = `${detail.id}:${detail.status}`;
+    if (
+      spokenStatus.current &&
+      spokenStatus.current.startsWith(`${detail.id}:`) &&
+      spokenStatus.current !== key
+    )
+      announce(
+        `Pedido ${detail.number}: ${statusLabel(detail.status, detail.fulfillment)}`,
+      );
+    spokenStatus.current = key;
+  }, [detail]);
+
   const cancelOrder = () => {
     if (
       !detail ||
@@ -382,198 +426,652 @@ export function OrdersScreen({
     }
   };
 
+  const refresh = () => void (orderId ? loadDetail() : loadPage(null, true));
+  const refreshControl = state.profile ? (
+    <RefreshControl
+      refreshing={
+        orderId ? detailLoading && !!detail : loading && orders.length > 0
+      }
+      onRefresh={refresh}
+      tintColor={theme.colors.accentText}
+      accessibilityLabel={orderId ? "Atualizar pedido" : "Atualizar pedidos"}
+    />
+  ) : undefined;
+
   if (!state.profile)
     return (
-      <FormPage>
-        <Button label={orderId ? backLabel : "Voltar"} onPress={onBack} />
-        <Heading>Meus pedidos</Heading>
-        <Body>Entre na conta desta pizzaria para ver seus pedidos.</Body>
-        <Button
-          label="Entrar ou criar conta"
-          variant="primary"
-          onPress={onAccount}
+      <Screen
+        header={
+          orderId ? (
+            <ScreenHeader title="Pedido" onBack={onBack} backTo={backTo} />
+          ) : (
+            <ScreenHeader title="Pedidos" large />
+          )
+        }
+      >
+        <EmptyState
+          icon="receipt-outline"
+          title="Seus pedidos aparecem aqui"
+          body="Entre na sua conta desta pizzaria para acompanhar pedidos e pedir de novo."
+          action={
+            <Button
+              label="Entrar ou criar conta"
+              variant="primary"
+              onPress={onAccount}
+            />
+          }
         />
-      </FormPage>
+      </Screen>
     );
 
-  if (orderId)
+  if (orderId) {
+    const progress = detail
+      ? orderProgress(detail.status, detail.fulfillment)
+      : null;
+    const reorderBlocked =
+      !menu || menuStale || storeUnavailable || state.busy || !!state.pending;
     return (
-      <FormPage>
-        <Button label={backLabel} onPress={onBack} />
-        <Heading>
-          {detail ? `Pedido #${detail.number}` : "Acompanhamento"}
-        </Heading>
-        <Button label="Minha conta" onPress={onAccount} />
-        {state.error ? <Body alert>{state.error}</Body> : null}
-        {detailError ? <Body alert>{detailError}</Body> : null}
-        {detailLoading && !detail ? <Body>Carregando pedido…</Body> : null}
-        {!detail && !detailLoading ? (
-          <Button label="Tentar novamente" onPress={() => void loadDetail()} />
+      <Screen
+        refreshControl={refreshControl}
+        header={
+          <ScreenHeader
+            title={detail ? `Pedido #${detail.number}` : "Pedido"}
+            onBack={onBack}
+            backTo={backTo}
+          />
+        }
+      >
+        {state.error ? (
+          <InlineMessage tone="error">{state.error}</InlineMessage>
+        ) : null}
+        {detailError ? (
+          <InlineMessage
+            tone="error"
+            action={
+              <Button
+                label="Tentar novamente"
+                icon="refresh"
+                disabled={detailLoading}
+                onPress={() => void loadDetail()}
+              />
+            }
+          >
+            {detailError}
+          </InlineMessage>
+        ) : null}
+        {detailLoading && !detail ? (
+          <Loading label="Carregando pedido…" />
+        ) : null}
+        {!detail && !detailLoading && !detailError ? (
+          <Button
+            label="Tentar novamente"
+            icon="refresh"
+            onPress={() => void loadDetail()}
+          />
         ) : null}
         {detail ? (
           <>
             <View
-              accessibilityLiveRegion="polite"
-              style={{
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.border,
-                borderRadius: theme.radius.card,
-                borderWidth: 1,
-                gap: 8,
-                padding: theme.spacing(4),
-              }}
+              style={[
+                {
+                  backgroundColor: theme.colors.surface,
+                  borderRadius: theme.radius.large,
+                  gap: theme.spacing(3),
+                  padding: theme.spacing(4),
+                },
+                theme.shadow,
+              ]}
             >
-              <Heading>
+              <Text
+                accessibilityRole="header"
+                style={{
+                  color: theme.colors.text,
+                  ...theme.typography.h3,
+                }}
+              >
                 {statusLabel(detail.status, detail.fulfillment)}
-              </Heading>
+              </Text>
               <Body>
                 {detail.fulfillment === "DELIVERY" ? "Entrega" : "Retirada"} ·
-                Pedido em {dateTime(detail.placedAt)}
+                feito em {dateTime(detail.placedAt)}
               </Body>
               {detail.estimate && !terminal(detail.status) ? (
-                <Body>
-                  Previsão aproximada da loja: {estimateAt(detail)}. Não é
-                  rastreamento em tempo real.
-                </Body>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    gap: theme.spacing(2),
+                    alignItems: "center",
+                  }}
+                >
+                  <Icon
+                    name="time-outline"
+                    size={20}
+                    color={theme.colors.accentText}
+                  />
+                  <Text
+                    style={{
+                      flex: 1,
+                      color: theme.colors.text,
+                      ...theme.typography.body,
+                      fontWeight: "600",
+                    }}
+                  >
+                    Previsão da pizzaria: {estimateAt(detail)}
+                  </Text>
+                </View>
               ) : null}
-              {detail.status !== "PLACED" && !terminal(detail.status) ? (
-                <Body>
-                  Para solicitar uma alteração ou cancelamento, fale com a
-                  pizzaria
-                  {detail.contactPhone
-                    ? ` pelo telefone ${detail.contactPhone}`
-                    : " diretamente"}
-                  .
-                </Body>
+              {progress ? (
+                <ProgressSteps
+                  steps={progress}
+                  summary={progressSummary(detail.status, detail.fulfillment)}
+                />
               ) : null}
-              <Body>
-                Atualização automática a cada 20 segundos enquanto esta tela
-                estiver aberta.
-              </Body>
+              {!terminal(detail.status) ? (
+                <Text
+                  style={{
+                    color: theme.colors.textSecondary,
+                    ...theme.typography.bodySmall,
+                  }}
+                >
+                  A previsão é aproximada, não é rastreamento em tempo real.
+                  Esta tela se atualiza sozinha a cada 20 segundos.
+                </Text>
+              ) : null}
             </View>
-            <Button
-              label={detailLoading ? "Atualizando…" : "Atualizar agora"}
-              disabled={detailLoading}
-              onPress={() => void loadDetail()}
-            />
-            <Heading>Linha do tempo</Heading>
-            {detail.history.map((change, index) => (
-              <View
-                key={`${change.at}-${index}`}
-                style={{ gap: 4, paddingLeft: 8 }}
+
+            {detail.contactPhone || !terminal(detail.status) ? (
+              <Section
+                footer={
+                  detail.status !== "PLACED" && !terminal(detail.status)
+                    ? "O preparo já começou: para alterar ou cancelar, fale com a pizzaria."
+                    : undefined
+                }
               >
-                <Body>{statusLabel(change.to, detail.fulfillment)}</Body>
-                <Body>{dateTime(change.at)}</Body>
-                {change.reasonCode ? (
-                  <Body>{reasonLabel(change.reasonCode)}</Body>
-                ) : null}
-              </View>
-            ))}
-            <Heading>Itens</Heading>
-            {detail.items.map((item, index) => (
-              <View key={`${item.kind}-${index}`} style={{ gap: 4 }}>
-                <Body>
-                  {itemName(item)} · {item.quantity} un.
-                </Body>
-                <Body>{formatCents(item.totalCents)}</Body>
-              </View>
-            ))}
-            <Heading>Resumo</Heading>
-            <Body>Itens: {formatCents(detail.itemsSubtotalCents)}</Body>
-            <Body>Taxa de entrega: {formatCents(detail.deliveryFeeCents)}</Body>
-            <Body>Desconto: {formatCents(detail.discountCents)}</Body>
-            <Body>Total: {formatCents(detail.totalCents)}</Body>
-            <Body>Pagamento: {paymentLabel[detail.paymentMethod]}</Body>
-            {detail.changeForCents !== null ? (
-              <Body>Troco para: {formatCents(detail.changeForCents)}</Body>
+                {detail.contactPhone ? (
+                  <ListRow
+                    first
+                    icon="call-outline"
+                    title="Ligar para a pizzaria"
+                    subtitle={detail.contactPhone}
+                    accessibilityHint="Abre o telefone"
+                    onPress={() =>
+                      void Linking.openURL(
+                        `tel:${detail.contactPhone!.replace(/[^\d+]/g, "")}`,
+                      )
+                    }
+                  />
+                ) : (
+                  <ListRow
+                    first
+                    icon="storefront-outline"
+                    title="Fale diretamente com a pizzaria"
+                    subtitle="A loja não informou um telefone."
+                  />
+                )}
+              </Section>
             ) : null}
-            {detail.notes ? <Body>Observações: {detail.notes}</Body> : null}
+
+            <Section title="Itens">
+              <View
+                style={{ padding: theme.spacing(4), gap: theme.spacing(3) }}
+              >
+                {detail.items.map((item, index) => (
+                  <View
+                    key={`${item.kind}-${index}`}
+                    accessible
+                    accessibilityLabel={`${item.quantity} ${itemName(item)}, ${formatCents(item.totalCents)}`}
+                    style={{ flexDirection: "row", gap: theme.spacing(3) }}
+                  >
+                    <Text
+                      style={{
+                        color: theme.colors.accentText,
+                        ...theme.typography.body,
+                        fontWeight: "700",
+                        minWidth: 28,
+                      }}
+                    >
+                      {item.quantity}×
+                    </Text>
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: theme.colors.text,
+                        ...theme.typography.body,
+                      }}
+                    >
+                      {itemName(item)}
+                    </Text>
+                    <Text
+                      style={{
+                        color: theme.colors.text,
+                        ...theme.typography.body,
+                        fontWeight: "600",
+                      }}
+                    >
+                      {formatCents(item.totalCents)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </Section>
+
+            <Section title="Resumo">
+              <View
+                style={{ padding: theme.spacing(4), gap: theme.spacing(2) }}
+              >
+                <TotalRow
+                  label="Itens"
+                  value={formatCents(detail.itemsSubtotalCents)}
+                />
+                <TotalRow
+                  label="Entrega"
+                  value={formatCents(detail.deliveryFeeCents)}
+                />
+                {detail.discountCents ? (
+                  <TotalRow
+                    label="Desconto"
+                    value={`− ${formatCents(detail.discountCents)}`}
+                  />
+                ) : null}
+                <TotalRow
+                  strong
+                  label="Total"
+                  value={formatCents(detail.totalCents)}
+                />
+                <TotalRow
+                  label="Pagamento"
+                  value={paymentLabel[detail.paymentMethod]}
+                />
+                {detail.changeForCents !== null ? (
+                  <TotalRow
+                    label="Troco para"
+                    value={formatCents(detail.changeForCents)}
+                  />
+                ) : null}
+                {detail.notes ? <Body>Observações: {detail.notes}</Body> : null}
+              </View>
+            </Section>
+
+            {detail.history.length ? (
+              <Section title="Histórico">
+                <View
+                  style={{ padding: theme.spacing(4), gap: theme.spacing(3) }}
+                >
+                  {detail.history.map((change, index) => (
+                    <View
+                      key={`${change.at}-${index}`}
+                      accessible
+                      style={{ gap: 2 }}
+                    >
+                      <Text
+                        style={{
+                          color: theme.colors.text,
+                          ...theme.typography.body,
+                          fontWeight: "600",
+                        }}
+                      >
+                        {statusLabel(change.to, detail.fulfillment)}
+                      </Text>
+                      <Text
+                        style={{
+                          color: theme.colors.textSecondary,
+                          ...theme.typography.bodySmall,
+                        }}
+                      >
+                        {dateTime(change.at)}
+                        {change.reasonCode
+                          ? ` · ${reasonLabel(change.reasonCode)}`
+                          : ""}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </Section>
+            ) : null}
+
+            {storeUnavailable ? (
+              <InlineMessage tone="info">
+                A pizzaria está indisponível agora. Peça de novo quando ela
+                voltar a atender.
+              </InlineMessage>
+            ) : menuStale ? (
+              <InlineMessage tone="warning">
+                Atualize o cardápio antes de pedir de novo: preços e
+                disponibilidade podem ter mudado.
+              </InlineMessage>
+            ) : state.pending ? (
+              <InlineMessage tone="warning">
+                Recupere o pedido pendente na sacola antes de montar outro.
+              </InlineMessage>
+            ) : null}
+            <Button
+              label="Pedir de novo"
+              icon="refresh"
+              variant="primary"
+              disabled={reorderBlocked}
+              onPress={reorder}
+            />
             {detail.status === "PLACED" ? (
               <Button
-                label={canceling ? "Cancelando…" : "Cancelar pedido"}
+                label="Cancelar pedido"
+                variant="destructive"
+                loading={canceling}
                 disabled={canceling}
+                accessibilityLabel={
+                  canceling ? "Cancelando pedido" : "Cancelar pedido"
+                }
                 onPress={cancelOrder}
               />
             ) : null}
-            <Button
-              label="Pedir novamente"
-              disabled={
-                !menu ||
-                menuStale ||
-                storeUnavailable ||
-                state.busy ||
-                !!state.pending
-              }
-              onPress={reorder}
-            />
-            {storeUnavailable ? (
-              <Body>
-                A loja está indisponível; tente pedir novamente quando ela
-                voltar a atender.
-              </Body>
-            ) : null}
-            {menuStale ? (
-              <Body alert>
-                Atualize o cardápio antes de pedir novamente; disponibilidade e
-                preços podem ter mudado.
-              </Body>
-            ) : null}
-            {state.pending ? (
-              <Body alert>
-                Recupere a confirmação pendente antes de montar outro pedido.
-              </Body>
-            ) : null}
           </>
         ) : null}
-      </FormPage>
+      </Screen>
     );
+  }
 
   return (
-    <FormPage>
-      <Button label="Voltar" onPress={onBack} />
-      <Heading>Meus pedidos</Heading>
-      <Button label="Minha conta" onPress={onAccount} />
-      {state.error ? <Body alert>{state.error}</Body> : null}
-      {error ? <Body alert>{error}</Body> : null}
-      {loading && orders.length === 0 ? <Body>Carregando pedidos…</Body> : null}
+    <Screen
+      refreshControl={refreshControl}
+      header={<ScreenHeader title="Pedidos" large />}
+    >
+      {state.error ? (
+        <InlineMessage tone="error">{state.error}</InlineMessage>
+      ) : null}
+      {error ? (
+        <InlineMessage
+          tone="error"
+          action={
+            <Button
+              label="Tentar novamente"
+              icon="refresh"
+              disabled={loading}
+              onPress={() => void loadPage(null, true)}
+            />
+          }
+        >
+          {error}
+        </InlineMessage>
+      ) : null}
+      {loading && orders.length === 0 ? (
+        <Loading label="Carregando pedidos…" />
+      ) : null}
       {!loading && !error && orders.length === 0 ? (
-        <Body>Você ainda não fez pedidos nesta pizzaria.</Body>
+        <EmptyState
+          icon="pizza-outline"
+          title="Nenhum pedido ainda"
+          body="Quando você pedir nesta pizzaria, o pedido aparece aqui para acompanhar."
+          action={
+            <Button
+              label="Ver o cardápio"
+              variant="primary"
+              onPress={onOpenMenu}
+            />
+          }
+        />
       ) : null}
       {orders.map((order) => (
-        <View
+        <OrderCard
           key={order.id}
-          style={{
-            backgroundColor: theme.colors.surface,
-            borderColor: theme.colors.border,
-            borderRadius: theme.radius.card,
-            borderWidth: 1,
-            gap: 8,
-            padding: theme.spacing(4),
-          }}
-        >
-          <Heading>Pedido #{order.number}</Heading>
-          <Body>{statusLabel(order.status, order.fulfillment)}</Body>
-          <Body>{dateTime(order.placedAt)}</Body>
-          <Body>
-            {order.fulfillment === "DELIVERY" ? "Entrega" : "Retirada"} ·{" "}
-            {formatCents(order.totalCents)}
-          </Body>
-          <Button label="Ver pedido" onPress={() => onOpenOrder(order.id)} />
-        </View>
+          order={order}
+          onPress={() => onOpenOrder(order.id)}
+        />
       ))}
-      <Button
-        label={loading ? "Carregando…" : "Atualizar lista"}
-        disabled={loading}
-        onPress={() => void loadPage(null, true)}
-      />
       {cursor !== null ? (
         <Button
-          label={loading ? "Carregando…" : "Carregar mais"}
+          label="Carregar mais pedidos"
+          loading={loading}
           disabled={loading}
           onPress={() => void loadPage(cursor, false)}
         />
       ) : null}
-    </FormPage>
+    </Screen>
+  );
+}
+
+function OrderCard({
+  order,
+  onPress,
+}: {
+  order: CustomerOrderSummary;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  const kind = order.fulfillment === "DELIVERY" ? "Entrega" : "Retirada";
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Pedido ${order.number}, ${statusLabel(order.status, order.fulfillment)}, ${kind}, ${dateTime(order.placedAt)}, ${formatCents(order.totalCents)}`}
+      accessibilityHint="Abre o acompanhamento do pedido"
+      style={({ pressed }) => [
+        {
+          backgroundColor: theme.colors.surface,
+          borderRadius: theme.radius.large,
+          gap: theme.spacing(2),
+          padding: theme.spacing(4),
+          opacity: pressed ? 0.85 : 1,
+        },
+        theme.shadow,
+      ]}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: theme.spacing(2),
+        }}
+      >
+        <Text
+          style={{
+            flex: 1,
+            color: theme.colors.text,
+            ...theme.typography.title,
+            fontWeight: "700",
+          }}
+        >
+          Pedido #{order.number}
+        </Text>
+        <Icon name="chevron-forward" size={20} color={theme.colors.muted} />
+      </View>
+      <StatusBadge status={order.status} fulfillment={order.fulfillment} />
+      <View style={{ flexDirection: "row", gap: theme.spacing(3) }}>
+        <Text
+          style={{
+            flex: 1,
+            color: theme.colors.textSecondary,
+            ...theme.typography.bodySmall,
+          }}
+        >
+          {kind} · {dateTime(order.placedAt)}
+        </Text>
+        <Text
+          style={{
+            color: theme.colors.text,
+            ...theme.typography.body,
+            fontWeight: "700",
+          }}
+        >
+          {formatCents(order.totalCents)}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/** The order's steps, top to bottom. Each one says in words whether it is done, current or next. */
+function ProgressSteps({
+  steps,
+  summary,
+}: {
+  steps: ProgressStep[];
+  summary: string;
+}) {
+  const theme = useTheme();
+  return (
+    <View
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={summary}
+      style={{ gap: 0, paddingTop: theme.spacing(1) }}
+    >
+      {steps.map((step, index) => {
+        const last = index === steps.length - 1;
+        const done = step.state === "done";
+        const current = step.state === "current";
+        return (
+          <View
+            key={step.status}
+            style={{ flexDirection: "row", gap: theme.spacing(3) }}
+          >
+            <View style={{ alignItems: "center", width: 24 }}>
+              <View
+                style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: 12,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: done
+                    ? theme.colors.success
+                    : current
+                      ? theme.colors.primary
+                      : theme.colors.surface,
+                  borderWidth: done || current ? 0 : 2,
+                  borderColor: theme.colors.inputBorder,
+                }}
+              >
+                {done ? (
+                  <Icon name="checkmark" size={16} color="#FFFFFF" />
+                ) : current ? (
+                  <View
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: theme.colors.onPrimary,
+                    }}
+                  />
+                ) : null}
+              </View>
+              {!last ? (
+                <View
+                  style={{
+                    width: 2,
+                    flex: 1,
+                    minHeight: 16,
+                    backgroundColor: done
+                      ? theme.colors.success
+                      : theme.colors.border,
+                  }}
+                />
+              ) : null}
+            </View>
+            <View
+              style={{ flex: 1, paddingBottom: last ? 0 : theme.spacing(3) }}
+            >
+              <Text
+                style={{
+                  color:
+                    step.state === "upcoming"
+                      ? theme.colors.textSecondary
+                      : theme.colors.text,
+                  ...theme.typography.body,
+                  fontWeight: current ? "700" : "400",
+                }}
+              >
+                {step.label}
+              </Text>
+              {current ? (
+                <Text
+                  style={{
+                    color: theme.colors.accentText,
+                    ...theme.typography.caption,
+                    fontWeight: "700",
+                  }}
+                >
+                  AGORA
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function Loading({ label }: { label: string }) {
+  const theme = useTheme();
+  return (
+    <View
+      accessible
+      accessibilityLabel={label}
+      style={{
+        alignItems: "center",
+        gap: theme.spacing(3),
+        paddingVertical: theme.spacing(7),
+      }}
+    >
+      <ActivityIndicator color={theme.colors.accentText} />
+      <Body>{label}</Body>
+    </View>
+  );
+}
+
+function EmptyState({
+  icon,
+  title,
+  body,
+  action,
+}: {
+  icon: IconName;
+  title: string;
+  body: string;
+  action: ReactNode;
+}) {
+  const theme = useTheme();
+  return (
+    <View
+      style={{
+        alignItems: "center",
+        gap: theme.spacing(3),
+        paddingVertical: theme.spacing(7),
+        paddingHorizontal: theme.spacing(4),
+      }}
+    >
+      <View
+        style={{
+          width: 72,
+          height: 72,
+          borderRadius: 36,
+          backgroundColor: theme.colors.orangeSoft,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Icon name={icon} size={34} color={theme.colors.accentText} />
+      </View>
+      <Text
+        accessibilityRole="header"
+        style={{
+          textAlign: "center",
+          color: theme.colors.text,
+          ...theme.typography.h3,
+        }}
+      >
+        {title}
+      </Text>
+      <Text
+        style={{
+          textAlign: "center",
+          color: theme.colors.textSecondary,
+          ...theme.typography.body,
+        }}
+      >
+        {body}
+      </Text>
+      <View style={{ alignSelf: "stretch" }}>{action}</View>
+    </View>
   );
 }
 
