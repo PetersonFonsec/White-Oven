@@ -150,6 +150,9 @@ describe("tenant manifests and the Expo config", () => {
       "http://localhost:3000",
       "http://127.0.0.1:3000",
       "http://10.0.2.2:3000",
+      "http://192.168.15.8:3000",
+      "http://10.0.0.12:3000",
+      "http://172.20.1.4:3000",
     ])
       assert.equal(parseApiUrl(local), local);
     for (const refused of [
@@ -158,6 +161,7 @@ describe("tenant manifests and the Expo config", () => {
       "https://api.whiteoven.com.br/v1",
       "https://api.whiteoven.com.br?x=1",
       "ftp://api.whiteoven.com.br",
+      "http://8.8.8.8:3000",
       "não é url",
     ])
       assert.throws(() => parseApiUrl(refused), ManifestError, refused);

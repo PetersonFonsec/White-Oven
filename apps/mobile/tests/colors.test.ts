@@ -33,7 +33,7 @@ describe("brand colors", () => {
   it("measures contrast with the WCAG formula", () => {
     assert.equal(contrastRatio("#FFFFFF", "#000000"), 21);
     assert.equal(contrastRatio("#777777", "#777777"), 1);
-    assert.ok(Math.abs(contrastRatio("#252525", "#FF922B") - 6.86) < 0.01);
+    assert.ok(Math.abs(contrastRatio("#1A1512", "#FF6B00") - 6.34) < 0.02);
     assert.deepEqual(contrastFailures(DEFAULT_BRAND_COLORS), []);
     assert.deepEqual(
       contrastFailures({ ...DEFAULT_BRAND_COLORS, accentText: "#FFB000" }),
@@ -49,7 +49,7 @@ describe("brand colors", () => {
     assert.deepEqual(parseBrandColors({}, true), DEFAULT_BRAND_COLORS);
     assert.equal(parseBrandColors({}), null);
     assert.deepEqual(
-      parseBrandColors({ primary: "#ff922b" }, true),
+      parseBrandColors({ primary: "#ff6b00" }, true),
       DEFAULT_BRAND_COLORS,
     );
     for (const broken of [

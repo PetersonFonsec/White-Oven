@@ -41,7 +41,7 @@ export function Choice({
       style={({ pressed }) => [
         styles.chip,
         {
-          borderRadius: theme.radius.small,
+          borderRadius: theme.radius.medium,
           borderColor: selected ? theme.colors.primary : theme.colors.border,
           backgroundColor: selected
             ? pressed
@@ -72,7 +72,7 @@ export function Choice({
 
 const styles = StyleSheet.create({
   chip: {
-    minHeight: 48,
+    minHeight: 52,
     minWidth: 48,
     paddingHorizontal: 14,
     paddingVertical: 8,

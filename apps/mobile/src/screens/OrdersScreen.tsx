@@ -388,7 +388,11 @@ export function OrdersScreen({
         <Button label={orderId ? backLabel : "Voltar"} onPress={onBack} />
         <Heading>Meus pedidos</Heading>
         <Body>Entre na conta desta pizzaria para ver seus pedidos.</Body>
-        <Button label="Entrar ou criar conta" onPress={onAccount} />
+        <Button
+          label="Entrar ou criar conta"
+          variant="primary"
+          onPress={onAccount}
+        />
       </FormPage>
     );
 

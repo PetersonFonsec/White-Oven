@@ -3,10 +3,21 @@ import test from "node:test";
 import {
   createCustomerClient,
   CustomerError,
+  customerMessage,
   type SecretStore,
 } from "../src/customer/client.ts";
 import { secureRecord, type SecureKV } from "../src/customer/secure-record.ts";
 import { randomUUID } from "node:crypto";
+
+test("validation failures name the fields the customer needs to correct", () => {
+  const error = new CustomerError(422, "VALIDATION_FAILED", {
+    errors: [{ path: "phone" }, { path: "password" }, { path: "phone" }],
+  });
+  assert.equal(
+    customerMessage(error),
+    "Confira telefone (use +55 e DDD, por exemplo +5511999999999), senha (mínimo de 10 caracteres) e tente novamente.",
+  );
+});
 
 function secret(
   value: string | null = "old-refresh",
