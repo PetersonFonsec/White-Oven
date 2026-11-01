@@ -6,18 +6,18 @@ O ambiente de produção ainda precisa ser provisionado. Não execute os passos 
 
 ## Registro do piloto
 
-| Campo | Valor |
-| --- | --- |
-| Pizzaria / razão social | |
-| Responsável da pizzaria | |
-| Slug do tenant | |
-| UUID do tenant | |
-| Ambiente e URL pública da API | |
-| Região e fuso IANA da loja | |
-| Plano e início de vigência | |
-| Responsável WhiteOven | |
-| Data de início do piloto | |
-| Commit publicado | |
+| Campo                         | Valor |
+| ----------------------------- | ----- |
+| Pizzaria / razão social       |       |
+| Responsável da pizzaria       |       |
+| Slug do tenant                |       |
+| UUID do tenant                |       |
+| Ambiente e URL pública da API |       |
+| Região e fuso IANA da loja    |       |
+| Plano e início de vigência    |       |
+| Responsável WhiteOven         |       |
+| Data de início do piloto      |       |
+| Commit publicado              |       |
 
 ## 1. Aprovações e dados da loja
 
@@ -63,9 +63,9 @@ Siga o [runbook de publicação mobile](mobile-publishing.md), que cobre as cont
 - [ ] Apps publicados/disponíveis nas lojas, ou distribuição de teste aceita pela pizzaria registrada aqui.
 
 | Plataforma | Identificador do app | Versão/build | URL ou referência da loja | Data |
-| --- | --- | --- | --- | --- |
-| iOS | | | | |
-| Android | | | | |
+| ---------- | -------------------- | ------------ | ------------------------- | ---- |
+| iOS        |                      |              |                           |      |
+| Android    |                      |              |                           |      |
 
 ## 5. Ensaio antes de aceitar pedidos
 
@@ -83,18 +83,18 @@ Registre apenas referências não sensíveis dos pedidos sintéticos e descarte 
 
 Faça esta etapa com a pizzaria, depois dos itens anteriores. Não coloque nome, telefone, endereço ou conteúdo pessoal do cliente neste registro; use o identificador interno do pedido.
 
-| Evidência | Registro |
-| --- | --- |
-| Data/hora local do pedido | |
-| ID interno do pedido | |
-| Número exibido ao cliente | |
-| Estado final `COMPLETED` e autor da transição | |
-| Plano/snapshot aplicado | |
-| `BillingEntry` do pedido (ID interno) | |
-| Componentes conferidos: subtotal, taxa, total e método presencial | |
-| Resultado e divergências | |
-| Responsável da pizzaria que confirmou | |
-| Responsável WhiteOven que conferiu | |
+| Evidência                                                         | Registro |
+| ----------------------------------------------------------------- | -------- |
+| Data/hora local do pedido                                         |          |
+| ID interno do pedido                                              |          |
+| Número exibido ao cliente                                         |          |
+| Estado final `COMPLETED` e autor da transição                     |          |
+| Plano/snapshot aplicado                                           |          |
+| `BillingEntry` do pedido (ID interno)                             |          |
+| Componentes conferidos: subtotal, taxa, total e método presencial |          |
+| Resultado e divergências                                          |          |
+| Responsável da pizzaria que confirmou                             |          |
+| Responsável WhiteOven que conferiu                                |          |
 
 - [ ] O cliente fez o pedido pelo app publicado e a pizzaria o recebeu no painel.
 - [ ] A equipe concluiu o pedido pela transição autorizada; horário e autoria aparecem no histórico.
@@ -105,10 +105,10 @@ Faça esta etapa com a pizzaria, depois dos itens anteriores. Não coloque nome,
 
 ## 7. Aceite do piloto
 
-| Papel | Nome | Data | Aceite |
-| --- | --- | --- | --- |
-| Responsável da pizzaria | | | |
-| Responsável pelo produto | | | |
-| Responsável técnico | | | |
+| Papel                    | Nome | Data | Aceite |
+| ------------------------ | ---- | ---- | ------ |
+| Responsável da pizzaria  |      |      |        |
+| Responsável pelo produto |      |      |        |
+| Responsável técnico      |      |      |        |
 
 O M7.5 só pode ser marcado concluído depois do pedido real acima e da conferência do `BillingEntry`. Registre a versão do app, commit do servidor, IDs internos de evidência e pendências remanescentes em local operacional aprovado. Não marque como concluído por ter apenas configurado tenant, cardápio ou builds.
