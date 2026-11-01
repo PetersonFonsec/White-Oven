@@ -12,6 +12,8 @@ interface Props {
   leftImageUrl?: string | null;
   rightImageUrl?: string | null;
   size?: number;
+  /** The half being edited: the other one is dimmed, and the label of this one is filled. */
+  activeSide?: "LEFT" | "RIGHT" | null;
 }
 
 /**
@@ -25,6 +27,7 @@ export function PizzaVisual({
   leftImageUrl = null,
   rightImageUrl = null,
   size = 240,
+  activeSide = null,
 }: Props) {
   const theme = useTheme();
   const reduceMotion = useReducedMotion();
@@ -116,38 +119,73 @@ export function PizzaVisual({
           },
         ]}
       />
+      {mode === "HALVES" && activeSide ? (
+        // Dims the half not being edited, so the active one stands out without color alone.
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: activeSide === "LEFT" ? half : 0,
+            width: half,
+            height: inner,
+            backgroundColor: "rgba(255,255,255,0.55)",
+          }}
+        />
+      ) : null}
       {mode === "HALVES" ? (
         <>
-          <Text
-            maxFontSizeMultiplier={1.3}
-            style={[
-              styles.label,
-              { left: 0, width: half, color: theme.colors.onPrimary },
-            ]}
-          >
-            Esquerda
-          </Text>
-          <Text
-            maxFontSizeMultiplier={1.3}
-            style={[
-              styles.label,
-              { left: half, width: half, color: theme.colors.text },
-            ]}
-          >
-            Direita
-          </Text>
+          <HalfLabel
+            text="Esquerda"
+            left={0}
+            width={half}
+            active={activeSide === "LEFT"}
+          />
+          <HalfLabel
+            text="Direita"
+            left={half}
+            width={half}
+            active={activeSide === "RIGHT"}
+          />
         </>
       ) : (
-        <Text
-          maxFontSizeMultiplier={1.3}
-          style={[
-            styles.label,
-            { left: 0, width: inner, color: theme.colors.onPrimary },
-          ]}
-        >
-          Inteira
-        </Text>
+        <HalfLabel text="Inteira" left={0} width={inner} active={false} />
       )}
+    </View>
+  );
+}
+
+/** A half's name on a pill with its own background: readable over any photo (WCAG 1.4.3). */
+function HalfLabel({
+  text,
+  left,
+  width,
+  active,
+}: {
+  text: string;
+  left: number;
+  width: number;
+  active: boolean;
+}) {
+  const theme = useTheme();
+  return (
+    <View pointerEvents="none" style={[styles.labelRow, { left, width }]}>
+      <Text
+        maxFontSizeMultiplier={1.3}
+        style={[
+          styles.label,
+          {
+            color: active ? theme.colors.onPrimary : theme.colors.text,
+            backgroundColor: active
+              ? theme.colors.primary
+              : theme.colors.surface,
+            borderRadius: theme.radius.pill,
+            overflow: "hidden",
+          },
+        ]}
+      >
+        {active ? `✓ ${text}` : text}
+      </Text>
     </View>
   );
 }
@@ -164,10 +202,17 @@ const styles = StyleSheet.create({
   fullImage: { position: "absolute", top: 0, left: 0, overflow: "hidden" },
   right: { position: "absolute", top: 0, overflow: "hidden" },
   divider: { position: "absolute", top: 0, width: 6 },
-  label: {
+  labelRow: {
     position: "absolute",
-    textAlign: "center",
-    fontSize: 16,
+    top: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  label: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    fontSize: 14,
     fontWeight: "800",
   },
 });
