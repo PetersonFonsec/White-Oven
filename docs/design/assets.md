@@ -14,6 +14,12 @@ Esses dois arquivos estão versionados em `docs/design`, com autorização expl�
 
 Os PNGs fonte permanecem no repositório. `astro:assets` e Sharp (declarado na landing, exigido pelo serviço de imagens do Astro) geram WebP durante o build estático; o hero tem variantes responsivas e dimensões reservadas. Não existe requisição para provedor de imagens no navegador. O logo e os grupos SVG de ingredientes continuam sendo código próprio do projeto.
 
+## Kit de assets para o app
+
+`apps/mobile/assets/whiteoven-kit/` contém sete PNGs gerados com imagegen em 2026-11-01 a partir das referências fornecidas pelo Product Owner: logo WhiteOven, confirmação de e-mail, pizza de abertura, forno 404, pedidos vazios, carrinho vazio e entregador a caminho. A publicação desses assets na PR foi autorizada pelo Product Owner nesta mesma tarefa.
+
+O [README do kit](../../apps/mobile/assets/whiteoven-kit/README.md) registra os prompts e as orientações de uso; o [registro do entregador](../../apps/mobile/assets/whiteoven-kit/delivery-on-the-way.md) descreve a referência adicional. São arquivos para integração posterior, sem novas telas ou fluxos implementados. A logo é uma recriação raster, e a pizza não é fotografia de produto real. A identidade própria das lojas permanece independente desse kit.
+
 ## Capturas de revisão
 
 `docs/design/screenshots/*` é gerado pelo Playwright a partir da landing local. São evidências para revisão humana; não devem ser confundidas com imagens da referência ou com baselines de comparação automática de pixels.

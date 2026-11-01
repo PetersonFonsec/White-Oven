@@ -1,0 +1,7 @@
+# Entregador a caminho
+
+Gerado com imagegen integrado em 2026-11-01 a partir da referência fornecida pelo usuário `WhiteOven_ Jornada da Pizza Artesanal copy.png`. Asset: `delivery-on-the-way.png`. Ilustração independente para integração posterior, com transparência ao redor da cena. Não implementa rastreamento ou novas telas.
+
+## Prompt
+
+Use case: stylized-concept. Create a standalone mobile app order-on-the-way illustration faithfully inspired by the delivery rider illustration near the bottom of the supplied reference image. Reference image role: visual style and composition only. Side view of a friendly delivery rider facing right on a vivid orange vintage scooter, orange helmet and shirt, dark charcoal trousers, white shoes, orange delivery box mounted behind the seat with a small white stylized pizza oven emblem (no lettering). Keep the reference simple friendly softly shaded editorial illustration style, not photorealistic or glossy toy rendering. Behind the rider include a subtle compact pale peach city skyline, a soft cream semicircle and low orange rolling shapes with a delicate ground line; this scenic vignette is part of the illustration, with transparent outer canvas. Warm orange, apricot, ivory and charcoal palette. Landscape composition, whole scooter, wheels, rider and skyline visible, 10% transparent margin. No phone, no device frame, no order timeline, no numbers, no labels, no typography, no watermark. Genuine alpha transparency outside the scene. Deliver one high resolution PNG asset.
