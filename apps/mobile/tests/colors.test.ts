@@ -7,6 +7,8 @@ import {
   BRAND_COLOR_TOKENS,
   DEFAULT_BRAND_COLORS,
   FIXED_COLORS,
+  FIXED_TEXT_PAIRS,
+  MINIMUM_CONTRAST,
   contrastFailures,
   contrastRatio,
   parseBrandColors,
@@ -38,6 +40,25 @@ describe("brand colors", () => {
     assert.deepEqual(
       contrastFailures({ ...DEFAULT_BRAND_COLORS, accentText: "#FFB000" }),
       ["accentText/surface", "accentText/cream"],
+    );
+  });
+
+  it("keeps every fixed text pair at 4.5:1, error text included", () => {
+    for (const [foreground, background] of FIXED_TEXT_PAIRS)
+      assert.ok(
+        contrastRatio(FIXED_COLORS[foreground], FIXED_COLORS[background]) >=
+          MINIMUM_CONTRAST,
+        `${foreground}/${background}`,
+      );
+    // Why errorText exists: the error color fails as text on its own surface.
+    assert.ok(
+      contrastRatio(FIXED_COLORS.error, FIXED_COLORS.errorSurface) <
+        MINIMUM_CONTRAST,
+    );
+    // Placeholders use `muted`; `textMuted` is decorative only.
+    assert.ok(
+      contrastRatio(FIXED_COLORS.textMuted, FIXED_COLORS.surface) <
+        MINIMUM_CONTRAST,
     );
   });
 

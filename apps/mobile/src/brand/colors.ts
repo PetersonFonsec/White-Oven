@@ -34,6 +34,8 @@ export const FIXED_COLORS = {
   focus: "#104987",
   error: "#D93B3B",
   errorSurface: "#FFF1F1",
+  /** Error text: `error` reaches only 4.1:1 on `errorSurface`; this one passes 4.5:1 on every surface. */
+  errorText: "#B42318",
   success: "#27834A",
   orangeSoft: "#FFF0E5",
   surfaceSecondary: "#FFF3E9",
@@ -52,6 +54,26 @@ export const CONTRAST_PAIRS: readonly [
   ["accentText", "cream"],
 ];
 export const MINIMUM_CONTRAST = 4.5;
+
+/**
+ * Fixed text pairs the app draws on its own surfaces (text, secondary text, error and success
+ * messages, placeholders). A test keeps every pair at 4.5:1 (WCAG 2.2 AA, normal text).
+ */
+export const FIXED_TEXT_PAIRS: readonly [
+  keyof typeof FIXED_COLORS,
+  keyof typeof FIXED_COLORS,
+][] = [
+  ["text", "surface"],
+  ["text", "cream"],
+  ["text", "surfaceSecondary"],
+  ["muted", "surface"],
+  ["muted", "cream"],
+  ["muted", "surfaceSecondary"],
+  ["errorText", "surface"],
+  ["errorText", "cream"],
+  ["errorText", "errorSurface"],
+  ["success", "surface"],
+];
 
 const HEX = /^#[0-9A-F]{6}$/i;
 

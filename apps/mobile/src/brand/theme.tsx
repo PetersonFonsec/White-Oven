@@ -16,7 +16,17 @@ export interface AppTheme {
       textSecondary: string;
       textMuted: string;
       warning: string;
+      /** Placeholder text: `textMuted` fails 4.5:1, so placeholders use the secondary text. */
+      placeholder: string;
     };
+  /** One soft shadow for raised cards and bars (tokens.json `shadow.card`). */
+  shadow: {
+    shadowColor: string;
+    shadowOpacity: number;
+    shadowOffset: { width: number; height: number };
+    shadowRadius: number;
+    elevation: number;
+  };
   spacing: (step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) => number;
   radius: {
     small: number;
@@ -78,6 +88,14 @@ export function themeFor(colors: BrandColors): AppTheme {
       textSecondary: fixed.muted,
       textMuted: fixed.textMuted,
       warning: fixed.warning,
+      placeholder: fixed.muted,
+    },
+    shadow: {
+      shadowColor: "#252525",
+      shadowOpacity: 0.07,
+      shadowOffset: { width: 0, height: 8 },
+      shadowRadius: 14,
+      elevation: 3,
     },
     spacing: (step) => SPACING[step],
     radius: { small: 8, medium: 12, large: 16, card: 16, xl: 24, pill: 999 },
