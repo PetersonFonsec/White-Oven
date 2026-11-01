@@ -279,13 +279,46 @@ export function emptyState() {
   };
 }
 
+/** Alerts decided from /metrics; they cannot be confirmed or resolved without a fresh scrape. */
+const METRIC_ALERT = /^(error_rate|latency|job_failures):/;
+
+/**
+ * Baseline for the window: the newest snapshot of the current API process taken at least one
+ * window ago, else the oldest one kept. Counters start at zero when the process starts, so a
+ * process that started inside the window also gives a zero baseline at its start time: what it
+ * counted since then provably happened inside the window. A process older than the window gives
+ * no such proof, and its counters only become evidence once a real snapshot exists.
+ */
+function baselineOf(config, snapshots, current, now) {
+  const startMs = current.startTime * 1000;
+  const candidates = [...snapshots];
+  if (startMs > now - config.windowMs)
+    candidates.unshift({
+      at: Math.min(startMs, now),
+      startTime: current.startTime,
+      summary: { startTime: current.startTime, groups: {}, jobs: {} },
+      atProcessStart: true,
+    });
+  const older = candidates.filter(
+    (snapshot) => snapshot.at <= now - config.windowMs,
+  );
+  const baseline = older.at(-1) ?? candidates[0];
+  return baseline && baseline !== snapshots.at(-1) ? baseline : null;
+}
+
 /**
  * Pure decision for one check. `ready` is { ok, problem }; `scrape` is null (not attempted),
  * { ok: false, problem } or { ok: true, summary }. Returns the new state; alert notifications are
  * decided by `pendingNotifications`.
+ *
+ * Metric alerts have three states: firing (confirmed by this check), resolved (this check saw the
+ * condition gone) and stale (firing when last confirmed, but this check has no evidence either
+ * way: API down, /metrics failing, or no baseline after an API restart). A stale alert is neither
+ * resolved nor repeated; the next check with data confirms or resolves it.
  */
 export function evaluate(config, previous, now, ready, scrape) {
   const state = structuredClone(previous);
+  delete state.unconfirmed;
   const set = (key, severity, firing, summary) => {
     const alert = state.alerts[key];
     if (firing) {
@@ -294,12 +327,18 @@ export function evaluate(config, previous, now, ready, scrape) {
         firing: true,
         since: alert?.firing ? alert.since : now,
         summary,
+        observedAt: now,
         notified: alert?.notified ?? null,
         lastNotifiedAt: alert?.lastNotifiedAt ?? null,
       };
     } else if (alert?.firing) {
       state.alerts[key] = { ...alert, firing: false, resolvedAt: now };
+      delete state.alerts[key].staleSince;
     }
+  };
+  const suspendMetricAlerts = () => {
+    for (const [key, alert] of Object.entries(state.alerts))
+      if (METRIC_ALERT.test(key) && alert.firing) alert.staleSince ??= now;
   };
 
   if (ready.ok) {
@@ -318,8 +357,12 @@ export function evaluate(config, previous, now, ready, scrape) {
       );
   }
 
-  if (!scrape) return state;
+  if (!scrape) {
+    suspendMetricAlerts();
+    return state;
+  }
   if (!scrape.ok) {
+    suspendMetricAlerts();
     state.metrics.failures++;
     state.metrics.since ??= now;
     state.metrics.lastProblem = scrape.problem;
@@ -328,7 +371,7 @@ export function evaluate(config, previous, now, ready, scrape) {
         "metrics_unavailable",
         "warning",
         true,
-        `Métricas indisponíveis: /metrics falhou em ${state.metrics.failures} verificações seguidas desde ${utc(state.metrics.since)} (${scrape.problem}). Os alertas de erro e latência estão parados.`,
+        `Métricas indisponíveis: /metrics falhou em ${state.metrics.failures} verificações seguidas desde ${utc(state.metrics.since)} (${scrape.problem}). Alertas de erro, latência e jobs ficam em suspenso, sem lembrete nem resolução, até as métricas voltarem.`,
       );
     return state;
   }
@@ -344,15 +387,24 @@ export function evaluate(config, previous, now, ready, scrape) {
     startTime: current.startTime,
     summary: current,
   });
-  // Keep the newest snapshot at least one window old as the baseline, drop older ones.
+  // Keep the newest snapshot at least one window old, drop older ones.
   while (
     state.snapshots.length > 2 &&
     state.snapshots[1].at <= now - config.windowMs
   )
     state.snapshots.shift();
   while (state.snapshots.length > MAX_SNAPSHOTS) state.snapshots.shift();
-  const baseline = state.snapshots.length > 1 ? state.snapshots[0] : null;
-  if (!baseline) return state;
+  const baseline = baselineOf(config, state.snapshots, current, now);
+  if (!baseline) {
+    // First scrape of a process older than the window: its counters may predate the window, so
+    // nothing is alerted from them. Job failures are recorded for the log, never sent.
+    const unconfirmed = Object.fromEntries(
+      Object.entries(current.jobs).filter(([, total]) => total > 0),
+    );
+    if (Object.keys(unconfirmed).length) state.unconfirmed = unconfirmed;
+    suspendMetricAlerts();
+    return state;
+  }
 
   const minutes = Math.max(1, Math.round((now - baseline.at) / 60_000));
   const evaluated = new Set();
@@ -398,12 +450,16 @@ export function evaluate(config, previous, now, ready, scrape) {
   }
   // Groups that disappeared (a restart, a removed store) cannot stay firing forever.
   for (const key of Object.keys(state.alerts))
-    if (/^(error_rate|latency|job_failures):/.test(key) && !evaluated.has(key))
+    if (METRIC_ALERT.test(key) && !evaluated.has(key))
       set(key, state.alerts[key].severity, false);
   return state;
 }
 
-/** Alerts to announce now: new, still firing past the repeat interval, or resolved. */
+/**
+ * Alerts to announce now: new, still firing past the repeat interval, or resolved. A stale alert
+ * is never repeated (nothing confirms it still holds); one that fired but was never announced
+ * (the webhook failed) is still announced, saying since when there is no data.
+ */
 export function pendingNotifications(config, state, now) {
   const pending = [];
   for (const [key, alert] of Object.entries(state.alerts)) {
@@ -411,6 +467,7 @@ export function pendingNotifications(config, state, now) {
       pending.push({ key, kind: "firing", alert });
     else if (
       alert.firing &&
+      alert.staleSince == null &&
       now - (alert.lastNotifiedAt ?? 0) >= config.repeatMs
     )
       pending.push({ key, kind: "reminder", alert });
@@ -450,7 +507,7 @@ export function messageText(config, notifications) {
       ? `✅ Resolvido: ${alert.summary}`
       : kind === "test"
         ? `🧪 ${alert.summary}`
-        : `${icon[alert.severity]} ${alert.severity === "critical" ? "CRÍTICO" : "ATENÇÃO"}${kind === "reminder" ? " (ainda ativo)" : ""}: ${alert.summary}`,
+        : `${icon[alert.severity]} ${alert.severity === "critical" ? "CRÍTICO" : "ATENÇÃO"}${kind === "reminder" ? " (ainda ativo)" : ""}: ${alert.summary}${alert.staleSince != null ? ` Visto às ${utc(alert.observedAt ?? alert.since)}; sem métricas desde ${utc(alert.staleSince)}, não confirmado depois disso.` : ""}`,
   );
   const text = `[WhiteOven · ${config.environment}]\n${lines.join("\n")}`;
   return text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT - 1)}…` : text;
@@ -613,6 +670,10 @@ export async function runCheck(
         : null;
     const at = now();
     let state = evaluate(config, previous, at, ready, scrape);
+    if (state.unconfirmed)
+      log("warn", "job failures counted before this window: not alerted", {
+        jobs: state.unconfirmed,
+      });
     const pending = pendingNotifications(config, state, at);
     let code = 0;
     if (pending.length) {
@@ -635,7 +696,10 @@ export async function runCheck(
       ready: ready.ok,
       metrics: scrape ? scrape.ok : null,
       firing: Object.entries(state.alerts)
-        .filter(([, alert]) => alert.firing)
+        .filter(([, alert]) => alert.firing && alert.staleSince == null)
+        .map(([key]) => key),
+      stale: Object.entries(state.alerts)
+        .filter(([, alert]) => alert.firing && alert.staleSince != null)
         .map(([key]) => key),
     });
     return code;

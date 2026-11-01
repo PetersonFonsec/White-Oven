@@ -524,3 +524,333 @@ test("command line: exit codes, JSON log lines, and a lock against overlapping c
     await h.close();
   }
 });
+
+// --- P1: job failures and the first scrape ---------------------------------------------------
+
+const seconds = (ms) => Math.floor(ms / 1000);
+const jobLine = (text) => text.find((line) => /Falhas no job/.test(line));
+
+test("first scrape of an old API process: a zero counter and a non-zero one alert nothing", async () => {
+  const h = await harness();
+  try {
+    h.api.metrics = metricsText({ jobs: { push_delivery: 0 } });
+    assert.deepEqual((await h.check()).sent, []);
+    assert.equal(h.state().unconfirmed, undefined);
+  } finally {
+    await h.close();
+  }
+  const g = await harness();
+  try {
+    // The process started long before the window: these failures may be days old.
+    g.api.metrics = metricsText({ jobs: { push_delivery: 2 } });
+    assert.deepEqual((await g.check()).sent, []);
+    assert.deepEqual(g.state().unconfirmed, { push_delivery: 2 });
+    // Without new failures it stays quiet.
+    assert.deepEqual((await g.check()).sent, []);
+    assert.equal(g.state().unconfirmed, undefined);
+  } finally {
+    await g.close();
+  }
+});
+
+test("a failure right before the first scrape alerts when the API process started inside the window", async () => {
+  const h = await harness();
+  try {
+    const start = seconds(h.now()) - 2 * 60; // 3 minutes before the first check
+    h.api.metrics = metricsText({ start, jobs: { order_accept_timeout: 1 } });
+    const { sent } = await h.check();
+    assert.match(
+      sent[0],
+      /ATENÇÃO: Falhas no job order_accept_timeout: 1 nos últimos 3 min/,
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+test("failures after the first scrape alert once, accumulate quietly and resolve outside the window", async () => {
+  const h = await harness();
+  try {
+    h.api.metrics = metricsText({ jobs: { push_delivery: 4 } });
+    await h.check();
+    h.api.metrics = metricsText({ jobs: { push_delivery: 5 } });
+    assert.match(
+      jobLine((await h.check()).sent),
+      /push_delivery: 1 nos últimos 1 min/,
+    );
+    h.api.metrics = metricsText({ jobs: { push_delivery: 7 } });
+    assert.deepEqual((await h.check()).sent, [], "still firing, not repeated");
+    assert.match(
+      h.state().alerts["job_failures:push_delivery"].summary,
+      /: 3 nos últimos 2 min/,
+    );
+    // No new failure for a whole window: the old ones fall out and the alert resolves.
+    for (let minute = 0; minute < 9; minute++)
+      assert.deepEqual((await h.check()).sent, []);
+    assert.match(
+      (await h.check()).sent[0],
+      /✅ Resolvido: Falhas no job push_delivery/,
+    );
+    for (let minute = 0; minute < 15; minute++)
+      assert.deepEqual((await h.check()).sent, []);
+  } finally {
+    await h.close();
+  }
+});
+
+test("a restarted monitor keeps its window from the state file", async () => {
+  const h = await harness();
+  try {
+    h.api.metrics = metricsText({ jobs: { push_delivery: 0 } });
+    await h.check();
+    // A new monitor process: nothing in memory, the same state file.
+    const restarted = loadMonitorConfig(h.env);
+    h.api.metrics = metricsText({ jobs: { push_delivery: 1 } });
+    assert.equal(await runCheck(restarted, { now: () => h.now() + MINUTE }), 0);
+    assert.match(h.hook.posts.at(-1).text, /Falhas no job push_delivery: 1/);
+  } finally {
+    await h.close();
+  }
+});
+
+test("an API restart resets the counters: no false alert, and failures since the restart are seen", async () => {
+  const h = await harness();
+  try {
+    h.api.metrics = metricsText({ jobs: { push_delivery: 9 } });
+    await h.check();
+    await h.check();
+    // New process one minute old with a reset counter.
+    const start = seconds(h.now());
+    h.api.metrics = metricsText({ start, jobs: { push_delivery: 0 } });
+    assert.deepEqual((await h.check()).sent, []);
+    h.api.metrics = metricsText({ start, jobs: { push_delivery: 2 } });
+    assert.match(
+      jobLine((await h.check()).sent),
+      /push_delivery: 2 nos últimos 2 min/,
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+// --- P2: no data is not recovery and not continuity ------------------------------------------
+
+/** Fires error_rate (store A and total), latency and a job alert, all announced. */
+async function incident(h) {
+  h.api.metrics = metricsText({
+    stores: { [STORE_A]: { ok: 0 } },
+    jobs: { push_delivery: 0 },
+  });
+  await h.check();
+  h.api.metrics = metricsText({
+    stores: { [STORE_A]: { ok: 10, errors: 30, slow: 40 } },
+    jobs: { push_delivery: 1 },
+  });
+  const { sent } = await h.check();
+  assert.match(sent[0], /Erros 5xx em loja/);
+  assert.match(sent[0], /Latência alta em loja/);
+  assert.match(sent[0], /Falhas no job push_delivery/);
+}
+
+const metricKeys = (state) =>
+  Object.keys(state.alerts).filter((key) =>
+    /^(error_rate|latency|job_failures):/.test(key),
+  );
+
+test("/metrics down: firing metric alerts go stale, with no reminder and no resolution for hours", async () => {
+  const h = await harness();
+  try {
+    await incident(h);
+    h.api.metricsStatus = 500;
+    const sent = [];
+    for (let minute = 0; minute < 150; minute++)
+      sent.push(...(await h.check()).sent);
+    const text = sent.join("\n");
+    assert.doesNotMatch(text, /Erros 5xx|Latência|Falhas no job|Resolvido/);
+    // Only the outage of /metrics itself: fired once, then repeated hourly.
+    assert.equal(text.match(/Métricas indisponíveis/g)?.length, 3);
+    assert.match(text, /sem lembrete nem resolução/);
+    const state = h.state();
+    assert.equal(metricKeys(state).length, 5);
+    assert.ok(
+      metricKeys(state).every(
+        (key) => state.alerts[key].firing && state.alerts[key].staleSince,
+      ),
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+test("metrics back and the problem continues: one confirmed reminder, then the normal cadence", async () => {
+  const h = await harness();
+  try {
+    await incident(h);
+    h.api.metricsStatus = 500;
+    for (let minute = 0; minute < 70; minute++) await h.check();
+    h.api.metricsStatus = 200;
+    h.api.metrics = metricsText({
+      stores: { [STORE_A]: { ok: 20, errors: 300, slow: 320 } },
+      jobs: { push_delivery: 3 },
+    });
+    const { sent } = await h.check();
+    assert.equal(sent.length, 1, "a single message");
+    const lines = sent[0].split("\n").slice(1);
+    assert.ok(
+      lines.some((line) => /Resolvido: Métricas indisponíveis/.test(line)),
+    );
+    assert.equal(
+      lines.filter((line) =>
+        /\(ainda ativo\): (Erros|Latência|Falhas)/.test(line),
+      ).length,
+      5,
+    );
+    assert.doesNotMatch(sent[0], /sem métricas desde/);
+    assert.ok(
+      metricKeys(h.state()).every((key) => !h.state().alerts[key].staleSince),
+    );
+    assert.deepEqual((await h.check()).sent, []);
+  } finally {
+    await h.close();
+  }
+});
+
+test("metrics back and the problem is gone: the alerts resolve then, not before", async () => {
+  const h = await harness();
+  try {
+    await incident(h);
+    h.api.metricsStatus = 500;
+    for (let minute = 0; minute < 20; minute++) await h.check();
+    h.api.metricsStatus = 200;
+    h.api.metrics = metricsText({
+      stores: { [STORE_A]: { ok: 500, errors: 30, slow: 40 } },
+      jobs: { push_delivery: 1 },
+    });
+    const { sent } = await h.check();
+    assert.equal(
+      sent[0].match(/✅ Resolvido: (Erros|Latência|Falhas)/g)?.length,
+      5,
+    );
+    assert.deepEqual(metricKeys(h.state()), []);
+  } finally {
+    await h.close();
+  }
+});
+
+test("API down hides the metrics too, and a restart during the outage resolves from fresh counters", async () => {
+  const h = await harness();
+  try {
+    await incident(h);
+    h.api.ready = 503;
+    const down = [];
+    for (let minute = 0; minute < 90; minute++)
+      down.push(...(await h.check()).sent);
+    assert.doesNotMatch(
+      down.join("\n"),
+      /Erros 5xx|Latência|Falhas no job|Resolvido/,
+    );
+    assert.equal(down.join("\n").match(/API indisponível/g)?.length, 2);
+
+    // Back as a new process that started 20 s before the check.
+    h.api.ready = 200;
+    const start = seconds(h.now() + MINUTE) - 20;
+    h.api.metrics = metricsText({
+      start,
+      stores: { [STORE_A]: { ok: 30 } },
+      jobs: { push_delivery: 0 },
+    });
+    const back = await h.check();
+    assert.match(back.sent[0], /✅ Resolvido: API indisponível/);
+    // The process started inside the window: its counters are evidence right away.
+    assert.equal(
+      back.sent[0].match(/✅ Resolvido: (Erros|Latência|Falhas)/g)?.length,
+      5,
+    );
+    assert.deepEqual((await h.check()).sent, []);
+  } finally {
+    await h.close();
+  }
+});
+
+test("a resolution that fails to send is sent once on the next check", async () => {
+  const h = await harness();
+  try {
+    await incident(h);
+    h.api.metricsStatus = 500;
+    await h.check();
+    h.api.metricsStatus = 200;
+    h.api.metrics = metricsText({
+      stores: { [STORE_A]: { ok: 400, errors: 30, slow: 40 } },
+      jobs: { push_delivery: 1 },
+    });
+    h.hook.status = 500;
+    // Past the window, so the incident's requests no longer count.
+    const failed = await h.check(11 * MINUTE);
+    assert.equal(failed.code, 1);
+    h.hook.status = 200;
+    const retried = await h.check();
+    assert.equal(retried.code, 0);
+    assert.equal(
+      retried.sent[0].match(/✅ Resolvido: (Erros|Latência|Falhas)/g)?.length,
+      5,
+    );
+    assert.deepEqual((await h.check()).sent, []);
+  } finally {
+    await h.close();
+  }
+});
+
+test("an alert that never got out before /metrics fell says when it was last seen", async () => {
+  const h = await harness();
+  try {
+    h.api.metrics = metricsText({ jobs: { push_delivery: 0 } });
+    await h.check();
+    h.api.metrics = metricsText({ jobs: { push_delivery: 1 } });
+    h.hook.status = 500;
+    assert.equal((await h.check()).code, 1);
+    h.hook.status = 200;
+    h.api.metricsStatus = 500;
+    const { sent } = await h.check();
+    assert.match(
+      sent[0],
+      /Falhas no job push_delivery: 1 nos últimos 1 min\..* Visto às 2026-11-01 12:02 UTC; sem métricas desde 2026-11-01 12:03 UTC, não confirmado depois disso\./,
+    );
+    // The next message is /metrics' own outage; the stale job alert is not repeated.
+    const next = (await h.check()).sent.join("\n");
+    assert.match(next, /Métricas indisponíveis/);
+    assert.doesNotMatch(next, /Falhas no job/);
+  } finally {
+    await h.close();
+  }
+});
+
+test("a state file from before this change still loads and works", async () => {
+  const h = await harness();
+  try {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(
+      h.env.MONITOR_STATE_FILE,
+      JSON.stringify({
+        version: 1,
+        ready: { failures: 0, since: null, lastProblem: null },
+        metrics: { failures: 0, since: null, lastProblem: null },
+        snapshots: [],
+        alerts: {
+          "job_failures:push_delivery": {
+            severity: "warning",
+            firing: true,
+            since: h.now() - 5 * MINUTE,
+            summary: "Falhas no job push_delivery: 1 nos últimos 1 min.",
+            notified: "firing",
+            lastNotifiedAt: h.now() - 5 * MINUTE,
+          },
+        },
+      }),
+    );
+    h.api.metricsStatus = 500;
+    for (let minute = 0; minute < 70; minute++)
+      assert.doesNotMatch((await h.check()).sent.join(""), /Falhas no job/);
+  } finally {
+    await h.close();
+  }
+});
