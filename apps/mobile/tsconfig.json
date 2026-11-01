@@ -8,5 +8,13 @@
     "erasableSyntaxOnly": true,
     "types": ["node"]
   },
-  "include": ["app.config.ts", "index.ts", "App.tsx", "src", "tests", "scripts"]
+  "include": [
+    "app.config.ts",
+    "index.ts",
+    "App.tsx",
+    ".rnstorybook",
+    "src",
+    "tests",
+    "scripts"
+  ]
 }
