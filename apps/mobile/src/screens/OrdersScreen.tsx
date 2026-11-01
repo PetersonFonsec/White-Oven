@@ -10,26 +10,40 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  Image,
   Linking,
   Pressable,
   RefreshControl,
+  ScrollView,
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { announce } from "../a11y/useAnnouncement.ts";
 import { useTheme } from "../brand/theme.tsx";
 import type { CommerceModel, CommerceState } from "../cart/model.ts";
 import { InlineMessage } from "../components/Feedback.tsx";
 import { Body, Button } from "../components/Form.tsx";
-import { Icon, type IconName } from "../components/Icon.tsx";
+import { Icon, IconButton, type IconName } from "../components/Icon.tsx";
+import { PAGE_GUTTER, badgeText, plural } from "../components/layout.ts";
+import { brandNameParts } from "../customer/auth-flow.ts";
+import {
+  ORDER_FILTERS,
+  type OrderFilter,
+  emptyFilterMessage,
+  filterOrders,
+  orderDateTime,
+  orderItemView,
+} from "../customer/order-view.ts";
 import { ListRow, Section } from "../components/ListRow.tsx";
-import { Screen, ScreenHeader } from "../components/Screen.tsx";
+import { Screen } from "../components/Screen.tsx";
 import { StatusBadge } from "../components/StatusBadge.tsx";
 import { TotalRow } from "../components/TotalRow.tsx";
 import {
   type ProgressStep,
   orderProgress,
   progressSummary,
+  statusTone,
 } from "../customer/order-progress.ts";
 import { customerMessage } from "../customer/client.ts";
 import {
@@ -68,6 +82,10 @@ export function OrdersScreen({
   onOpenOrder,
   onOpenCart,
   onOpenMenu,
+  storeName,
+  logoUrl,
+  cartCount,
+  imageUrl,
 }: {
   model: CommerceModel;
   state: CommerceState;
@@ -82,8 +100,15 @@ export function OrdersScreen({
   onOpenOrder: (orderId: string) => void;
   onOpenCart: () => void;
   onOpenMenu: () => void;
+  storeName: string;
+  logoUrl: string | null;
+  /** Units in the bag, on the badge of the bag button. */
+  cartCount: number;
+  /** The public picture route of the menu's images (ADR 0021). */
+  imageUrl: (imageId: string) => string;
 }) {
   const theme = useTheme();
+  const [filter, setFilter] = useState<OrderFilter>("all");
   const [orders, setOrders] = useState<CustomerOrderSummary[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -438,17 +463,25 @@ export function OrdersScreen({
     />
   ) : undefined;
 
+  const header = orderId ? (
+    <DetailHeader
+      title={detail ? `Pedido #${detail.number}` : "Pedido"}
+      onBack={onBack}
+      backTo={backTo}
+    />
+  ) : (
+    <OrdersTopBar
+      storeName={storeName}
+      logoUrl={logoUrl}
+      cartCount={cartCount}
+      onOpenCart={onOpenCart}
+    />
+  );
+
   if (!state.profile)
     return (
-      <Screen
-        header={
-          orderId ? (
-            <ScreenHeader title="Pedido" onBack={onBack} backTo={backTo} />
-          ) : (
-            <ScreenHeader title="Pedidos" large />
-          )
-        }
-      >
+      <Screen header={header}>
+        {orderId ? null : <PageTitle />}
         <EmptyState
           icon="receipt-outline"
           title="Seus pedidos aparecem aqui"
@@ -458,6 +491,7 @@ export function OrdersScreen({
               label="Entrar ou criar conta"
               variant="primary"
               onPress={onAccount}
+              style={pill}
             />
           }
         />
@@ -471,16 +505,7 @@ export function OrdersScreen({
     const reorderBlocked =
       !menu || menuStale || storeUnavailable || state.busy || !!state.pending;
     return (
-      <Screen
-        refreshControl={refreshControl}
-        header={
-          <ScreenHeader
-            title={detail ? `Pedido #${detail.number}` : "Pedido"}
-            onBack={onBack}
-            backTo={backTo}
-          />
-        }
-      >
+      <Screen refreshControl={refreshControl} header={header}>
         {state.error ? (
           <InlineMessage tone="error">{state.error}</InlineMessage>
         ) : null}
@@ -511,73 +536,52 @@ export function OrdersScreen({
         ) : null}
         {detail ? (
           <>
-            <View
-              style={[
-                {
-                  backgroundColor: theme.colors.surface,
-                  borderRadius: theme.radius.large,
-                  gap: theme.spacing(3),
-                  padding: theme.spacing(4),
-                },
-                theme.shadow,
-              ]}
-            >
-              <Text
-                accessibilityRole="header"
-                style={{
-                  color: theme.colors.text,
-                  ...theme.typography.h3,
-                }}
-              >
-                {statusLabel(detail.status, detail.fulfillment)}
-              </Text>
-              <Body>
-                {detail.fulfillment === "DELIVERY" ? "Entrega" : "Retirada"} ·
-                feito em {dateTime(detail.placedAt)}
-              </Body>
-              {detail.estimate && !terminal(detail.status) ? (
-                <View
-                  style={{
-                    flexDirection: "row",
-                    gap: theme.spacing(2),
-                    alignItems: "center",
-                  }}
-                >
-                  <Icon
-                    name="time-outline"
-                    size={20}
-                    color={theme.colors.accentText}
-                  />
-                  <Text
+            <StatusHero order={detail} />
+
+            {progress && !terminal(detail.status) ? (
+              <Card>
+                {detail.estimate ? (
+                  <View
                     style={{
-                      flex: 1,
-                      color: theme.colors.text,
-                      ...theme.typography.body,
-                      fontWeight: "600",
+                      flexDirection: "row",
+                      gap: theme.spacing(2),
+                      alignItems: "center",
                     }}
                   >
-                    Previsão da pizzaria: {estimateAt(detail)}
-                  </Text>
-                </View>
-              ) : null}
-              {progress ? (
+                    <Icon
+                      name="time-outline"
+                      size={20}
+                      color={theme.colors.accentText}
+                    />
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: theme.colors.text,
+                        ...theme.typography.body,
+                        fontWeight: "600",
+                      }}
+                    >
+                      Previsão da pizzaria: {estimateAt(detail)}
+                    </Text>
+                  </View>
+                ) : null}
                 <ProgressSteps
                   steps={progress}
                   summary={progressSummary(detail.status, detail.fulfillment)}
                 />
-              ) : null}
-              {!terminal(detail.status) ? (
-                <Text
-                  style={{
-                    color: theme.colors.textSecondary,
-                    ...theme.typography.bodySmall,
-                  }}
-                >
-                  A previsão é aproximada, não é rastreamento em tempo real.
-                  Esta tela se atualiza sozinha a cada 20 segundos.
-                </Text>
-              ) : null}
-            </View>
+                {!terminal(detail.status) ? (
+                  <Text
+                    style={{
+                      color: theme.colors.textSecondary,
+                      ...theme.typography.bodySmall,
+                    }}
+                  >
+                    A previsão é aproximada, não é rastreamento em tempo real.
+                    Esta tela se atualiza sozinha a cada 20 segundos.
+                  </Text>
+                ) : null}
+              </Card>
+            ) : null}
 
             {detail.contactPhone || !terminal(detail.status) ? (
               <Section
@@ -611,89 +615,205 @@ export function OrdersScreen({
               </Section>
             ) : null}
 
-            <Section title="Itens">
-              <View
-                style={{ padding: theme.spacing(4), gap: theme.spacing(3) }}
-              >
-                {detail.items.map((item, index) => (
-                  <View
-                    key={`${item.kind}-${index}`}
-                    accessible
-                    accessibilityLabel={`${item.quantity} ${itemName(item)}, ${formatCents(item.totalCents)}`}
-                    style={{ flexDirection: "row", gap: theme.spacing(3) }}
-                  >
-                    <Text
+            <View style={{ gap: theme.spacing(3) }}>
+              <SectionTitle>Itens do pedido</SectionTitle>
+              <Card gap={0} padding={0}>
+                {detail.items.map((item, index) => {
+                  const view = orderItemView(item, menu);
+                  return (
+                    <View
+                      key={`${item.kind}-${index}`}
+                      accessible
+                      accessibilityLabel={`${item.quantity} ${view.title}${view.lines.length ? `, ${view.lines.join(", ")}` : ""}, ${formatCents(item.totalCents)}`}
                       style={{
-                        color: theme.colors.accentText,
-                        ...theme.typography.body,
-                        fontWeight: "700",
-                        minWidth: 28,
+                        flexDirection: "row",
+                        gap: theme.spacing(3),
+                        padding: theme.spacing(4),
+                        borderTopWidth: index ? 1 : 0,
+                        borderTopColor: theme.colors.border,
                       }}
                     >
-                      {item.quantity}×
-                    </Text>
-                    <Text
-                      style={{
-                        flex: 1,
-                        color: theme.colors.text,
-                        ...theme.typography.body,
-                      }}
-                    >
-                      {itemName(item)}
-                    </Text>
-                    <Text
-                      style={{
-                        color: theme.colors.text,
-                        ...theme.typography.body,
-                        fontWeight: "600",
-                      }}
-                    >
-                      {formatCents(item.totalCents)}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            </Section>
+                      <ItemThumb
+                        kind={item.kind}
+                        imageUrls={view.imageIds.map(imageUrl)}
+                      />
+                      <View style={{ flex: 1, gap: 2 }}>
+                        <Text
+                          style={{
+                            color: theme.colors.text,
+                            ...theme.typography.body,
+                            fontWeight: "700",
+                          }}
+                        >
+                          {view.title}
+                        </Text>
+                        {view.lines.map((line, lineIndex) => (
+                          <Text
+                            key={lineIndex}
+                            style={{
+                              color: theme.colors.textSecondary,
+                              ...theme.typography.bodySmall,
+                            }}
+                          >
+                            {line}
+                          </Text>
+                        ))}
+                      </View>
+                      <View style={{ alignItems: "flex-end", gap: 4 }}>
+                        <Text
+                          style={{
+                            color: theme.colors.text,
+                            ...theme.typography.bodySmall,
+                            fontWeight: "600",
+                          }}
+                        >
+                          {item.quantity}x
+                        </Text>
+                        <Text
+                          style={{
+                            color: theme.colors.text,
+                            ...theme.typography.body,
+                            fontWeight: "700",
+                          }}
+                        >
+                          {formatCents(item.totalCents)}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </Card>
+            </View>
 
-            <Section title="Resumo">
-              <View
-                style={{ padding: theme.spacing(4), gap: theme.spacing(2) }}
-              >
+            <Card>
+              <TotalRow
+                label="Subtotal"
+                value={formatCents(detail.itemsSubtotalCents)}
+              />
+              {detail.fulfillment === "DELIVERY" || detail.deliveryFeeCents ? (
                 <TotalRow
-                  label="Itens"
-                  value={formatCents(detail.itemsSubtotalCents)}
-                />
-                <TotalRow
-                  label="Entrega"
+                  label="Taxa de entrega"
                   value={formatCents(detail.deliveryFeeCents)}
                 />
-                {detail.discountCents ? (
-                  <TotalRow
-                    label="Desconto"
-                    value={`− ${formatCents(detail.discountCents)}`}
-                  />
-                ) : null}
+              ) : null}
+              {detail.discountCents ? (
                 <TotalRow
-                  strong
-                  label="Total"
-                  value={formatCents(detail.totalCents)}
+                  label="Desconto"
+                  value={`− ${formatCents(detail.discountCents)}`}
                 />
-                <TotalRow
-                  label="Pagamento"
-                  value={paymentLabel[detail.paymentMethod]}
-                />
-                {detail.changeForCents !== null ? (
-                  <TotalRow
-                    label="Troco para"
-                    value={formatCents(detail.changeForCents)}
-                  />
-                ) : null}
-                {detail.notes ? <Body>Observações: {detail.notes}</Body> : null}
+              ) : null}
+              <View
+                style={{ height: 1, backgroundColor: theme.colors.border }}
+              />
+              <View
+                accessible
+                accessibilityLabel={`Total ${formatCents(detail.totalCents)}`}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <Text
+                  style={{ color: theme.colors.text, ...theme.typography.h3 }}
+                >
+                  Total
+                </Text>
+                <Text
+                  style={{
+                    color: theme.colors.accentText,
+                    ...theme.typography.h3,
+                    fontWeight: "800",
+                  }}
+                >
+                  {formatCents(detail.totalCents)}
+                </Text>
               </View>
-            </Section>
+              <TotalRow
+                label="Pagamento"
+                value={paymentLabel[detail.paymentMethod]}
+              />
+              {detail.changeForCents !== null ? (
+                <TotalRow
+                  label="Troco para"
+                  value={formatCents(detail.changeForCents)}
+                />
+              ) : null}
+              {detail.notes ? (
+                <Body small muted>
+                  Observações: {detail.notes}
+                </Body>
+              ) : null}
+            </Card>
+
+            <View
+              style={{
+                backgroundColor: theme.colors.orangeSoft,
+                borderRadius: theme.radius.xl,
+                padding: theme.spacing(4),
+                gap: theme.spacing(4),
+              }}
+            >
+              <View style={{ flexDirection: "row", gap: theme.spacing(3) }}>
+                <Icon
+                  name="refresh"
+                  size={30}
+                  color={theme.colors.accentText}
+                />
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text
+                    accessibilityRole="header"
+                    style={{ color: theme.colors.text, ...theme.typography.h3 }}
+                  >
+                    Pedir novamente
+                  </Text>
+                  <Body small muted>
+                    Coloca os itens deste pedido na sacola, com os preços de
+                    agora do cardápio.
+                  </Body>
+                </View>
+              </View>
+              {storeUnavailable ? (
+                <InlineMessage tone="info">
+                  A pizzaria está indisponível agora. Peça de novo quando ela
+                  voltar a atender.
+                </InlineMessage>
+              ) : menuStale ? (
+                <InlineMessage tone="warning">
+                  Atualize o cardápio antes de pedir de novo: preços e
+                  disponibilidade podem ter mudado.
+                </InlineMessage>
+              ) : state.pending ? (
+                <InlineMessage tone="warning">
+                  Recupere o pedido pendente na sacola antes de montar outro.
+                </InlineMessage>
+              ) : null}
+              <Button
+                label="Pedir novamente"
+                icon="bag-handle-outline"
+                variant="primary"
+                disabled={reorderBlocked}
+                onPress={reorder}
+                style={pill}
+              />
+            </View>
+
+            {detail.status === "PLACED" ? (
+              <Button
+                label="Cancelar pedido"
+                variant="destructive"
+                loading={canceling}
+                disabled={canceling}
+                accessibilityLabel={
+                  canceling ? "Cancelando pedido" : "Cancelar pedido"
+                }
+                onPress={cancelOrder}
+                style={pill}
+              />
+            ) : null}
 
             {detail.history.length ? (
-              <Section title="Histórico">
+              <Section title="Histórico do pedido">
                 <View
                   style={{ padding: theme.spacing(4), gap: theme.spacing(3) }}
                 >
@@ -718,7 +838,7 @@ export function OrdersScreen({
                           ...theme.typography.bodySmall,
                         }}
                       >
-                        {dateTime(change.at)}
+                        {orderDateTime(change.at)}
                         {change.reasonCode
                           ? ` · ${reasonLabel(change.reasonCode)}`
                           : ""}
@@ -728,52 +848,17 @@ export function OrdersScreen({
                 </View>
               </Section>
             ) : null}
-
-            {storeUnavailable ? (
-              <InlineMessage tone="info">
-                A pizzaria está indisponível agora. Peça de novo quando ela
-                voltar a atender.
-              </InlineMessage>
-            ) : menuStale ? (
-              <InlineMessage tone="warning">
-                Atualize o cardápio antes de pedir de novo: preços e
-                disponibilidade podem ter mudado.
-              </InlineMessage>
-            ) : state.pending ? (
-              <InlineMessage tone="warning">
-                Recupere o pedido pendente na sacola antes de montar outro.
-              </InlineMessage>
-            ) : null}
-            <Button
-              label="Pedir de novo"
-              icon="refresh"
-              variant="primary"
-              disabled={reorderBlocked}
-              onPress={reorder}
-            />
-            {detail.status === "PLACED" ? (
-              <Button
-                label="Cancelar pedido"
-                variant="destructive"
-                loading={canceling}
-                disabled={canceling}
-                accessibilityLabel={
-                  canceling ? "Cancelando pedido" : "Cancelar pedido"
-                }
-                onPress={cancelOrder}
-              />
-            ) : null}
           </>
         ) : null}
       </Screen>
     );
   }
 
+  const visible = filterOrders(orders, filter);
   return (
-    <Screen
-      refreshControl={refreshControl}
-      header={<ScreenHeader title="Pedidos" large />}
-    >
+    <Screen refreshControl={refreshControl} header={header}>
+      <PageTitle />
+      <FilterChips value={filter} onChange={setFilter} />
       {state.error ? (
         <InlineMessage tone="error">{state.error}</InlineMessage>
       ) : null}
@@ -805,26 +890,509 @@ export function OrdersScreen({
               label="Ver o cardápio"
               variant="primary"
               onPress={onOpenMenu}
+              style={pill}
             />
           }
         />
       ) : null}
-      {orders.map((order) => (
-        <OrderCard
-          key={order.id}
-          order={order}
-          onPress={() => onOpenOrder(order.id)}
-        />
-      ))}
+      {orders.length > 0 && visible.length === 0 ? (
+        <Body muted centered>
+          {emptyFilterMessage(filter)}
+        </Body>
+      ) : null}
+      <View style={{ gap: theme.spacing(3) }}>
+        {visible.map((order) => (
+          <OrderCard
+            key={order.id}
+            order={order}
+            onPress={() => onOpenOrder(order.id)}
+          />
+        ))}
+      </View>
       {cursor !== null ? (
         <Button
           label="Carregar mais pedidos"
           loading={loading}
           disabled={loading}
           onPress={() => void loadPage(cursor, false)}
+          style={pill}
         />
       ) : null}
+      {orders.some((order) => order.status === "COMPLETED") ? (
+        <ReorderTip />
+      ) : null}
     </Screen>
+  );
+}
+
+const pill = { borderRadius: 999 };
+
+/** The store's mark and the bag, on top of the orders tab. */
+function OrdersTopBar({
+  storeName,
+  logoUrl,
+  cartCount,
+  onOpenCart,
+}: {
+  storeName: string;
+  logoUrl: string | null;
+  cartCount: number;
+  onOpenCart: () => void;
+}) {
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const { lead, tail } = brandNameParts(storeName);
+  const badge = badgeText(cartCount);
+  return (
+    <View
+      style={{
+        paddingTop: insets.top + theme.spacing(1),
+        paddingLeft: theme.spacing(2) + insets.left,
+        paddingRight: theme.spacing(2) + insets.right,
+        minHeight: insets.top + 56,
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: theme.colors.background,
+      }}
+    >
+      <View style={{ width: 48 }} />
+      <View
+        style={{
+          flex: 1,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: theme.spacing(2),
+        }}
+      >
+        {logoUrl ? (
+          <Image
+            source={{ uri: logoUrl }}
+            accessible={false}
+            resizeMode="contain"
+            style={{ width: 34, height: 34, borderRadius: 8 }}
+          />
+        ) : (
+          <Icon
+            name="pizza-outline"
+            size={28}
+            color={theme.colors.accentText}
+          />
+        )}
+        <Text
+          accessibilityRole="header"
+          accessibilityLabel={storeName}
+          numberOfLines={1}
+          maxFontSizeMultiplier={1.4}
+          style={{
+            flexShrink: 1,
+            color: theme.colors.text,
+            fontSize: 22,
+            lineHeight: 28,
+            fontWeight: "800",
+            letterSpacing: -0.3,
+          }}
+        >
+          {lead}
+          {tail ? (
+            <Text style={{ color: theme.colors.accentText }}>{tail}</Text>
+          ) : null}
+        </Text>
+      </View>
+      <View style={{ width: 48, alignItems: "flex-end" }}>
+        <IconButton
+          name="bag-handle-outline"
+          size={26}
+          accessibilityLabel={
+            cartCount
+              ? `Sacola, ${plural(cartCount, "item", "itens")}`
+              : "Sacola"
+          }
+          onPress={onOpenCart}
+        />
+        {badge ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              top: 2,
+              right: 0,
+              minWidth: 20,
+              height: 20,
+              borderRadius: 10,
+              paddingHorizontal: 5,
+              backgroundColor: theme.colors.primary,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Text
+              style={{
+                color: theme.colors.onPrimary,
+                fontSize: 12,
+                fontWeight: "800",
+              }}
+            >
+              {badge}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function PageTitle() {
+  const theme = useTheme();
+  return (
+    <View style={{ gap: theme.spacing(1) }}>
+      <Text
+        accessibilityRole="header"
+        style={{
+          color: theme.colors.text,
+          fontSize: theme.typography.h1.fontSize,
+          lineHeight: theme.typography.h1.lineHeight,
+          fontWeight: "800",
+        }}
+      >
+        Meus Pedidos
+      </Text>
+      <Body muted>
+        Acompanhe seu histórico e peça novamente seus favoritos.
+      </Body>
+    </View>
+  );
+}
+
+/** One pill per group of statuses; the selected one is filled and says so to VoiceOver. */
+function FilterChips({
+  value,
+  onChange,
+}: {
+  value: OrderFilter;
+  onChange: (next: OrderFilter) => void;
+}) {
+  const theme = useTheme();
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={{ gap: theme.spacing(2) }}
+      style={{ marginHorizontal: -PAGE_GUTTER }}
+      contentInset={{ left: 0, right: 0 }}
+    >
+      <View style={{ width: PAGE_GUTTER - theme.spacing(2) }} />
+      {ORDER_FILTERS.map((option) => {
+        const selected = option.value === value;
+        return (
+          <Pressable
+            key={option.value}
+            accessibilityRole="button"
+            accessibilityLabel={`Filtrar: ${option.label}`}
+            accessibilityState={{ selected }}
+            onPress={() => onChange(option.value)}
+            style={({ pressed }) => ({
+              minHeight: 44,
+              paddingHorizontal: theme.spacing(4),
+              borderRadius: theme.radius.pill,
+              justifyContent: "center",
+              borderWidth: 1,
+              borderColor: selected
+                ? theme.colors.primary
+                : theme.colors.border,
+              backgroundColor: selected
+                ? pressed
+                  ? theme.colors.primaryPressed
+                  : theme.colors.primary
+                : pressed
+                  ? theme.colors.primaryLight
+                  : theme.colors.surface,
+            })}
+          >
+            <Text
+              style={{
+                color: selected ? theme.colors.onPrimary : theme.colors.text,
+                ...theme.typography.bodySmall,
+                fontWeight: selected ? "700" : "500",
+              }}
+            >
+              {option.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+      <View style={{ width: PAGE_GUTTER - theme.spacing(2) }} />
+    </ScrollView>
+  );
+}
+
+function Card({
+  children,
+  gap,
+  padding,
+}: {
+  children: ReactNode;
+  gap?: number;
+  padding?: number;
+}) {
+  const theme = useTheme();
+  return (
+    <View
+      style={[
+        {
+          backgroundColor: theme.colors.surface,
+          borderRadius: theme.radius.xl,
+          gap: gap ?? theme.spacing(3),
+          padding: padding ?? theme.spacing(4),
+          overflow: "hidden",
+        },
+        theme.shadow,
+      ]}
+    >
+      {children}
+    </View>
+  );
+}
+
+function SectionTitle({ children }: { children: string }) {
+  const theme = useTheme();
+  return (
+    <Text
+      accessibilityRole="header"
+      style={{ color: theme.colors.text, ...theme.typography.h3 }}
+    >
+      {children}
+    </Text>
+  );
+}
+
+/**
+ * A pizza's picture: one photo, or two halves side by side when each half has one. Without a
+ * photo, a tile with an icon. Decorative: the row's label says what the item is.
+ */
+function ItemThumb({
+  kind,
+  imageUrls,
+  size = 64,
+}: {
+  kind: "PIZZA" | "PRODUCT";
+  imageUrls: string[];
+  size?: number;
+}) {
+  const theme = useTheme();
+  const round = kind === "PIZZA";
+  const frame = {
+    width: size,
+    height: size,
+    borderRadius: round ? size / 2 : theme.radius.medium,
+    overflow: "hidden" as const,
+    backgroundColor: theme.colors.orangeSoft,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+  };
+  if (!imageUrls.length)
+    return (
+      <View accessible={false} style={frame}>
+        <Icon
+          name={kind === "PIZZA" ? "pizza-outline" : "restaurant-outline"}
+          size={size * 0.45}
+          color={theme.colors.accentText}
+        />
+      </View>
+    );
+  return (
+    <View
+      accessible={false}
+      style={[frame, { flexDirection: "row", justifyContent: "flex-start" }]}
+    >
+      {imageUrls.slice(0, 2).map((uri, index, list) => (
+        <View
+          key={index}
+          style={{
+            width: size / list.length,
+            height: size,
+            overflow: "hidden",
+          }}
+        >
+          <Image
+            source={{ uri }}
+            accessible={false}
+            accessibilityIgnoresInvertColors
+            resizeMode="cover"
+            style={{
+              width: size,
+              height: size,
+              marginLeft: index ? -size / 2 : 0,
+            }}
+          />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const statusIcons = {
+  progress: "time-outline",
+  success: "checkmark",
+  error: "close",
+} as const;
+
+/** The order's status on top of its detail, in the tone of the status, never in color alone. */
+function StatusHero({ order }: { order: CustomerOrderDetail }) {
+  const theme = useTheme();
+  const tone = statusTone(order.status);
+  const tint = {
+    progress: {
+      surface: theme.colors.orangeSoft,
+      strong: theme.colors.primary,
+      onStrong: theme.colors.onPrimary,
+      title: theme.colors.accentText,
+    },
+    success: {
+      surface: theme.colors.successSurface,
+      strong: theme.colors.success,
+      onStrong: "#FFFFFF",
+      title: theme.colors.success,
+    },
+    error: {
+      surface: theme.colors.errorSurface,
+      strong: theme.colors.errorText,
+      onStrong: "#FFFFFF",
+      title: theme.colors.errorText,
+    },
+  }[tone];
+  const kind = order.fulfillment === "DELIVERY" ? "Entrega" : "Retirada";
+  return (
+    <View
+      accessible
+      accessibilityLabel={`${statusLabel(order.status, order.fulfillment)}. ${kind}, pedido feito em ${orderDateTime(order.placedAt)}`}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: theme.spacing(3),
+        padding: theme.spacing(4),
+        borderRadius: theme.radius.xl,
+        backgroundColor: tint.surface,
+      }}
+    >
+      <View
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: tint.strong,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Icon name={statusIcons[tone]} size={26} color={tint.onStrong} />
+      </View>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text
+          style={{
+            color: tint.title,
+            ...theme.typography.h3,
+            fontWeight: "800",
+          }}
+        >
+          {statusLabel(order.status, order.fulfillment)}
+        </Text>
+        <Text
+          style={{
+            color: theme.colors.textSecondary,
+            ...theme.typography.bodySmall,
+          }}
+        >
+          {kind} · {orderDateTime(order.placedAt)}
+        </Text>
+      </View>
+      <Icon name="bag-handle-outline" size={40} color={tint.title} />
+    </View>
+  );
+}
+
+/** "Peça de novo com um toque!": where reordering lives, under the list. */
+function ReorderTip() {
+  const theme = useTheme();
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        gap: theme.spacing(3),
+        alignItems: "flex-start",
+        padding: theme.spacing(4),
+        borderRadius: theme.radius.xl,
+        backgroundColor: theme.colors.orangeSoft,
+      }}
+    >
+      <Icon name="heart-outline" size={28} color={theme.colors.accentText} />
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text
+          style={{
+            color: theme.colors.text,
+            ...theme.typography.title,
+            fontWeight: "700",
+          }}
+        >
+          Peça de novo com um toque!
+        </Text>
+        <Body small muted>
+          Abra um pedido concluído e toque em "Pedir novamente" para montar a
+          sacola com os mesmos itens.
+        </Body>
+      </View>
+    </View>
+  );
+}
+
+/** The bar of an order's detail: a raised back button and the order number. */
+function DetailHeader({
+  title,
+  onBack,
+  backTo,
+}: {
+  title: string;
+  onBack: () => void;
+  backTo: string;
+}) {
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={{
+        paddingTop: insets.top + theme.spacing(1),
+        paddingBottom: theme.spacing(2),
+        paddingLeft: PAGE_GUTTER + insets.left,
+        paddingRight: PAGE_GUTTER + insets.right,
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: theme.colors.background,
+      }}
+    >
+      <IconButton
+        name="arrow-back"
+        tone="filled"
+        size={24}
+        accessibilityLabel={`Voltar para ${backTo}`}
+        onPress={onBack}
+        style={{ borderRadius: theme.radius.medium, width: 48, height: 48 }}
+      />
+      <Text
+        accessibilityRole="header"
+        numberOfLines={1}
+        maxFontSizeMultiplier={1.4}
+        style={{
+          flex: 1,
+          textAlign: "center",
+          color: theme.colors.text,
+          ...theme.typography.h3,
+          fontWeight: "800",
+        }}
+      >
+        {title}
+      </Text>
+      <View style={{ width: 48 }} />
+    </View>
   );
 }
 
@@ -841,58 +1409,64 @@ function OrderCard({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Pedido ${order.number}, ${statusLabel(order.status, order.fulfillment)}, ${kind}, ${dateTime(order.placedAt)}, ${formatCents(order.totalCents)}`}
-      accessibilityHint="Abre o acompanhamento do pedido"
+      accessibilityLabel={`Pedido ${order.number}, ${statusLabel(order.status, order.fulfillment)}, ${kind}, ${orderDateTime(order.placedAt)}, ${formatCents(order.totalCents)}`}
+      accessibilityHint="Abre os detalhes do pedido"
       style={({ pressed }) => [
         {
+          flexDirection: "row",
+          alignItems: "center",
           backgroundColor: theme.colors.surface,
-          borderRadius: theme.radius.large,
-          gap: theme.spacing(2),
-          padding: theme.spacing(4),
+          borderRadius: theme.radius.xl,
+          gap: theme.spacing(3),
+          padding: theme.spacing(3),
           opacity: pressed ? 0.85 : 1,
         },
         theme.shadow,
       ]}
     >
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          gap: theme.spacing(2),
-        }}
-      >
+      <ItemThumb kind="PIZZA" imageUrls={[]} size={64} />
+      <View style={{ flex: 1, gap: theme.spacing(1) }}>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <Text
+            style={{
+              flex: 1,
+              color: theme.colors.text,
+              ...theme.typography.title,
+              fontWeight: "700",
+            }}
+          >
+            Pedido #{order.number}
+          </Text>
+          <Icon name="chevron-forward" size={20} color={theme.colors.muted} />
+        </View>
         <Text
           style={{
-            flex: 1,
-            color: theme.colors.text,
-            ...theme.typography.title,
-            fontWeight: "700",
-          }}
-        >
-          Pedido #{order.number}
-        </Text>
-        <Icon name="chevron-forward" size={20} color={theme.colors.muted} />
-      </View>
-      <StatusBadge status={order.status} fulfillment={order.fulfillment} />
-      <View style={{ flexDirection: "row", gap: theme.spacing(3) }}>
-        <Text
-          style={{
-            flex: 1,
             color: theme.colors.textSecondary,
             ...theme.typography.bodySmall,
           }}
         >
-          {kind} · {dateTime(order.placedAt)}
+          {orderDateTime(order.placedAt)}
         </Text>
-        <Text
+        <View
           style={{
-            color: theme.colors.text,
-            ...theme.typography.body,
-            fontWeight: "700",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: theme.spacing(2),
           }}
         >
-          {formatCents(order.totalCents)}
-        </Text>
+          <StatusBadge status={order.status} fulfillment={order.fulfillment} />
+          <Text
+            style={{
+              color: theme.colors.text,
+              ...theme.typography.body,
+              fontWeight: "700",
+            }}
+          >
+            {formatCents(order.totalCents)}
+          </Text>
+        </View>
       </View>
     </Pressable>
   );
@@ -1075,17 +1649,6 @@ function EmptyState({
   );
 }
 
-function dateTime(value: string) {
-  const date = new Date(value);
-  return `${date.toLocaleDateString("pt-BR")} às ${date.toLocaleTimeString(
-    "pt-BR",
-    {
-      hour: "2-digit",
-      minute: "2-digit",
-    },
-  )}`;
-}
-
 function estimateAt(order: CustomerOrderDetail) {
   const minutes =
     order.estimate!.prepMinutes +
@@ -1099,22 +1662,6 @@ function terminal(status: CustomerOrderDetail["status"]) {
   return (
     status === "COMPLETED" || status === "REJECTED" || status === "CANCELED"
   );
-}
-
-function itemName(item: CustomerOrderDetail["items"][number]) {
-  const snapshot = item.snapshot;
-  if (item.kind === "PRODUCT") {
-    const product = snapshot["product"] as { name?: unknown } | undefined;
-    return typeof product?.name === "string" ? product.name : "Produto";
-  }
-  const flavors = snapshot["flavors"] as
-    Record<string, { name?: unknown }> | undefined;
-  const names = flavors
-    ? Object.values(flavors)
-        .map((flavor) => flavor.name)
-        .filter((name): name is string => typeof name === "string")
-    : [];
-  return names.length ? `Pizza ${names.join(" / ")}` : "Pizza";
 }
 
 function reasonLabel(reason: string) {

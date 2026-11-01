@@ -8,6 +8,7 @@ export type IconName =
   | "add-circle-outline"
   | "chevron-down"
   | "create-outline"
+  | "heart-outline"
   | "home-outline"
   | "arrow-back"
   | "lock-closed-outline"

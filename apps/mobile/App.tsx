@@ -461,6 +461,12 @@ export default function App() {
                   }}
                   onOpenCart={() => navigate({ kind: "cart" })}
                   onOpenMenu={() => navigate(null)}
+                  storeName={storeName}
+                  logoUrl={logoUrl}
+                  cartCount={commerce ? cartUnits(commerce.cart) : 0}
+                  imageUrl={(id) =>
+                    imageUrl(runtime.apiUrl, runtime.storeSlug, id, "thumbnail")
+                  }
                 />
               ) : screen.kind === "account" && model && commerce && push ? (
                 <AccountScreen
