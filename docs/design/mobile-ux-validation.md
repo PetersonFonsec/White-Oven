@@ -149,7 +149,7 @@ A lógica de tela nova fica em módulos puros, testados com `node --test`:
 
 ## 7. Limitações da validação
 
-- Não houve simulador iOS nem iPhone, porque o ambiente é Linux. Safe Area, teclado, VoiceOver, Dynamic Type no tamanho máximo e o retorno háptico foram verificados pelo código e pelas APIs, não no aparelho.
+- Não houve simulador iOS nem iPhone, porque o ambiente é Linux. Safe Area, teclado, VoiceOver e Dynamic Type no tamanho máximo foram verificados pelo código e pelas APIs, não no aparelho.
 - A prévia web roda `react-native-web`. Sombras, fontes, `Alert` e `KeyboardAvoidingView` se comportam diferente no iOS.
 - Não houve teste de interface automatizado no nativo; o projeto não tem Detox nem Maestro. A cobertura de tela vem dos módulos puros e do roteiro manual.
 - As duas dependências novas (`react-native-safe-area-context` e `@expo/vector-icons`) já vêm no Expo Go do SDK 58, mas **builds EAS de preview precisam ser gerados de novo**.
@@ -162,7 +162,6 @@ Testar num iPhone com Dynamic Island (14 Pro ou mais novo) e, se possível, num 
 
 - [ ] Nenhum texto ou botão sob a Dynamic Island, o notch ou o indicador de início, em todas as telas.
 - [ ] Abas, rodapés fixos (builder, sacola, cadastro) e toasts ficam acima do indicador de início.
-- [ ] Girar o aparelho não é suportado, a menos que o app permita. Se permitir, nada sai das margens.
 - [ ] A folha dos termos (pageSheet) respeita as margens no topo e embaixo.
 
 **Teclado**
@@ -175,7 +174,7 @@ Testar num iPhone com Dynamic Island (14 Pro ou mais novo) e, se possível, num 
 
 **VoiceOver**
 
-- [ ] As abas são lidas como "Sacola, aba, 2 de 4, 1 item".
+- [ ] As abas são lidas como "Sacola, 1 item, aba 2 de 4".
 - [ ] Errar a senha faz o erro ser anunciado.
 - [ ] Enviar o cadastro vazio anuncia "Há N campos para corrigir", e o foco vai para o primeiro campo com erro.
 - [ ] Adicionar um produto anuncia "X na sacola".
