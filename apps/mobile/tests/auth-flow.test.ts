@@ -6,7 +6,7 @@ import {
   authForward,
   brandNameParts,
   initialAuthStep,
-  showsWelcome,
+  welcomeDecision,
   slideAt,
 } from "../src/customer/auth-flow.ts";
 
@@ -44,24 +44,80 @@ describe("auth flow", () => {
     ]);
   });
 
-  it("shows the welcome only for a launch with no saved session on the menu", () => {
+  describe("welcome at launch", () => {
     const base = {
       ready: true,
       session: "restored" as const,
       signedIn: false,
       dismissed: false,
       screen: "menu",
+      availability: "open" as const,
+      menu: "ok" as const,
+      shown: false,
     };
-    assert.equal(showsWelcome(base), true);
-    assert.equal(showsWelcome({ ...base, session: "restoring" }), false);
-    assert.equal(showsWelcome({ ...base, session: "failed" }), false);
-    assert.equal(showsWelcome({ ...base, ready: false }), false);
-    assert.equal(showsWelcome({ ...base, signedIn: true }), false);
-    assert.equal(showsWelcome({ ...base, dismissed: true }), false);
-    // An unavailable store, the bag or an order keep their own screen.
-    assert.equal(showsWelcome({ ...base, screen: "unavailable" }), false);
-    assert.equal(showsWelcome({ ...base, screen: "cart" }), false);
-    assert.equal(showsWelcome({ ...base, screen: "starting" }), false);
+    const decide = (change: Partial<Parameters<typeof welcomeDecision>[0]>) =>
+      welcomeDecision({ ...base, ...change });
+
+    it("shows on an open store, for a customer without a saved session", () => {
+      assert.equal(decide({}), "show");
+    });
+
+    it("shows on a store closed by its hours or paused: the menu can still be browsed", () => {
+      assert.equal(decide({ availability: "closed" }), "show");
+    });
+
+    it("never covers an unavailable or suspended store", () => {
+      assert.equal(
+        decide({ availability: "unavailable", screen: "unavailable" }),
+        "skip",
+      );
+      // Even before the session is known, the unavailable screen keeps priority.
+      assert.equal(
+        decide({ availability: "unavailable", session: "restoring" }),
+        "skip",
+      );
+      // And a store that becomes unavailable closes a welcome already on screen.
+      assert.equal(
+        decide({
+          availability: "unavailable",
+          screen: "unavailable",
+          shown: true,
+        }),
+        "skip",
+      );
+    });
+
+    it("skips without a connection or a menu, instead of popping up later", () => {
+      assert.equal(decide({ availability: "offline" }), "skip");
+      assert.equal(decide({ menu: "failed" }), "skip");
+      assert.equal(decide({ menu: "loading" }), "wait");
+      assert.equal(decide({ availability: null, screen: "starting" }), "wait");
+      // Once shown, a refresh that loses the connection does not pull it away.
+      assert.equal(decide({ availability: "offline", shown: true }), "show");
+    });
+
+    it("waits while the saved session is restored, and never shows to a signed-in customer", () => {
+      assert.equal(decide({ session: "idle" }), "wait");
+      assert.equal(decide({ session: "restoring" }), "wait");
+      assert.equal(decide({ ready: false }), "wait");
+      assert.equal(decide({ session: "restoring", signedIn: true }), "skip");
+      assert.equal(decide({ signedIn: true }), "skip");
+      assert.equal(decide({ signedIn: true, shown: true }), "skip");
+      // A session that could not be checked may be a signed-in customer.
+      assert.equal(decide({ session: "failed" }), "skip");
+    });
+
+    it("stays away once dismissed, signed in from it or left for another screen", () => {
+      assert.equal(decide({ dismissed: true }), "skip");
+      assert.equal(decide({ dismissed: true, shown: true }), "skip");
+      // "Entrar" or "Criar conta" end in a session.
+      assert.equal(decide({ shown: true, signedIn: true }), "skip");
+      // The bag, an order or the account keep their own screen.
+      assert.equal(decide({ screen: "cart" }), "skip");
+      assert.equal(decide({ screen: "order", shown: true }), "skip");
+      // Back on the menu after skipping it: the menu stays, browsable without an account.
+      assert.equal(decide({ dismissed: true, screen: "menu" }), "skip");
+    });
   });
 
   it("splits the store name for the two-tone mark", () => {

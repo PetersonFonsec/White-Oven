@@ -1,9 +1,11 @@
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
   type ComponentRef,
   type ReactNode,
+  type RefObject,
 } from "react";
 import {
   Alert,
@@ -48,11 +50,13 @@ import {
   STEP_LABELS,
   builderChanged,
   builderSteps,
+  blockerBefore,
+  builderBack,
   canOpenStep,
+  runBuilderBack,
   editedSide,
   footerState,
   sideAfterFlavor,
-  stepReady,
 } from "../builder/flow.ts";
 import { PAGE_GUTTER } from "../components/layout.ts";
 import { formatCents } from "../menu/menu.ts";
@@ -70,6 +74,11 @@ interface Props {
   addingDisabled: boolean;
   addError: string | null;
   builder: BuilderMenu;
+  /**
+   * Filled by the builder with its back action, so Android's back button (one listener, in App)
+   * does exactly what the header arrow does: previous step, or leave asking first.
+   */
+  backRef: RefObject<(() => void) | null>;
   flavorId: string;
   flavorImageUrl: (imageId: string) => string;
   /** The menu could not be reloaded: prices and availability may be old. */
@@ -90,6 +99,7 @@ interface Props {
 export function BuilderScreen({
   addingDisabled,
   addError,
+  backRef,
   builder,
   flavorId,
   flavorImageUrl,
@@ -126,17 +136,27 @@ export function BuilderScreen({
     [builder, state],
   );
 
-  const leave = () => {
-    if (!builderChanged(initial.current, state)) return onBack();
+  /** Asks before discarding; "Continuar montando" keeps the pizza exactly as it is. */
+  const confirmLeave = (discard: () => void) =>
     Alert.alert(
       "Sair sem adicionar?",
       "A pizza que você montou não vai para a sacola.",
       [
         { text: "Continuar montando", style: "cancel" },
-        { text: "Sair", style: "destructive", onPress: onBack },
+        { text: "Sair", style: "destructive", onPress: discard },
       ],
     );
-  };
+  const leave = () =>
+    builderChanged(initial.current, state) ? confirmLeave(onBack) : onBack();
+  // The back action of this render; Android's button reads it through `backRef`.
+  const back = useRef<() => void>(leave);
+  back.current = leave;
+  useEffect(() => {
+    backRef.current = () => back.current();
+    return () => {
+      backRef.current = null;
+    };
+  }, [backRef]);
   const header = (
     <ScreenHeader title="Monte sua pizza" onBack={leave} backTo="Cardápio" />
   );
@@ -209,7 +229,14 @@ export function BuilderScreen({
   const stepIndex = Math.max(0, steps.indexOf(step));
   const current = steps[stepIndex]!;
   const last = stepIndex === steps.length - 1;
-  const missing = last ? null : stepReady(current, state);
+  const blocker = last
+    ? null
+    : blockerBefore(steps, steps[stepIndex + 1]!, result);
+  const missing = blocker
+    ? blocker.step === current
+      ? blocker.message
+      : `${STEP_LABELS[blocker.step]}: ${blocker.message}`
+    : null;
   const goTo = (next: BuilderStep) => {
     setStep(next);
     scroll.current?.scrollTo({ y: 0, animated: false });
@@ -217,6 +244,13 @@ export function BuilderScreen({
       `Etapa ${steps.indexOf(next) + 1} de ${steps.length}: ${STEP_LABELS[next]}`,
     );
   };
+  // Header arrow and Android's button: previous step, or leave asking first (`builderBack`).
+  const stepBack = () =>
+    runBuilderBack(
+      builderBack(steps, current, builderChanged(initial.current, state)),
+      { goTo, leave: onBack, confirm: confirmLeave },
+    );
+  back.current = stepBack;
   const priceText =
     footer.totalCents === null ? null : formatCents(footer.totalCents);
   const halfPicker = halves ? (
@@ -236,7 +270,7 @@ export function BuilderScreen({
       header={
         <ScreenHeader
           title="Monte sua pizza"
-          onBack={stepIndex > 0 ? () => goTo(steps[stepIndex - 1]!) : leave}
+          onBack={stepBack}
           backTo={
             stepIndex > 0 ? STEP_LABELS[steps[stepIndex - 1]!] : "Cardápio"
           }
@@ -290,6 +324,7 @@ export function BuilderScreen({
               icon="arrow-forward"
               variant="primary"
               disabled={!!missing}
+              accessibilityHint={missing ?? undefined}
               accessibilityLabel={`Continuar para ${STEP_LABELS[steps[stepIndex + 1]!]}${priceText ? `, total estimado ${priceText}` : ""}`}
               onPress={() => goTo(steps[stepIndex + 1]!)}
               style={{ borderRadius: 999 }}
@@ -302,7 +337,7 @@ export function BuilderScreen({
       <Stepper
         steps={steps}
         current={stepIndex}
-        canOpen={(target) => canOpenStep(steps, target, state)}
+        canOpen={(target) => canOpenStep(steps, target, result)}
         onOpen={goTo}
       />
 

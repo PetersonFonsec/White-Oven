@@ -65,7 +65,7 @@ import {
 } from "./src/cart/summary.ts";
 import { AccountScreen } from "./src/screens/AccountScreen.tsx";
 import { AuthFlow } from "./src/screens/AuthScreens.tsx";
-import { showsWelcome } from "./src/customer/auth-flow.ts";
+import { welcomeDecision } from "./src/customer/auth-flow.ts";
 import { type LegalState, loadStoreLegal } from "./src/customer/legal.ts";
 import {
   type CheckoutDraft,
@@ -158,6 +158,9 @@ export default function App() {
   const signedInBefore = useRef(profileId);
   // The welcome covers the menu once per launch, for a customer without a saved session.
   const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  const [welcomeShown, setWelcomeShown] = useState(false);
+  /** The open builder's back action, so Android's button never skips its confirmation. */
+  const builderBackRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const wasSignedIn = signedInBefore.current;
     signedInBefore.current = profileId;
@@ -345,15 +348,24 @@ export default function App() {
     destination,
     commerce ? recoveryOf(commerce) : null,
   );
-  const welcome =
-    !!commerce &&
-    showsWelcome({
-      ready: commerce.ready,
-      session: commerce.session,
-      signedIn: profileId !== null,
-      dismissed: welcomeDismissed,
-      screen: screen.kind,
-    });
+  const welcomeNow = commerce
+    ? welcomeDecision({
+        ready: commerce.ready,
+        session: commerce.session,
+        signedIn: profileId !== null,
+        dismissed: welcomeDismissed,
+        screen: screen.kind,
+        availability: view?.availability.kind ?? null,
+        menu: menu.kind,
+        shown: welcomeShown,
+      })
+    : "wait";
+  const welcome = welcomeNow === "show";
+  // Decided once per launch: shown until the customer leaves it, or skipped for good.
+  useEffect(() => {
+    if (welcomeNow === "skip" && !welcomeDismissed) setWelcomeDismissed(true);
+    if (welcomeNow === "show" && !welcomeShown) setWelcomeShown(true);
+  }, [welcomeNow, welcomeDismissed, welcomeShown]);
   const inBuilder = screen.kind === "builder";
   const inMenuTab = screen.kind === "menu" && storeTab === "menu";
   // The Cardápio tab goes back to Início on Android, like its back arrow.
@@ -368,17 +380,22 @@ export default function App() {
     );
     return () => subscription.remove();
   }, [inMenuTab]);
-  // Android's back button goes up one level: builder to menu, an order to where it was opened,
-  // an account opened from the bag back to the bag, any tab back to the menu.
+  // Android's back button goes up one level: the builder does what its own back arrow does
+  // (previous step, or leave asking first; `builderBackRef`), an order goes to where it was
+  // opened, an account opened from the bag back to the bag, any tab back to the menu.
   useEffect(() => {
     if (!inBuilder && !destination) return;
     const subscription = BackHandler.addEventListener(
       "hardwareBackPress",
       () => {
         if (commerceRef.current?.getSnapshot().busy) return true;
+        if (inBuilder) {
+          // Never discard a pizza in silence: without the builder's action, stay put.
+          builderBackRef.current?.();
+          return true;
+        }
         commerceRef.current?.invalidateQuote();
-        if (inBuilder) setBuilding(null);
-        else setDestination(destinationOnBack(destination, orderReturn));
+        setDestination(destinationOnBack(destination, orderReturn));
         return true;
       },
     );
@@ -574,6 +591,7 @@ export default function App() {
               ) : view && screen.kind === "builder" && builder ? (
                 <BuilderScreen
                   key={screen.flavorId}
+                  backRef={builderBackRef}
                   builder={builder}
                   flavorId={screen.flavorId}
                   flavorImageUrl={(id) =>

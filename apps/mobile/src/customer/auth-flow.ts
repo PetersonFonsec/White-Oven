@@ -40,24 +40,52 @@ export function authBack(stack: AuthStack): AuthStack | null {
 }
 
 /**
- * Whether the welcome covers the app at launch: only once the saved session is known to be
- * absent, while the store serves its menu, and until the customer picks a way in or skips it.
+ * Whether the welcome covers the app at launch, decided once per launch:
+ *
+ * - "wait" while something it depends on is still unknown (the saved session, the store's state
+ *   or the menu, all on their first load).
+ * - "show" only for a customer without a saved session, with the store serving its menu: open,
+ *   or closed by its hours or paused, since the menu can still be browsed (ADR 0016). Nothing
+ *   else is on screen yet (no bag, order or account opened).
+ * - "skip" for everything else: signed in, a session that could not be checked, a store that is
+ *   unavailable (its own screen keeps priority, ADR 0020), no connection or a menu that failed to
+ *   load. The app records "skip" for the launch, so the welcome never pops up later over a menu
+ *   the customer is already using.
  */
-export function showsWelcome(options: {
+export type WelcomeDecision = "wait" | "show" | "skip";
+
+export function welcomeDecision(options: {
   ready: boolean;
   session: "idle" | "restoring" | "restored" | "failed";
   signedIn: boolean;
   dismissed: boolean;
   /** What the app would show without the welcome. */
   screen: string;
-}): boolean {
-  return (
-    options.ready &&
-    options.session === "restored" &&
-    !options.signedIn &&
-    !options.dismissed &&
-    options.screen === "menu"
-  );
+  /** The store's state, null before the first answer or cached copy. */
+  availability: "open" | "closed" | "unavailable" | "offline" | null;
+  /** The menu's first load. */
+  menu: "loading" | "ok" | "failed";
+  /**
+   * The welcome is already on screen: a refresh that loses the connection does not pull it away
+   * mid-read; only signing in, skipping it, another screen or an unavailable store close it.
+   */
+  shown: boolean;
+}): WelcomeDecision {
+  if (options.dismissed) return "skip";
+  if (options.signedIn || options.session === "failed") return "skip";
+  if (
+    options.availability === "unavailable" ||
+    options.screen === "unavailable"
+  )
+    return "skip";
+  if (options.shown) return options.screen === "menu" ? "show" : "skip";
+  if (!options.ready || options.session !== "restored") return "wait";
+  if (options.availability === null || options.screen === "starting")
+    return "wait";
+  if (options.availability === "offline") return "skip";
+  if (options.screen !== "menu") return "skip";
+  if (options.menu === "loading") return "wait";
+  return options.menu === "ok" ? "show" : "skip";
 }
 
 /**
