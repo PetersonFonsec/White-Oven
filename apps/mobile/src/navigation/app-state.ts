@@ -82,8 +82,11 @@ export type Screen =
   | { kind: "menu" }
   | { kind: "builder"; flavorId: string };
 
+/** Where the account screen returns after a sign-in, when another screen sent the customer there. */
+export type AccountReturn = "cart" | "history";
+
 export type Destination =
-  | { kind: "account" }
+  | { kind: "account"; returnTo?: AccountReturn }
   | { kind: "cart" }
   | { kind: "history" }
   | { kind: "order"; orderId: string }
@@ -156,4 +159,37 @@ export function destinationAfterRefresh(
     !recovery
     ? null
     : destination;
+}
+
+/**
+ * After a sign-in or sign-up on an account screen opened from the bag or the orders, the app goes
+ * back there: the customer was in the middle of something. Null keeps the account on screen.
+ */
+export function destinationAfterSignIn(destination: Destination): Destination {
+  return typeof destination === "object" &&
+    destination?.kind === "account" &&
+    destination.returnTo
+    ? { kind: destination.returnTo }
+    : null;
+}
+
+/** The name of the screen the account returns to, for its back button. */
+export function returnLabel(destination: Destination): string | null {
+  if (typeof destination !== "object" || destination?.kind !== "account")
+    return null;
+  return destination.returnTo === "cart"
+    ? "Sacola"
+    : destination.returnTo === "history"
+      ? "Pedidos"
+      : null;
+}
+
+/** One level up from `destination` (Android back, header back): never a loop. */
+export function destinationOnBack(
+  destination: Destination,
+  orderReturn: "history" | "cart",
+): Destination {
+  if (typeof destination === "object" && destination?.kind === "order")
+    return { kind: orderReturn };
+  return destinationAfterSignIn(destination);
 }
