@@ -18,22 +18,14 @@ export interface PushNative {
  * moment, and the client refuses the call before reading a token once the identity changed (sign
  * out, another account). `signal` aborts a request still in flight when the model is reset.
  */
-export interface PushCall {
-  session: number;
-  signal: AbortSignal;
-}
-export interface PushApi {
-  /** The signed-in identity now; any sign-in or sign-out changes it. */
-  session(): number;
-  status(call: PushCall): Promise<unknown>;
-  register(
-    token: string,
-    installationId: string,
-    call: PushCall,
-  ): Promise<unknown>;
-  /** Ends this session's subscription and any older one of this installation. */
-  unregister(installationId: string, call: PushCall): Promise<unknown>;
-}
+import type {
+  PushApi,
+  PushCall,
+} from "@whiteoven/customer-core/customer/push-types";
+export type {
+  PushApi,
+  PushCall,
+} from "@whiteoven/customer-core/customer/push-types";
 
 /**
  * `unavailable`: this build has no push project; `unknown`: not read yet; `denied`: the customer

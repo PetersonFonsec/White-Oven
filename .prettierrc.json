@@ -9,6 +9,12 @@
       "options": {
         "parser": "astro"
       }
+    },
+    {
+      "files": "apps/web-customer/src/app/**/*.html",
+      "options": {
+        "parser": "angular"
+      }
     }
   ]
 }
