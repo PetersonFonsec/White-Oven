@@ -1,0 +1,155 @@
+<h1>Monte sua pizza</h1>
+<wo-catalog-notice />
+@if (state(); as pizza) {
+  <div class="builder-layout">
+    <section class="pizza-preview">
+      <div class="pizza-disc" aria-hidden="true">
+        @for (side of sides(pizza); track side) {
+          <div>
+            @if (photo(pizza.flavors[side]); as src) {
+              <img [src]="src" alt="" />
+            } @else {
+              <span>{{ side === "LEFT" ? "1" : "2" }}</span>
+            }
+          </div>
+        }
+      </div>
+      @for (half of halves(); track half.title) {
+        <p>{{ half.text }}</p>
+      }
+    </section>
+    <section>
+      <fieldset>
+        <legend>Tamanho</legend>
+        @for (sizeOption of builder()!.menu.sizes; track sizeOption.id) {
+          <button
+            class="choice"
+            [attr.aria-pressed]="pizza.sizeId === sizeOption.id"
+            (click)="size(sizeOption.id)"
+          >
+            {{ sizeOption.name }} · {{ sizeOption.slices }} fatias
+          </button>
+        }
+      </fieldset>
+      <fieldset>
+        <legend>Sabores</legend>
+        <button
+          class="choice"
+          [attr.aria-pressed]="pizza.mode === 'WHOLE'"
+          (click)="mode(false)"
+        >
+          Um sabor</button
+        ><button
+          class="choice"
+          [attr.aria-pressed]="pizza.mode === 'HALVES'"
+          (click)="mode(true)"
+        >
+          Meio a meio
+        </button>
+      </fieldset>
+      @for (side of sides(pizza); track side) {
+        <fieldset>
+          <legend>
+            {{
+              pizza.mode === "WHOLE"
+                ? "Pizza inteira"
+                : side === "LEFT"
+                  ? "Metade
+        esquerda"
+                  : "Metade direita"
+            }}
+          </legend>
+          <wo-flavors
+            [value]="pizza.flavors[side]"
+            [flavors]="allowedFlavors(pizza.sizeId)"
+            (changed)="flavor(side, $event)"
+          />
+          @for (extraOption of builder()!.menu.extras; track extraOption.id) {
+            @if (
+              builder()!.index.extraPrice(extraOption.id, pizza.sizeId) !==
+              undefined
+            ) {
+              <label class="check"
+                ><input
+                  type="checkbox"
+                  [checked]="pizza.extras[side].includes(extraOption.id)"
+                  (change)="extra(side, extraOption.id)"
+                />Adicionar {{ extraOption.name }}</label
+              >
+            }
+          }
+          @for (
+            ingredient of removable(pizza.flavors[side]);
+            track ingredient.id
+          ) {
+            <label class="check"
+              ><input
+                type="checkbox"
+                [checked]="pizza.removals[side].includes(ingredient.id)"
+                (change)="remove(side, ingredient.id)"
+              />Sem {{ ingredient.name }}</label
+            >
+          }
+        </fieldset>
+      }
+      <label
+        >Borda<select
+          woInput
+          #edge
+          [value]="pizza.crustId ?? ''"
+          (change)="crust(edge.value)"
+        >
+          <option value="">Sem borda recheada</option>
+          @for (option of builder()!.menu.crusts; track option.id) {
+            @if (
+              builder()!.index.crustPrice(option.id, pizza.sizeId) !== undefined
+            ) {
+              <option [value]="option.id">{{ option.name }}</option>
+            }
+          }
+        </select></label
+      >
+      <h2>Revisão</h2>
+      <wo-quantity
+        label="quantidade"
+        [value]="pizza.quantity"
+        [max]="maxQty"
+        (changed)="quantity($event)"
+      />
+      <div aria-live="polite">
+        @if (result(); as price) {
+          @if (price.kind === "priced") {
+            @for (line of lines(); track $index) {
+              <p>{{ line.label }} · {{ line.amount }}</p>
+            }
+            <strong>Total {{ money(price.price.totalCents) }}</strong>
+          } @else {
+            <p>
+              {{
+                price.kind === "invalid"
+                  ? price.messages.join(" ")
+                  : price.message
+              }}
+            </p>
+          }
+        }
+      </div>
+      @if (message()) {
+        <p role="alert">{{ message() }}</p>
+      }
+      <button
+        woButton
+        [disabled]="
+          result()?.kind !== 'priced' ||
+          shop.locked() ||
+          catalog.status() !== 'ready'
+        "
+        (click)="add()"
+      >
+        Adicionar à sacola
+      </button>
+    </section>
+  </div>
+} @else if (catalog.status() === "ready") {
+  <p>Este sabor não está disponível no cardápio atual.</p>
+}

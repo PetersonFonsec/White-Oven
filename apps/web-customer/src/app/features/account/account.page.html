@@ -1,0 +1,142 @@
+@if (mode() === "recovery" || mode() === "verification") {
+  <h1>
+    {{ mode() === "recovery" ? "Recuperar acesso" : "Verificação de e-mail" }}
+  </h1>
+  <p>
+    {{
+      mode() === "recovery"
+        ? "A recuperação de senha ainda não está disponível nesta loja."
+        : "A loja ainda não oferece confirmação por e-mail."
+    }}
+  </p>
+  <a [routerLink]="['/lojas', store.slug(), 'conta']">Voltar à conta</a>
+} @else if (shop.state()?.profile; as profile) {
+  <h1>Minha conta</h1>
+  <section class="panel">
+    <h2>{{ profile.name }}</h2>
+    <p>
+      {{ profile.email }}
+      @if (profile.phone) {
+        · {{ profile.phone }}
+      }
+    </p>
+    <button
+      woButton
+      variant="secondary"
+      (click)="shop.model?.logout()"
+      [disabled]="shop.state()?.busy"
+    >
+      Sair da conta
+    </button>
+  </section>
+  @if (profile.legalUpdateRequired) {
+    <section>
+      <h2>Documentos atualizados</h2>
+      <wo-legal (accepted)="versions.set($event)" /><button
+        woButton
+        [disabled]="!versions() || shop.state()?.busy"
+        (click)="accept()"
+      >
+        Confirmar aceite
+      </button>
+    </section>
+  }
+  <wo-addresses />
+  <section>
+    <h2>Preferências deste navegador</h2>
+    <label
+      >Visualização do cardápio<select
+        woInput
+        #layout
+        [value]="prefs.layout()"
+        (change)="prefs.choose(layout.value === 'list' ? 'list' : 'grid')"
+      >
+        <option value="grid">Grade com fotos</option>
+        <option value="list">Lista compacta</option>
+      </select></label
+    >
+  </section>
+} @else {
+  <h1>{{ mode() === "register" ? "Criar conta" : "Entrar na sua conta" }}</h1>
+  <form
+    class="panel form-stack"
+    [formGroup]="form"
+    (ngSubmit)="submit()"
+    novalidate
+  >
+    @if (mode() === "register") {
+      <label
+        >Nome<input
+          woInput
+          formControlName="name"
+          autocomplete="name"
+          [attr.aria-invalid]="!!errors().name"
+      /></label>
+      @if (errors().name) {
+        <p role="alert">{{ errors().name }}</p>
+      }
+    }
+    <label
+      >E-mail<input
+        woInput
+        type="email"
+        formControlName="email"
+        autocomplete="email"
+        [attr.aria-invalid]="!!errors().email"
+    /></label>
+    @if (errors().email) {
+      <p role="alert">{{ errors().email }}</p>
+    }
+    @if (mode() === "register") {
+      <label
+        >Telefone (opcional)<input
+          woInput
+          type="tel"
+          formControlName="phone"
+          autocomplete="tel"
+          [attr.aria-invalid]="!!errors().phone"
+      /></label>
+      @if (errors().phone) {
+        <p role="alert">{{ errors().phone }}</p>
+      }
+    }
+    <label
+      >Senha<input
+        woInput
+        type="password"
+        formControlName="password"
+        [attr.autocomplete]="
+          mode() === 'register' ? 'new-password' : 'current-password'
+        "
+        [attr.aria-invalid]="!!errors().password"
+    /></label>
+    @if (errors().password) {
+      <p role="alert">{{ errors().password }}</p>
+    }
+    @if (mode() === "register") {
+      <p>Use pelo menos 10 caracteres, uma letra maiúscula e um número.</p>
+      <wo-legal (accepted)="versions.set($event)" />
+      @if (errors().legal) {
+        <p role="alert">{{ errors().legal }}</p>
+      }
+    }
+    <button woButton [disabled]="!shop.state()?.ready || shop.state()?.busy">
+      {{ mode() === "register" ? "Criar conta" : "Entrar" }}
+    </button>
+  </form>
+  <p>
+    <a
+      [routerLink]="[
+        '/lojas',
+        store.slug(),
+        mode() === 'register' ? 'conta' : 'cadastro',
+      ]"
+      [queryParams]="{ voltar: voltar() }"
+      >{{ mode() === "register" ? "Já tenho conta" : "Criar uma conta" }}</a
+    >
+    ·
+    <a [routerLink]="['/lojas', store.slug(), 'recuperar-acesso']"
+      >Esqueci minha senha</a
+    >
+  </p>
+}

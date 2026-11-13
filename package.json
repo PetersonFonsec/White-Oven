@@ -32,7 +32,10 @@
     "mobile:release-check": "pnpm --filter @whiteoven/mobile release-check",
     "db:up": "docker compose -f compose.dev.yaml up -d --wait postgres",
     "test:e2e:admin": "playwright test -c apps/admin/e2e/playwright.config.ts",
-    "test:e2e:mobile": "pnpm --filter @whiteoven/api exec tsc -p tsconfig.test.json && node --experimental-strip-types --test apps/mobile/tests/integration/checkout-api.mjs"
+    "test:e2e:mobile": "pnpm --filter @whiteoven/api exec tsc -p tsconfig.test.json && node --experimental-strip-types --test apps/mobile/tests/integration/checkout-api.mjs",
+    "web:dev": "pnpm --filter @whiteoven/web-customer dev",
+    "web:build": "pnpm --filter @whiteoven/web-customer build",
+    "test:e2e:web": "playwright test -c apps/web-customer/e2e/playwright.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

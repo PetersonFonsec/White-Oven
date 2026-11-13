@@ -141,3 +141,11 @@ O cliente pode cancelar enquanto o pedido ainda está `PLACED`; depois do aceite
 pizzaria. “Pedir novamente” reconstrói somente itens ainda válidos no catálogo atual e passa pelo
 checkout/quote para obter preços atuais. A API limita as leituras à conta autenticada e usa
 `Cache-Control: no-store`. Push segue fora deste marco.
+
+### Consumer web (Angular)
+
+`pnpm web:dev` serves the Angular consumer app on port 4300. Open
+`/lojas/<slug>` to browse the store, build pizzas, manage the bag and account,
+quote, confirm and track orders. `pnpm web:build` produces the SPA bundle.
+See [local setup and browser tests](apps/web-customer/README.md) and
+[architecture and API boundaries](docs/architecture/web-customer.md).

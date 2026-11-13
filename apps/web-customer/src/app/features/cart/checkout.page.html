@@ -1,0 +1,154 @@
+<h1>Checkout</h1>
+@if (!shop.state()?.ready) {
+  <p role="status">Abrindo sua sacola…</p>
+} @else if (shop.state()?.pending) {
+  <section class="panel">
+    <h2>Confirmação pendente</h2>
+    @if (bag.hidden()) {
+      <p role="status">
+        {{
+          shop.state()?.profile
+            ? "Este pedido foi enviado por outra conta. Saia da conta atual e entre na conta original para recuperá-lo."
+            : "Entre na conta que confirmou este pedido."
+        }}
+      </p>
+      <a
+        [routerLink]="['/lojas', store.slug(), 'conta']"
+        [queryParams]="{ voltar: 'checkout' }"
+        >{{ shop.state()?.profile ? "Trocar de conta" : "Entrar na conta" }}</a
+      >
+    } @else {
+      <p>Confira o resultado antes de fazer outro pedido.</p>
+      @if (canRetry()) {
+        <button
+          woButton
+          [disabled]="shop.state()?.busy"
+          (click)="shop.model?.confirm()"
+        >
+          Recuperar o mesmo pedido
+        </button>
+      } @else {
+        <p>O prazo de recuperação terminou. Fale com a pizzaria.</p>
+      }
+      <button [disabled]="shop.state()?.busy" (click)="acknowledge()">
+        Já conferi com a pizzaria
+      </button>
+    }
+  </section>
+} @else if (
+  shop.state()?.receipt &&
+  shop.state()?.receipt?.customerId === shop.state()?.profile?.id
+) {
+  <section class="panel">
+    <h2>Pedido confirmado</h2>
+    <p>
+      Pedido #{{ shop.state()?.receipt?.number }} ·
+      {{ money(shop.state()!.receipt!.totalCents) }}
+    </p>
+    <a
+      woButton
+      [routerLink]="[
+        '/lojas',
+        store.slug(),
+        'pedidos',
+        shop.state()!.receipt!.id,
+      ]"
+      >Acompanhar pedido</a
+    >
+  </section>
+} @else if (!shop.state()?.profile) {
+  <p>Entre na conta desta pizzaria para concluir o pedido.</p>
+  <a
+    woButton
+    [routerLink]="['/lojas', store.slug(), 'conta']"
+    [queryParams]="{ voltar: 'checkout' }"
+    >Entrar para pedir</a
+  >
+} @else if (shop.state()?.profile?.legalUpdateRequired) {
+  <p>Leia e aceite os documentos atuais para continuar.</p>
+  <a woButton [routerLink]="['/lojas', store.slug(), 'conta']"
+    >Ver documentos</a
+  >
+} @else {
+  <form class="bag-grid" [formGroup]="form" (ngSubmit)="submit()">
+    <section class="form-stack">
+      @if (store.checkout(); as settings) {
+        <label
+          >Recebimento<select woInput formControlName="fulfillment">
+            @for (mode of settings.fulfillmentModes; track mode) {
+              <option [value]="mode">
+                {{ mode === "DELIVERY" ? "Entrega" : "Retirada" }}
+              </option>
+            }
+          </select></label
+        >
+        @if (form.controls.fulfillment.value === "DELIVERY") {
+          <p>{{ settings.deliveryAreaDescription }}</p>
+          <label
+            >Endereço<select woInput formControlName="addressId">
+              <option value="">Escolha um endereço</option>
+              @for (address of shop.state()?.addresses; track address.id) {
+                <option [value]="address.id">
+                  {{ address.label }} · {{ address.street }},
+                  {{ address.number }}
+                </option>
+              }
+            </select></label
+          ><a [routerLink]="['/lojas', store.slug(), 'conta']"
+            >Gerenciar endereços</a
+          >
+        } @else {
+          <p>{{ settings.pickupAddress }}</p>
+        }
+        <wo-payment-method
+          [methods]="settings.acceptedPaymentMethods"
+          [control]="form.controls.paymentMethod"
+        />
+        @if (form.controls.paymentMethod.value === "CASH") {
+          <label
+            >Troco para (opcional)<input
+              woInput
+              formControlName="change"
+              inputmode="decimal"
+          /></label>
+        }
+        <label
+          >Observações (opcional)<textarea
+            woInput
+            formControlName="notes"
+            maxlength="500"
+          ></textarea>
+        </label>
+      }
+    </section>
+    <aside class="panel">
+      <h2>Resumo do pedido</h2>
+      @for (row of bag.rows(); track row.id) {
+        <p>{{ row.quantity }} × {{ row.name }}</p>
+      }
+      @if (shop.state()?.quote; as quote) {
+        <wo-price-summary [value]="quote.totals" />
+        @if (quote.totals.priceChanged) {
+          <p role="alert">
+            O preço mudou. Confira o novo total antes de confirmar.
+          </p>
+        }
+      }
+      @if (action(); as next) {
+        @if (next.kind === "blocked") {
+          <p role="status">{{ next.reason }}</p>
+        }
+        <button
+          woButton
+          type="submit"
+          [disabled]="next.kind !== 'quote' && next.kind !== 'confirm'"
+        >
+          {{ next.kind === "confirm" ? "Confirmar pedido" : "Consultar total" }}
+        </button>
+      }
+      @if (error()) {
+        <p role="alert">{{ error() }}</p>
+      }
+    </aside>
+  </form>
+}

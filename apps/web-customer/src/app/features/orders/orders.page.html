@@ -1,0 +1,93 @@
+<h1>{{ orderId() ? "Detalhes do pedido" : "Meus pedidos" }}</h1>
+@if (!shop.state()?.ready || shop.state()?.session === "restoring") {
+  <p role="status">Abrindo sua conta…</p>
+} @else if (!shop.state()?.profile) {
+  <p>Entre para ver os pedidos desta pizzaria.</p>
+  <a
+    woButton
+    [routerLink]="['/lojas', store.slug(), 'conta']"
+    [queryParams]="{ voltar: 'pedidos' }"
+    >Entrar na conta</a
+  >
+} @else {
+  @if (!orderId()) {
+    <nav class="chips" aria-label="Filtrar pedidos">
+      @for (option of filters; track option.value) {
+        <button
+          [woChip]="filter() === option.value"
+          (click)="filter.set(option.value)"
+        >
+          {{ option.label }}
+        </button>
+      }
+    </nav>
+    @for (order of visible(); track order.id) {
+      <wo-order-card [slug]="store.slug()" [order]="order" />
+    }
+    @if (!loaded() && !busy() && !error()) {
+      <p role="status">Preparando histórico…</p>
+    }
+    @if (loaded() && !busy() && !error() && !visible().length) {
+      <p role="status">
+        {{
+          items().length
+            ? "Nenhum pedido neste filtro."
+            : "Você ainda não fez pedidos nesta pizzaria."
+        }}
+      </p>
+    }
+    @if (cursor() !== null) {
+      <button
+        woButton
+        variant="secondary"
+        [disabled]="busy()"
+        (click)="load(true)"
+      >
+        Carregar mais
+      </button>
+    }
+  } @else if (detail(); as order) {
+    <a [routerLink]="['/lojas', store.slug(), 'pedidos']">Voltar aos pedidos</a>
+    <section class="panel">
+      <h2>Pedido #{{ order.number }}</h2>
+      <p>
+        {{ date(order.placedAt) }} ·
+        {{ label(order.status, order.fulfillment) }}
+      </p>
+      @for (item of order.items; track $index) {
+        <article class="list-row">
+          <div>
+            <h3>{{ item.quantity }} × {{ view(item).title }}</h3>
+            @for (line of view(item).lines; track $index) {
+              <p>{{ line }}</p>
+            }
+          </div>
+          <strong>{{ money(item.totalCents) }}</strong>
+        </article>
+      }
+      <wo-price-summary [value]="order" />
+    </section>
+    <h2>Andamento</h2>
+    <ol>
+      @for (change of order.history; track $index) {
+        <li>
+          {{ date(change.at) }} · {{ label(change.to, order.fulfillment) }}
+        </li>
+      }
+    </ol>
+    <button woButton [disabled]="busy() || shop.locked()" (click)="reorder()">
+      Pedir novamente
+    </button>
+  }
+  @if (busy()) {
+    <p role="status">
+      {{ loaded() ? "Carregando mais pedidos…" : "Consultando pedidos…" }}
+    </p>
+  }
+  @if (error()) {
+    <p role="alert">{{ error() }}</p>
+    <button (click)="load(loaded() && cursor() !== null)">
+      Tentar novamente
+    </button>
+  }
+}
