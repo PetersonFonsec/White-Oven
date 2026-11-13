@@ -45,6 +45,7 @@ export class OrdersPage {
   readonly items = signal<CustomerOrderSummary[]>([]);
   readonly detail = signal<CustomerOrderDetail | null>(null);
   readonly cursor = signal<number | null>(null);
+  readonly loaded = signal(false);
   readonly busy = signal(false);
   readonly error = signal("");
   readonly filter = signal<OrderFilter>("all");
@@ -62,6 +63,7 @@ export class OrdersPage {
       const abort = new AbortController();
       this.abort = abort;
       untracked(() => {
+        this.loaded.set(false);
         this.items.set([]);
         this.detail.set(null);
         this.cursor.set(null);
@@ -120,10 +122,14 @@ export class OrdersPage {
             more ? [...this.items(), ...page.orders] : page.orders,
           );
           this.cursor.set(page.nextCursor);
+          this.loaded.set(true);
         }
       }
     } catch (error) {
-      if (!abort.signal.aborted) this.error.set(orderDetailMessage(error));
+      if (!abort.signal.aborted)
+        this.error.set(
+          orderDetailMessage(error) || "Não foi possível consultar os pedidos.",
+        );
     } finally {
       if (!abort.signal.aborted) this.busy.set(false);
     }

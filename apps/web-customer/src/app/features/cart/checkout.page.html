@@ -5,11 +5,17 @@
   <section class="panel">
     <h2>Confirmação pendente</h2>
     @if (bag.hidden()) {
-      <p>Entre na conta que confirmou este pedido.</p>
+      <p role="status">
+        {{
+          shop.state()?.profile
+            ? "Este pedido foi enviado por outra conta. Saia da conta atual e entre na conta original para recuperá-lo."
+            : "Entre na conta que confirmou este pedido."
+        }}
+      </p>
       <a
         [routerLink]="['/lojas', store.slug(), 'conta']"
         [queryParams]="{ voltar: 'checkout' }"
-        >Entrar na conta</a
+        >{{ shop.state()?.profile ? "Trocar de conta" : "Entrar na conta" }}</a
       >
     } @else {
       <p>Confira o resultado antes de fazer outro pedido.</p>

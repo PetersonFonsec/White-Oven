@@ -73,19 +73,57 @@ export class CheckoutPage {
       !!s?.quote,
     );
   });
+  private readonly terms = computed(() => {
+    const settings = this.store.checkout();
+    const v = this.values();
+    let change: number | null | "invalid" = null;
+    if (v.paymentMethod === "CASH") {
+      try {
+        change = moneyInput(v.change ?? "");
+      } catch {
+        change = "invalid";
+      }
+    }
+    return JSON.stringify([
+      this.bag.catalog.menu()?.version,
+      this.store.availability(),
+      this.bag.catalog.status() === "stale",
+      settings?.minimumOrderCents,
+      v.fulfillment,
+      v.paymentMethod,
+      v.notes?.trim(),
+      v.fulfillment === "DELIVERY"
+        ? [
+            v.addressId,
+            settings?.deliveryFeeCents,
+            settings?.deliveryAreaDescription,
+          ]
+        : settings?.pickupAddress,
+      change,
+      settings?.fulfillmentModes.some((mode) => mode === v.fulfillment),
+      settings?.acceptedPaymentMethods.some(
+        (method) => method === v.paymentMethod,
+      ),
+    ]);
+  });
+  private quotedTerms?: string;
+  private checkTerms() {
+    if (this.quotedTerms !== undefined && this.quotedTerms !== this.terms()) {
+      this.quotedTerms = undefined;
+      this.shop.model?.invalidateQuote();
+    }
+  }
   constructor() {
     const destroy = inject(DestroyRef);
     this.form.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => {
-      this.shop.model?.invalidateQuote();
+      this.checkTerms();
       this.error.set("");
     });
     effect(() => {
       const settings = this.store.checkout();
-      this.store.availability();
-      this.bag.catalog.menu();
-      this.bag.catalog.status();
+      this.terms();
       untracked(() => {
-        this.shop.model?.invalidateQuote();
+        this.checkTerms();
         if (!settings) return;
         const current = this.form.getRawValue();
         if (
@@ -113,6 +151,7 @@ export class CheckoutPage {
     return !!pending && retryAllowed(pending, Date.now());
   }
   async submit() {
+    this.checkTerms();
     const s = this.shop.state(),
       action = this.action();
     if (!s?.profile || s.profile.legalUpdateRequired) return;
@@ -134,14 +173,16 @@ export class CheckoutPage {
       const total =
         this.bag.subtotal()! +
         (fulfillment === "DELIVERY" ? settings.deliveryFeeCents : 0);
+      const changeForCents =
+        paymentMethod === "CASH" ? moneyInput(v.change) : null;
+      this.quotedTerms = this.terms();
       await this.shop.model?.quote(
         {
           fulfillment,
           paymentMethod,
           addressId: v.addressId || null,
           notes: v.notes.trim() || null,
-          changeForCents:
-            paymentMethod === "CASH" ? moneyInput(v.change) : null,
+          changeForCents,
         },
         total,
       );

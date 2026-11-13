@@ -24,8 +24,17 @@
     @for (order of visible(); track order.id) {
       <wo-order-card [slug]="store.slug()" [order]="order" />
     }
-    @if (!busy() && !error() && !visible().length) {
-      <p>Nenhum pedido neste filtro.</p>
+    @if (!loaded() && !busy() && !error()) {
+      <p role="status">Preparando histórico…</p>
+    }
+    @if (loaded() && !busy() && !error() && !visible().length) {
+      <p role="status">
+        {{
+          items().length
+            ? "Nenhum pedido neste filtro."
+            : "Você ainda não fez pedidos nesta pizzaria."
+        }}
+      </p>
     }
     @if (cursor() !== null) {
       <button
@@ -71,10 +80,14 @@
     </button>
   }
   @if (busy()) {
-    <p role="status">Consultando pedidos…</p>
+    <p role="status">
+      {{ loaded() ? "Carregando mais pedidos…" : "Consultando pedidos…" }}
+    </p>
   }
   @if (error()) {
     <p role="alert">{{ error() }}</p>
-    <button (click)="load(false)">Tentar novamente</button>
+    <button (click)="load(loaded() && cursor() !== null)">
+      Tentar novamente
+    </button>
   }
 }

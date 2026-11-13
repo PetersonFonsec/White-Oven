@@ -13,7 +13,7 @@ function commit(db: IDBDatabase, key: string, value: unknown): Promise<void> {
     else tx.objectStore("records").put(value, key);
     tx.oncomplete = () => resolve();
     tx.onabort = () => reject(tx.error);
-    tx.onerror = () => reject(tx.error);
+    // A request error bubbles before the transaction finishes rolling back.
   });
 }
 /** Caller holds the store's exclusive Web Lock through the final durable write. */

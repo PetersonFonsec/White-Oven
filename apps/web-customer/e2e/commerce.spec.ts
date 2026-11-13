@@ -122,6 +122,35 @@ test("real store: halves, customer, quote, lost response, restore, history and r
     page.getByRole("button", { name: "Recuperar o mesmo pedido" }),
   ).toBeEnabled();
   await page.reload();
+  await page.getByRole("link", { name: "Conta", exact: true }).click();
+  await page.getByRole("button", { name: "Sair da conta" }).click();
+  await expect(
+    page.getByRole("button", { name: "Entrar", exact: true }),
+  ).toBeEnabled();
+  await page.goto(base + "/checkout");
+  await page.getByRole("link", { name: "Entrar na conta" }).click();
+  await page.getByRole("link", { name: "Criar uma conta" }).click();
+  await page.getByLabel("Nome", { exact: true }).fill("Outra conta");
+  await page
+    .getByLabel("E-mail", { exact: true })
+    .fill("outra-" + info.project.name + "@teste.invalid");
+  await page.getByLabel("Senha", { exact: true }).fill("Teste-web-1234567");
+  await page.getByRole("checkbox", { name: /Li e aceito/ }).check();
+  await page.getByRole("button", { name: "Criar conta" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "conta original" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Recuperar o mesmo pedido" }),
+  ).toHaveCount(0);
+  expect(requests).toHaveLength(1);
+  await page.getByRole("link", { name: "Trocar de conta" }).click();
+  await page.getByRole("button", { name: "Sair da conta" }).click();
+  await page
+    .getByLabel("E-mail", { exact: true })
+    .fill("web-" + info.project.name + "@teste.invalid");
+  await page.getByLabel("Senha", { exact: true }).fill("Teste-web-1234567");
+  await page.getByRole("button", { name: "Entrar", exact: true }).click();
   await page.getByRole("button", { name: "Recuperar o mesmo pedido" }).click();
   await expect(
     page.getByRole("heading", { name: "Pedido confirmado" }),
